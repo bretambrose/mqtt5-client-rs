@@ -1,4 +1,7 @@
-
+/*
+ * Copyright Bret Ambrose. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
+ */
 
 #[derive(Default)]
 pub enum QualityOfService {
