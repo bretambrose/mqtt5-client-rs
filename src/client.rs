@@ -23,7 +23,7 @@ pub enum SuccessfulPublish {
     Qos2Success(PubcompPacket, PublishPacket),
 }
 
-pub type PublishResult = Result<SuccessfulPublish, Mqtt5Error<()>>;
+pub type PublishResult = Result<SuccessfulPublish, Mqtt5Error<PublishOptions>>;
 
 struct PublishOptionsInternal {
     pub options: PublishOptions,
@@ -37,7 +37,7 @@ pub struct SubscribeOptions {
     pub subscribe: SubscribePacket
 }
 
-pub type SubscribeResult = Result<SubackPacket, Mqtt5Error<()>>;
+pub type SubscribeResult = Result<SubackPacket, Mqtt5Error<SubscribeOptions>>;
 
 struct SubscribeOptionsInternal {
     pub options: SubscribeOptions,
@@ -45,17 +45,21 @@ struct SubscribeOptionsInternal {
     pub response_sender: oneshot::Sender<SubscribeResult>
 }
 
+type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
+
 pub struct UnsubscribeOptions {
     pub unsubscribe: UnsubscribePacket
 }
 
-pub type UnsubscribeResult = Result<UnsubackPacket, Mqtt5Error<()>>;
+pub type UnsubscribeResult = Result<UnsubackPacket, Mqtt5Error<UnsubscribeOptions>>;
 
 struct UnsubscribeOptionsInternal {
     pub options: UnsubscribeOptions,
 
     pub response_sender: oneshot::Sender<UnsubscribeResult>
 }
+
+type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
 enum OperationOptions {
     Publish(PublishOptionsInternal),
@@ -81,12 +85,13 @@ struct Mqtt5ClientImpl {
 
 pub enum Mqtt5Error<T> {
     Unknown,
+    Unimplemented(T),
     OperationChannelReceiveError,
     OperationChannelSendError(T),
 }
 
-impl<T> From<tokio::sync::oneshot::error::RecvError> for Mqtt5Error<T> {
-    fn from(_: tokio::sync::oneshot::error::RecvError) -> Self {
+impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
+    fn from(_: oneshot::error::RecvError) -> Self {
         Mqtt5Error::<T>::OperationChannelReceiveError
     }
 }
@@ -140,15 +145,6 @@ macro_rules! extract_operation_subclass_options {
     })
 }
 
-/*
-pub enum SuccessfulPublish {
-    Qos0Success(PublishPacket),
-    Qos1Success(PubackPacket, PublishPacket),
-    Qos2Success(PubcompPacket, PublishPacket),
-}
-
-pub type PublishResult = Result<SuccessfulPublish, Mqtt5Error<()>>;
- */
 impl Mqtt5Client {
 
     pub fn new(config: Mqtt5ClientOptions, runtime_handle : &runtime::Handle) -> Mqtt5Client {
@@ -167,17 +163,21 @@ impl Mqtt5Client {
                                 match value {
                                     OperationOptions::Publish(internal_options) => {
                                         println!("Got a publish!");
-                                        let fake_result : PublishResult = Ok(SuccessfulPublish::Qos0Success(internal_options.options.publish));
-                                        internal_options.response_sender.send(fake_result);
+                                        let failure_result : PublishResult = Err(Mqtt5Error::<PublishOptions>::Unimplemented(internal_options.options));
+                                        internal_options.response_sender.send(failure_result);
                                     }
-                                    OperationOptions::Subscribe(_) => {
+                                    OperationOptions::Subscribe(internal_options) => {
                                         println!("Got a subscribe!");
+                                        let failure_result : SubscribeResult = Err(Mqtt5Error::<SubscribeOptions>::Unimplemented(internal_options.options));
+                                        internal_options.response_sender.send(failure_result);
                                     }
-                                    OperationOptions::Unsubscribe(_) => {
+                                    OperationOptions::Unsubscribe(internal_options) => {
                                         println!("Got an unsubscribe!");
+                                        let failure_result : UnsubscribeResult = Err(Mqtt5Error::<UnsubscribeOptions>::Unimplemented(internal_options.options));
+                                        internal_options.response_sender.send(failure_result);
                                     }
                                     _ => {
-                                        println!("Got some lifecycle thing");
+                                        println!("Got some lifecycle operation");
                                     }
                                 }
                             }
@@ -212,17 +212,17 @@ impl Mqtt5Client {
         extract_operation_subclass_options!(send_result, Publish, Box::pin(async { rx.await? }))
     }
 
-    pub fn subscribe(&self, options: SubscribeOptions) -> Mqtt5Result<(), SubscribeOptions> {
-        let (response_sender, _) = oneshot::channel();
+    pub fn subscribe(&self, options: SubscribeOptions) -> Mqtt5Result<Pin<Box<SubscribeResultFuture>>, SubscribeOptions> {
+        let (response_sender, rx) = oneshot::channel();
         let internal_options = SubscribeOptionsInternal { options, response_sender };
         let send_result = self.operation_sender.try_send(OperationOptions::Subscribe(internal_options));
-        extract_operation_subclass_options!(send_result, Subscribe)
+        extract_operation_subclass_options!(send_result, Subscribe, Box::pin(async { rx.await? }))
     }
 
-    pub fn unsubscribe(&self, options: UnsubscribeOptions) -> Mqtt5Result<(), UnsubscribeOptions> {
-        let (response_sender, _) = oneshot::channel();
+    pub fn unsubscribe(&self, options: UnsubscribeOptions) -> Mqtt5Result<Pin<Box<UnsubscribeResultFuture>>, UnsubscribeOptions> {
+        let (response_sender, rx) = oneshot::channel();
         let internal_options = UnsubscribeOptionsInternal { options, response_sender };
         let send_result = self.operation_sender.try_send(OperationOptions::Unsubscribe(internal_options));
-        extract_operation_subclass_options!(send_result, Unsubscribe)
+        extract_operation_subclass_options!(send_result, Unsubscribe, Box::pin(async { rx.await? }))
     }
 }
