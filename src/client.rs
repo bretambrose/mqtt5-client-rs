@@ -6,17 +6,18 @@
 extern crate tokio;
 
 use std::future::Future;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::runtime;
 use std::pin::Pin;
 
 use crate::packet::*;
 
+#[derive(Debug)]
 pub struct PublishOptions {
     pub publish: PublishPacket
 }
 
+#[derive(Debug)]
 pub enum SuccessfulPublish {
     Qos0Success(PublishPacket),
     Qos1Success(PubackPacket, PublishPacket),
@@ -33,6 +34,7 @@ struct PublishOptionsInternal {
 
 type PublishResultFuture = dyn Future<Output = PublishResult>;
 
+#[derive(Debug)]
 pub struct SubscribeOptions {
     pub subscribe: SubscribePacket
 }
@@ -47,6 +49,7 @@ struct SubscribeOptionsInternal {
 
 type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
+#[derive(Debug)]
 pub struct UnsubscribeOptions {
     pub unsubscribe: UnsubscribePacket
 }
@@ -83,6 +86,7 @@ struct Mqtt5ClientImpl {
     operation_receiver : tokio::sync::mpsc::Receiver<OperationOptions>,
 }
 
+#[derive(Debug)]
 pub enum Mqtt5Error<T> {
     Unknown,
     Unimplemented(T),
@@ -97,6 +101,13 @@ impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
 }
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;
+
+/*
+pub struct Mqtt5ResultAsync<F, E> {
+    pub fut : Pin<Box<F>>,
+    pub sync_error: Mqtt5Error<E>
+}
+*/
 
 macro_rules! extract_operation_subclass_options {
     ($send_result:expr, $option_type1:ident, $future_expr:expr) => ({
@@ -116,26 +127,9 @@ macro_rules! extract_operation_subclass_options {
             }
         }
     });
-    ($send_result:expr, $option_type1:ident) => ({
-        match $send_result {
-            Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
-                match val {
-                    OperationOptions::$option_type1(options) => {
-                        Err(Mqtt5Error::OperationChannelSendError(options.options))
-                    }
-                    _ => {
-                        panic!("Derp");
-                    }
-                }
-            }
-            _ => {
-                Ok(())
-            }
-        }
-    });
     ($send_result:expr) => ({
         match $send_result {
-            Err(error) => {
+            Err(_) => {
                 Err(Mqtt5Error::OperationChannelSendError(()))
             }
             _ => {
@@ -164,17 +158,17 @@ impl Mqtt5Client {
                                     OperationOptions::Publish(internal_options) => {
                                         println!("Got a publish!");
                                         let failure_result : PublishResult = Err(Mqtt5Error::<PublishOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result);
+                                        internal_options.response_sender.send(failure_result).unwrap();
                                     }
                                     OperationOptions::Subscribe(internal_options) => {
                                         println!("Got a subscribe!");
                                         let failure_result : SubscribeResult = Err(Mqtt5Error::<SubscribeOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result);
+                                        internal_options.response_sender.send(failure_result).unwrap();
                                     }
                                     OperationOptions::Unsubscribe(internal_options) => {
                                         println!("Got an unsubscribe!");
                                         let failure_result : UnsubscribeResult = Err(Mqtt5Error::<UnsubscribeOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result);
+                                        internal_options.response_sender.send(failure_result).unwrap();
                                     }
                                     _ => {
                                         println!("Got some lifecycle operation");

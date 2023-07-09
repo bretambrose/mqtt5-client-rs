@@ -6,11 +6,7 @@
 extern crate mqtt5_client_rs;
 extern crate tokio;
 
-use mqtt5_client_rs::packet::PublishPacket;
 use mqtt5_client_rs::client;
-use tokio::runtime::Runtime;
-use std::time;
-use std::thread;
 use tokio::runtime::Handle;
 
 #[tokio::main]
@@ -20,12 +16,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = client::Mqtt5Client::new(config, &runtime_handle);
 
-    let result = client.start();
+    client.start().unwrap();
 
     let result = client.publish(client::PublishOptions{ publish: Default::default() });
     match result {
         Ok(real_result) => {
-            let res = real_result.await;
+            let _ = real_result.await;
             println!("Got a publish result!");
         }
         Err(_) => {

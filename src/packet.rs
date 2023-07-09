@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum QualityOfService {
     #[default]
     AtMostOnce = 0,
@@ -11,14 +11,14 @@ pub enum QualityOfService {
     ExactlyOnce = 2,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum PayloadFormatIndicator {
     #[default]
     Bytes = 0,
     Utf8 = 1,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum RetainHandlingType {
     #[default]
     SendOnSubscribe = 0,
@@ -26,7 +26,7 @@ pub enum RetainHandlingType {
     DontSend = 2,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum ConnectReasonCode {
     #[default]
     Success = 0,
@@ -53,7 +53,7 @@ pub enum ConnectReasonCode {
     ConnectionRateExceeeded = 159,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum PubackReasonCode {
     #[default]
     Success = 0,
@@ -67,7 +67,7 @@ pub enum PubackReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum PubrecReasonCode {
     #[default]
     Success = 0,
@@ -81,21 +81,21 @@ pub enum PubrecReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum PubrelReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum PubcompReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum DisconnectReasonCode {
     #[default]
     NormalDisconnection = 0,
@@ -129,7 +129,7 @@ pub enum DisconnectReasonCode {
     WildcardSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum SubackReasonCode {
     #[default]
     GrantedQos0 = 0,
@@ -146,7 +146,7 @@ pub enum SubackReasonCode {
     WildcaredSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum UnsubackReasonCode {
     #[default]
     Success = 0,
@@ -158,7 +158,7 @@ pub enum UnsubackReasonCode {
     PacketIdentifierInUse = 145,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum AuthenticateReasonCode {
     #[default]
     Success = 0,
@@ -166,12 +166,13 @@ pub enum AuthenticateReasonCode {
     ReAuthenticate = 25,
 }
 
+#[derive(Debug)]
 pub struct UserProperty {
     pub name : String,
     pub value : String,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Subscription {
     pub topic_filter : String,
     pub qos : QualityOfService,
@@ -180,7 +181,7 @@ pub struct Subscription {
     pub retain_handling_type : RetainHandlingType,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ConnectPacket {
     pub keep_alive_interval_seconds : u16,
     pub clean_start : bool,
@@ -204,7 +205,7 @@ pub struct ConnectPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ConnackPacket {
     pub session_present : bool,
     pub reason_code : ConnectReasonCode,
@@ -231,7 +232,7 @@ pub struct ConnackPacket {
     pub authentication_data : Option<Vec<u8>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PublishPacket {
     pub packet_id : u16,
 
@@ -256,7 +257,7 @@ pub struct PublishPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PubackPacket {
     pub packet_id : u16,
 
@@ -266,7 +267,7 @@ pub struct PubackPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PubrecPacket {
     pub packet_id : u16,
 
@@ -276,7 +277,7 @@ pub struct PubrecPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PubrelPacket {
     pub packet_id : u16,
 
@@ -286,7 +287,7 @@ pub struct PubrelPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PubcompPacket {
     pub packet_id : u16,
 
@@ -296,7 +297,7 @@ pub struct PubcompPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SubscribePacket {
     pub packet_id : u16,
 
@@ -307,7 +308,7 @@ pub struct SubscribePacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SubackPacket {
     pub packet_id : u16,
 
@@ -318,7 +319,7 @@ pub struct SubackPacket {
     pub reason_codes : Vec<SubackReasonCode>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct UnsubscribePacket {
     pub packet_id : u16,
 
@@ -327,7 +328,7 @@ pub struct UnsubscribePacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct UnsubackPacket {
     pub packet_id : u16,
 
@@ -344,7 +345,7 @@ pub struct PingreqPacket {
 pub struct PingrespPacket {
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DisconnectPacket {
     pub reason_code : DisconnectReasonCode,
 
@@ -354,7 +355,7 @@ pub struct DisconnectPacket {
     pub server_reference : Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AuthPacket {
     pub reason_code : AuthenticateReasonCode,
 
