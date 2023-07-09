@@ -102,13 +102,29 @@ impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;
 
-macro_rules! build_operation_return_value {
-    ($send_result:expr, $option_type1:ident, $receiver:expr) => ({
+macro_rules! lifecycle_operation_body {
+    ($lifeycle_operation:ident, $self:ident) => ({
+        match $self.operation_sender.try_send(OperationOptions::$lifeycle_operation()) {
+            Err(_) => {
+                Err(Mqtt5Error::OperationChannelSendError(()))
+            }
+            _ => {
+                Ok(())
+            }
+        }
+    })
+}
+
+macro_rules! mqtt_operation_body {
+    ($self:ident, $operation_type:ident, $options_internal_type: ident, $options_value: expr) => ({
+        let (response_sender, rx) = oneshot::channel();
+        let internal_options = $options_internal_type { options : $options_value, response_sender };
+        let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(internal_options));
         Box::pin(async {
-            match $send_result {
+            match send_result {
                 Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
                     match val {
-                        OperationOptions::$option_type1(options) => {
+                        OperationOptions::$operation_type(options) => {
                             Err(Mqtt5Error::OperationChannelSendError(options.options))
                         }
                         _ => {
@@ -117,20 +133,10 @@ macro_rules! build_operation_return_value {
                     }
                 }
                 _ => {
-                    $receiver.await?
+                    rx.await?
                 }
             }
         })
-    });
-    ($send_result:expr) => ({
-        match $send_result {
-            Err(_) => {
-                Err(Mqtt5Error::OperationChannelSendError(()))
-            }
-            _ => {
-                Ok(())
-            }
-        }
     })
 }
 
@@ -145,9 +151,6 @@ impl Mqtt5Client {
                 tokio::select! {
                     result = client_impl.operation_receiver.recv() => {
                         match result {
-                            None => {
-                                println!("Oh crap");
-                            }
                             Some(value) => {
                                 match value {
                                     OperationOptions::Publish(internal_options) => {
@@ -170,6 +173,8 @@ impl Mqtt5Client {
                                     }
                                 }
                             }
+                            _ => {
+                            }
                         }
                     }
                 }
@@ -182,38 +187,26 @@ impl Mqtt5Client {
     }
 
     pub fn start(&self) -> Mqtt5Result<(), ()> {
-        build_operation_return_value!(self.operation_sender.try_send(OperationOptions::Start()))
+        lifecycle_operation_body!(Start, self)
     }
 
     pub fn stop(&self) -> Mqtt5Result<(), ()> {
-        build_operation_return_value!(self.operation_sender.try_send(OperationOptions::Stop()))
+        lifecycle_operation_body!(Stop, self)
     }
 
     pub fn close(&self) -> Mqtt5Result<(), ()> {
-        build_operation_return_value!(self.operation_sender.try_send(OperationOptions::Shutdown()))
+        lifecycle_operation_body!(Shutdown, self)
     }
 
     pub fn publish(&self, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
-        let (response_sender, rx) = oneshot::channel();
-        let internal_options = PublishOptionsInternal { options, response_sender };
-        let send_result = self.operation_sender.try_send(OperationOptions::Publish(internal_options));
-
-        build_operation_return_value!(send_result, Publish, rx)
+        mqtt_operation_body!(self, Publish, PublishOptionsInternal, options)
     }
 
     pub fn subscribe(&self, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        let (response_sender, rx) = oneshot::channel();
-        let internal_options = SubscribeOptionsInternal { options, response_sender };
-        let send_result = self.operation_sender.try_send(OperationOptions::Subscribe(internal_options));
-
-        build_operation_return_value!(send_result, Subscribe, rx)
+        mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, options)
     }
 
     pub fn unsubscribe(&self, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
-        let (response_sender, rx) = oneshot::channel();
-        let internal_options = UnsubscribeOptionsInternal { options, response_sender };
-        let send_result = self.operation_sender.try_send(OperationOptions::Unsubscribe(internal_options));
-
-        build_operation_return_value!(send_result, Unsubscribe, rx)
+        mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, options)
     }
 }
