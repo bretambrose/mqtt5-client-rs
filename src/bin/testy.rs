@@ -18,14 +18,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     client.start().unwrap();
 
-    let result = client.publish(client::PublishOptions{ publish: Default::default() });
+    let result = client.publish(client::PublishOptions{ publish: Default::default() }).await;
     match result {
-        Ok(real_result) => {
-            let _ = real_result.await;
+        Ok(_) => {
             println!("Got a publish result!");
         }
         Err(_) => {
-            println!("WTF");
+            println!("Got a publish error");
         }
     }
 
