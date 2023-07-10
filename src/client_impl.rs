@@ -38,7 +38,8 @@ struct Mqtt5ClientImpl {
 }
 
 async fn client_event_loop(client_impl : &mut Mqtt5ClientImpl) {
-    loop {
+    let mut done = false;
+    while !done {
         tokio::select! {
             result = client_impl.operation_receiver.recv() => {
                 match result {
@@ -59,8 +60,15 @@ async fn client_event_loop(client_impl : &mut Mqtt5ClientImpl) {
                                 let failure_result : UnsubscribeResult = Err(Mqtt5Error::<UnsubscribeOptions>::Unimplemented(internal_options.options));
                                 internal_options.response_sender.send(failure_result).unwrap();
                             }
-                            _ => {
-                                println!("Got some lifecycle operation");
+                            OperationOptions::Start() => {
+                                println!("Received start!");
+                            }
+                            OperationOptions::Stop() => {
+                                println!("Received stop!");
+                            }
+                            OperationOptions::Shutdown() => {
+                                println!("Received shutdown!");
+                                done = true;
                             }
                         }
                     }

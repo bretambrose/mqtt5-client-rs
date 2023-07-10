@@ -8,6 +8,7 @@ extern crate tokio;
 
 use mqtt5_client_rs::client;
 use tokio::runtime::Handle;
+use std::{thread, time};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Got a publish error");
         }
     }
+
+    client.close().expect("Hello");
+    
+    let sleep_duration = time::Duration::from_secs(2);
+
+    thread::sleep(sleep_duration);
 
     println!("Done");
 
