@@ -9,8 +9,8 @@ use std::future::Future;
 use tokio::sync::oneshot;
 use tokio::runtime;
 use std::pin::Pin;
-
 use crate::packet::*;
+use crate::client_impl::{OperationOptions, spawn_client_impl, PublishOptionsInternal, SubscribeOptionsInternal, UnsubscribeOptionsInternal};
 
 #[derive(Debug)]
 pub struct PublishOptions {
@@ -26,13 +26,7 @@ pub enum SuccessfulPublish {
 
 pub type PublishResult = Result<SuccessfulPublish, Mqtt5Error<PublishOptions>>;
 
-struct PublishOptionsInternal {
-    pub options: PublishOptions,
-
-    pub response_sender: oneshot::Sender<PublishResult>
-}
-
-type PublishResultFuture = dyn Future<Output = PublishResult>;
+pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
 #[derive(Debug)]
 pub struct SubscribeOptions {
@@ -41,13 +35,7 @@ pub struct SubscribeOptions {
 
 pub type SubscribeResult = Result<SubackPacket, Mqtt5Error<SubscribeOptions>>;
 
-struct SubscribeOptionsInternal {
-    pub options: SubscribeOptions,
-
-    pub response_sender: oneshot::Sender<SubscribeResult>
-}
-
-type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
+pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
 #[derive(Debug)]
 pub struct UnsubscribeOptions {
@@ -56,35 +44,7 @@ pub struct UnsubscribeOptions {
 
 pub type UnsubscribeResult = Result<UnsubackPacket, Mqtt5Error<UnsubscribeOptions>>;
 
-struct UnsubscribeOptionsInternal {
-    pub options: UnsubscribeOptions,
-
-    pub response_sender: oneshot::Sender<UnsubscribeResult>
-}
-
-type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
-
-enum OperationOptions {
-    Publish(PublishOptionsInternal),
-    Subscribe(SubscribeOptionsInternal),
-    Unsubscribe(UnsubscribeOptionsInternal),
-    Start(),
-    Stop(),
-    Shutdown()
-}
-
-pub struct Mqtt5ClientOptions {
-
-}
-
-pub struct Mqtt5Client {
-    operation_sender : tokio::sync::mpsc::Sender<OperationOptions>,
-}
-
-struct Mqtt5ClientImpl {
-    config: Mqtt5ClientOptions,
-    operation_receiver : tokio::sync::mpsc::Receiver<OperationOptions>,
-}
+pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
 #[derive(Debug)]
 pub enum Mqtt5Error<T> {
@@ -101,6 +61,14 @@ impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
 }
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;
+
+pub struct Mqtt5ClientOptions {
+
+}
+
+pub struct Mqtt5Client {
+    operation_sender : tokio::sync::mpsc::Sender<OperationOptions>,
+}
 
 macro_rules! lifecycle_operation_body {
     ($lifeycle_operation:ident, $self:ident) => ({
@@ -120,7 +88,7 @@ macro_rules! mqtt_operation_body {
         let (response_sender, rx) = oneshot::channel();
         let internal_options = $options_internal_type { options : $options_value, response_sender };
         let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(internal_options));
-        Box::pin(async {
+        Box::pin(async move {
             match send_result {
                 Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
                     match val {
@@ -145,45 +113,9 @@ impl Mqtt5Client {
     pub fn new(config: Mqtt5ClientOptions, runtime_handle : &runtime::Handle) -> Mqtt5Client {
         let (operation_sender, operation_receiver) = tokio::sync::mpsc::channel(100);
 
-        let mut client_impl = Mqtt5ClientImpl { config, operation_receiver };
-        runtime_handle.spawn(async move {
-            loop {
-                tokio::select! {
-                    result = client_impl.operation_receiver.recv() => {
-                        match result {
-                            Some(value) => {
-                                match value {
-                                    OperationOptions::Publish(internal_options) => {
-                                        println!("Got a publish!");
-                                        let failure_result : PublishResult = Err(Mqtt5Error::<PublishOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result).unwrap();
-                                    }
-                                    OperationOptions::Subscribe(internal_options) => {
-                                        println!("Got a subscribe!");
-                                        let failure_result : SubscribeResult = Err(Mqtt5Error::<SubscribeOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result).unwrap();
-                                    }
-                                    OperationOptions::Unsubscribe(internal_options) => {
-                                        println!("Got an unsubscribe!");
-                                        let failure_result : UnsubscribeResult = Err(Mqtt5Error::<UnsubscribeOptions>::Unimplemented(internal_options.options));
-                                        internal_options.response_sender.send(failure_result).unwrap();
-                                    }
-                                    _ => {
-                                        println!("Got some lifecycle operation");
-                                    }
-                                }
-                            }
-                            _ => {
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        spawn_client_impl(config, operation_receiver, &runtime_handle);
 
-        let client = Mqtt5Client { operation_sender };
-
-        client
+        Mqtt5Client { operation_sender }
     }
 
     pub fn start(&self) -> Mqtt5Result<(), ()> {
