@@ -5,10 +5,10 @@
 
 use std::collections::VecDeque;
 
-use crate::{Mqtt5Error, Mqtt5Result};
-use crate::spec::*;
 use crate::encoding_utils::*;
+use crate::spec::*;
 use crate::spec_impl::*;
+use crate::{Mqtt5Error, Mqtt5Result};
 
 fn get_connect_packet_client_id(packet: &MqttPacket) -> &str {
     get_optional_packet_field!(packet, MqttPacket::Connect, client_id)
@@ -111,12 +111,12 @@ fn get_connect_packet_will_user_property(packet: &MqttPacket, index: usize) -> &
 }
 
 static MQTT5_CONNECT_PROTOCOL_BYTES: [u8; 7] = [0, 4, 77, 81, 84, 84, 5];
-fn get_connect_protocol_bytes(_ : &MqttPacket) -> &'static[u8] {
+fn get_connect_protocol_bytes(_: &MqttPacket) -> &'static [u8] {
     return &MQTT5_CONNECT_PROTOCOL_BYTES;
 }
 
 fn compute_connect_flags(packet: &ConnectPacket) -> u8 {
-    let mut flags : u8 = 0;
+    let mut flags: u8 = 0;
     if packet.clean_start {
         flags |= 1u8 << 1;
     }
@@ -140,6 +140,7 @@ fn compute_connect_flags(packet: &ConnectPacket) -> u8 {
     flags
 }
 
+#[rustfmt::skip]
 fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Result<(u32, u32, u32), ()> {
     let mut connect_property_section_length = compute_user_properties_length(&packet.user_properties);
 
@@ -209,6 +210,7 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
     Ok((total_remaining_length as u32, connect_property_section_length as u32, will_property_length as u32))
 }
 
+#[rustfmt::skip]
 impl Encodable for ConnectPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         let length_result = compute_connect_packet_length_properties(self);
@@ -261,8 +263,10 @@ impl Encodable for ConnectPacket {
 impl Encodable for MqttPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
-            MqttPacket::Connect(packet) => { return packet.write_encoding_steps(steps); }
-            _ => { Err(Mqtt5Error::Unimplemented(())) }
+            MqttPacket::Connect(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            _ => Err(Mqtt5Error::Unimplemented(())),
         }
     }
 }
@@ -273,12 +277,14 @@ pub(crate) enum EncodeResult {
 }
 
 pub(crate) struct Encoder {
-    steps : VecDeque<EncodingStep>
+    steps: VecDeque<EncodingStep>,
 }
 
 impl Encoder {
     pub fn new() -> Encoder {
-        Encoder { steps: VecDeque::new() }
+        Encoder {
+            steps: VecDeque::new(),
+        }
     }
 
     pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<(), ()> {
@@ -287,7 +293,11 @@ impl Encoder {
         packet.write_encoding_steps(&mut self.steps)
     }
 
-    pub fn encode(&mut self, packet: &MqttPacket, dest: &mut Vec<u8>) -> Mqtt5Result<EncodeResult, ()>{
+    pub fn encode(
+        &mut self,
+        packet: &MqttPacket,
+        dest: &mut Vec<u8>,
+    ) -> Mqtt5Result<EncodeResult, ()> {
         let capacity = dest.capacity();
         if capacity < 4 {
             return Err(Mqtt5Error::EncodeBufferTooSmall);
@@ -315,46 +325,56 @@ impl Encoder {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn encoder_hand_check() {
-
-        let mut encoder  = Encoder::new();
+        let mut encoder = Encoder::new();
 
         let packet = MqttPacket::Connect(ConnectPacket {
             keep_alive_interval_seconds: 1200,
-            clean_start : true,
-            client_id : Some("A-client-id".to_owned()),
-            username : Some("A-username".to_owned()),
-            password : Some([1u8, 2u8, 3u8, 4u8].to_vec()),
-            session_expiry_interval_seconds : Some(3600),
-            request_response_information : Some(true),
-            request_problem_information : Some(true),
-            receive_maximum : Some(100),
-            topic_alias_maximum : Some(25),
-            maximum_packet_size_bytes : Some(128 * 1024),
-            authentication_method : Some("GSSAPI".to_owned()),
-            authentication_data : Some([1u8, 2u8, 3u8, 4u8].to_vec()),
-            will_delay_interval_seconds : Some(1u32 << 24),
-            will : Some(PublishPacket {
-                topic : "oh/no".to_owned(),
-                qos : QualityOfService::AtLeastOnce,
-                retain : true,
-                payload : Some(vec![0u8; 1024]),
-                payload_format : Some(PayloadFormatIndicator::Bytes),
-                message_expiry_interval_seconds : Some(32768),
-                response_topic : Some("here/lies/a/packet".to_owned()),
-                correlation_data : Some([1u8, 2u8, 3u8, 4u8, 5u8].to_vec()),
-                content_type : Some("application/json".to_owned()),
-                user_properties : Some([UserProperty { name : "WillTerb".to_owned(), value : "WillBlah".to_owned()}].to_vec()),
+            clean_start: true,
+            client_id: Some("A-client-id".to_owned()),
+            username: Some("A-username".to_owned()),
+            password: Some([1u8, 2u8, 3u8, 4u8].to_vec()),
+            session_expiry_interval_seconds: Some(3600),
+            request_response_information: Some(true),
+            request_problem_information: Some(true),
+            receive_maximum: Some(100),
+            topic_alias_maximum: Some(25),
+            maximum_packet_size_bytes: Some(128 * 1024),
+            authentication_method: Some("GSSAPI".to_owned()),
+            authentication_data: Some([1u8, 2u8, 3u8, 4u8].to_vec()),
+            will_delay_interval_seconds: Some(1u32 << 24),
+            will: Some(PublishPacket {
+                topic: "oh/no".to_owned(),
+                qos: QualityOfService::AtLeastOnce,
+                retain: true,
+                payload: Some(vec![0u8; 1024]),
+                payload_format: Some(PayloadFormatIndicator::Bytes),
+                message_expiry_interval_seconds: Some(32768),
+                response_topic: Some("here/lies/a/packet".to_owned()),
+                correlation_data: Some([1u8, 2u8, 3u8, 4u8, 5u8].to_vec()),
+                content_type: Some("application/json".to_owned()),
+                user_properties: Some(
+                    [UserProperty {
+                        name: "WillTerb".to_owned(),
+                        value: "WillBlah".to_owned(),
+                    }]
+                    .to_vec(),
+                ),
 
                 ..Default::default()
             }),
-            user_properties : Some([UserProperty { name : "Terb".to_owned(), value : "Blah".to_owned()}].to_vec()),
+            user_properties: Some(
+                [UserProperty {
+                    name: "Terb".to_owned(),
+                    value: "Blah".to_owned(),
+                }]
+                .to_vec(),
+            ),
         });
 
         let reset_result = encoder.reset(&packet);
@@ -365,5 +385,4 @@ mod tests {
         let encoding_result = encoder.encode(&packet, &mut buffer);
         assert!(encoding_result.is_ok());
     }
-
 }

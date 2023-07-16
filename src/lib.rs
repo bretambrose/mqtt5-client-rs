@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-mod encoder;
-mod encoding_utils;
-mod spec_impl;
-pub mod spec;
 pub mod client;
 mod client_impl;
+mod encoder;
+mod encoding_utils;
+pub mod spec;
+mod spec_impl;
 
 #[derive(Debug)]
 pub enum Mqtt5Error<T> {
@@ -21,4 +21,3 @@ pub enum Mqtt5Error<T> {
 }
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;
-

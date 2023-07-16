@@ -5,17 +5,17 @@
 
 extern crate tokio;
 
-use std::future::Future;
-use tokio::sync::oneshot;
-use tokio::runtime;
-use std::pin::Pin;
-use crate::{Mqtt5Error, Mqtt5Result};
-use crate::spec::*;
 use crate::client_impl::*;
+use crate::spec::*;
+use crate::{Mqtt5Error, Mqtt5Result};
+use std::future::Future;
+use std::pin::Pin;
+use tokio::runtime;
+use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub struct PublishOptions {
-    pub publish: PublishPacket
+    pub publish: PublishPacket,
 }
 
 #[derive(Debug)]
@@ -31,7 +31,7 @@ pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
 #[derive(Debug)]
 pub struct SubscribeOptions {
-    pub subscribe: SubscribePacket
+    pub subscribe: SubscribePacket,
 }
 
 pub type SubscribeResult = Mqtt5Result<SubackPacket, SubscribeOptions>;
@@ -40,13 +40,12 @@ pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
 #[derive(Debug)]
 pub struct UnsubscribeOptions {
-    pub unsubscribe: UnsubscribePacket
+    pub unsubscribe: UnsubscribePacket,
 }
 
 pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket, UnsubscribeOptions>;
 
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
-
 
 impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
     fn from(_: oneshot::error::RecvError) -> Self {
@@ -54,17 +53,14 @@ impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
     }
 }
 
-pub struct Mqtt5ClientOptions {
-
-}
+pub struct Mqtt5ClientOptions {}
 
 pub struct Mqtt5Client {
-    operation_sender : tokio::sync::mpsc::Sender<OperationOptions>,
+    operation_sender: tokio::sync::mpsc::Sender<OperationOptions>,
 }
 
 impl Mqtt5Client {
-
-    pub fn new(config: Mqtt5ClientOptions, runtime_handle : &runtime::Handle) -> Mqtt5Client {
+    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
         let (operation_sender, operation_receiver) = tokio::sync::mpsc::channel(100);
 
         spawn_client_impl(config, operation_receiver, &runtime_handle);

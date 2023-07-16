@@ -5,23 +5,22 @@
 
 extern crate tokio;
 
-use crate::Mqtt5Error;
 use crate::client::*;
+use crate::Mqtt5Error;
 use tokio::runtime;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 macro_rules! client_lifecycle_operation_body {
-    ($lifeycle_operation:ident, $self:ident) => ({
-        match $self.operation_sender.try_send(OperationOptions::$lifeycle_operation()) {
-            Err(_) => {
-                Err(Mqtt5Error::OperationChannelSendError(()))
-            }
-            _ => {
-                Ok(())
-            }
+    ($lifeycle_operation:ident, $self:ident) => {{
+        match $self
+            .operation_sender
+            .try_send(OperationOptions::$lifeycle_operation())
+        {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError(())),
+            _ => Ok(()),
         }
-    })
+    }};
 }
 
 pub(crate) use client_lifecycle_operation_body;
@@ -56,19 +55,19 @@ pub(crate) use client_mqtt_operation_body;
 pub struct PublishOptionsInternal {
     pub options: PublishOptions,
 
-    pub response_sender: oneshot::Sender<PublishResult>
+    pub response_sender: oneshot::Sender<PublishResult>,
 }
 
 pub struct SubscribeOptionsInternal {
     pub options: SubscribeOptions,
 
-    pub response_sender: oneshot::Sender<SubscribeResult>
+    pub response_sender: oneshot::Sender<SubscribeResult>,
 }
 
 pub struct UnsubscribeOptionsInternal {
     pub options: UnsubscribeOptions,
 
-    pub response_sender: oneshot::Sender<UnsubscribeResult>
+    pub response_sender: oneshot::Sender<UnsubscribeResult>,
 }
 
 pub enum OperationOptions {
@@ -77,15 +76,15 @@ pub enum OperationOptions {
     Unsubscribe(UnsubscribeOptionsInternal),
     Start(),
     Stop(),
-    Shutdown()
+    Shutdown(),
 }
 
 struct Mqtt5ClientImpl {
     config: Mqtt5ClientOptions,
-    operation_receiver : mpsc::Receiver<OperationOptions>,
+    operation_receiver: mpsc::Receiver<OperationOptions>,
 }
 
-async fn client_event_loop(client_impl : &mut Mqtt5ClientImpl) {
+async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
     let mut done = false;
     while !done {
         tokio::select! {
@@ -128,8 +127,15 @@ async fn client_event_loop(client_impl : &mut Mqtt5ClientImpl) {
     }
 }
 
-pub fn spawn_client_impl(config: Mqtt5ClientOptions, operation_receiver: mpsc::Receiver<OperationOptions>, runtime_handle : &runtime::Handle) {
-    let mut client_impl = Mqtt5ClientImpl { config, operation_receiver };
+pub fn spawn_client_impl(
+    config: Mqtt5ClientOptions,
+    operation_receiver: mpsc::Receiver<OperationOptions>,
+    runtime_handle: &runtime::Handle,
+) {
+    let mut client_impl = Mqtt5ClientImpl {
+        config,
+        operation_receiver,
+    };
     runtime_handle.spawn(async move {
         client_event_loop(&mut client_impl).await;
     });

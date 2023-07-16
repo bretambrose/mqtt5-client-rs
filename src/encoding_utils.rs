@@ -5,10 +5,9 @@
 
 ///
 /// Internal utilities to encode MQTT5 packets, based on the MQTT5 spec
-
 use std::collections::VecDeque;
 
-use crate::spec::{UserProperty, MqttPacket};
+use crate::spec::{MqttPacket, UserProperty};
 use crate::{Mqtt5Error, Mqtt5Result};
 
 pub(crate) enum EncodingStep {
@@ -16,10 +15,10 @@ pub(crate) enum EncodingStep {
     Uint16(u16),
     Uint32(u32),
     Vli(u32),
-    StringSlice(fn (&MqttPacket) -> &str, usize),
-    BytesSlice(fn (&MqttPacket) -> &[u8], usize),
-    UserPropertyName(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
-    UserPropertyValue(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
+    StringSlice(fn(&MqttPacket) -> &str, usize),
+    BytesSlice(fn(&MqttPacket) -> &[u8], usize),
+    UserPropertyName(fn(&MqttPacket, usize) -> &UserProperty, usize, usize),
+    UserPropertyValue(fn(&MqttPacket, usize) -> &UserProperty, usize, usize),
 }
 
 pub(crate) trait Encodable {
@@ -28,7 +27,8 @@ pub(crate) trait Encodable {
 
 macro_rules! get_optional_packet_field {
     ($target: expr, $pat: path, $field_name: ident) => {
-        if let $pat(a) = $target { // #1
+        if let $pat(a) = $target {
+            // #1
             &a.$field_name.as_ref().unwrap()
         } else {
             panic!("Packet variant mismatch");
@@ -82,7 +82,10 @@ pub(crate) use encode_optional_boolean_property;
 macro_rules! encode_length_prefixed_string {
     ($target: ident, $getter: ident, $value: expr) => {
         $target.push_back(EncodingStep::Uint16($value.len() as u16));
-        $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
+        $target.push_back(EncodingStep::StringSlice(
+            $getter as fn(&MqttPacket) -> &str,
+            0,
+        ));
     };
 }
 
@@ -92,7 +95,10 @@ macro_rules! encode_length_prefixed_optional_string {
     ($target: ident, $getter: ident, $optional_value: expr) => {
         if let Some(val) = &$optional_value {
             $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
+            $target.push_back(EncodingStep::StringSlice(
+                $getter as fn(&MqttPacket) -> &str,
+                0,
+            ));
         } else {
             $target.push_back(EncodingStep::Uint16(0));
         }
@@ -106,7 +112,10 @@ macro_rules! encode_optional_string_property {
         if let Some(val) = &$field_value {
             $target.push_back(EncodingStep::Uint8($property_key));
             $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
+            $target.push_back(EncodingStep::StringSlice(
+                $getter as fn(&MqttPacket) -> &str,
+                0,
+            ));
         }
     };
 }
@@ -115,7 +124,10 @@ pub(crate) use encode_optional_string_property;
 
 macro_rules! encode_raw_bytes {
     ($target: ident, $getter: ident) => {
-        $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
+        $target.push_back(EncodingStep::BytesSlice(
+            $getter as fn(&MqttPacket) -> &[u8],
+            0,
+        ));
     };
 }
 
@@ -125,7 +137,10 @@ macro_rules! encode_length_prefixed_optional_bytes {
     ($target: ident, $getter: ident, $optional_value: expr) => {
         if let Some(val) = &$optional_value {
             $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
+            $target.push_back(EncodingStep::BytesSlice(
+                $getter as fn(&MqttPacket) -> &[u8],
+                0,
+            ));
         } else {
             $target.push_back(EncodingStep::Uint16(0));
         }
@@ -139,7 +154,10 @@ macro_rules! encode_optional_bytes_property {
         if let Some(val) = &$field_value {
             $target.push_back(EncodingStep::Uint8($property_key));
             $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
+            $target.push_back(EncodingStep::BytesSlice(
+                $getter as fn(&MqttPacket) -> &[u8],
+                0,
+            ));
         }
     };
 }
@@ -147,28 +165,32 @@ macro_rules! encode_optional_bytes_property {
 pub(crate) use encode_optional_bytes_property;
 
 macro_rules! encode_user_property {
-    ($target: ident, $user_property_getter: ident, $value: ident, $index: expr) => {
-        {
-            $target.push_back(EncodingStep::Uint16($value.name.len() as u16));
-            $target.push_back(EncodingStep::UserPropertyName($user_property_getter as fn(&MqttPacket, usize) -> &UserProperty, $index, 0));
-            $target.push_back(EncodingStep::Uint16($value.value.len() as u16));
-            $target.push_back(EncodingStep::UserPropertyValue($user_property_getter as fn(&MqttPacket, usize) -> &UserProperty, $index, 0));
-        }
-    };
+    ($target: ident, $user_property_getter: ident, $value: ident, $index: expr) => {{
+        $target.push_back(EncodingStep::Uint16($value.name.len() as u16));
+        $target.push_back(EncodingStep::UserPropertyName(
+            $user_property_getter as fn(&MqttPacket, usize) -> &UserProperty,
+            $index,
+            0,
+        ));
+        $target.push_back(EncodingStep::Uint16($value.value.len() as u16));
+        $target.push_back(EncodingStep::UserPropertyValue(
+            $user_property_getter as fn(&MqttPacket, usize) -> &UserProperty,
+            $index,
+            0,
+        ));
+    }};
 }
 
 pub(crate) use encode_user_property;
 
 macro_rules! encode_user_properties {
-    ($target: ident, $user_property_getter: ident, $properties_ref: expr) => {
-        {
-            if let Some(properties) = &$properties_ref {
-                for (i, user_property) in properties.iter().enumerate() {
-                    encode_user_property!($target, $user_property_getter, user_property, i);
-                }
+    ($target: ident, $user_property_getter: ident, $properties_ref: expr) => {{
+        if let Some(properties) = &$properties_ref {
+            for (i, user_property) in properties.iter().enumerate() {
+                encode_user_property!($target, $user_property_getter, user_property, i);
             }
         }
-    };
+    }};
 }
 
 pub(crate) use encode_user_properties;
@@ -247,10 +269,10 @@ macro_rules! add_optional_bytes_length {
 
 pub(crate) use add_optional_bytes_length;
 
-pub static MAXIMUM_VARIABLE_LENGTH_INTEGER : usize = (1 << 28) - 1;
+pub static MAXIMUM_VARIABLE_LENGTH_INTEGER: usize = (1 << 28) - 1;
 
 pub fn compute_user_properties_length(properties: &Option<Vec<UserProperty>>) -> usize {
-    let mut total  = 0;
+    let mut total = 0;
     if let Some(props) = properties {
         let property_count = props.len();
         total += property_count * 4; // 4 bytes of length-prefix per property
@@ -263,7 +285,7 @@ pub fn compute_user_properties_length(properties: &Option<Vec<UserProperty>>) ->
     total
 }
 
-pub fn compute_variable_length_integer_encode_size(value : usize) -> Mqtt5Result<usize, ()> {
+pub fn compute_variable_length_integer_encode_size(value: usize) -> Mqtt5Result<usize, ()> {
     if value < 1usize << 7 {
         Ok(1)
     } else if value < 1usize << 14 {
@@ -281,7 +303,7 @@ fn encode_vli(value: u32, dest: &mut Vec<u8>) {
     let mut done = false;
     let mut val = value;
     while !done {
-        let mut byte : u8 = (val & 0x7F) as u8;
+        let mut byte: u8 = (val & 0x7F) as u8;
         val /= 128;
 
         if val != 0 {
@@ -293,7 +315,6 @@ fn encode_vli(value: u32, dest: &mut Vec<u8>) {
         done = val == 0;
     }
 }
-
 
 fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) -> usize {
     let dest_space_in_bytes = dest.capacity() - dest.len();
@@ -310,7 +331,12 @@ fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) 
     }
 }
 
-pub(crate) fn process_encoding_step(steps : &mut VecDeque<EncodingStep>, step : EncodingStep, packet: &MqttPacket, dest: &mut Vec<u8>) {
+pub(crate) fn process_encoding_step(
+    steps: &mut VecDeque<EncodingStep>,
+    step: EncodingStep,
+    packet: &MqttPacket,
+    dest: &mut Vec<u8>,
+) {
     match step {
         EncodingStep::Uint8(val) => {
             dest.push(val);
@@ -342,14 +368,14 @@ pub(crate) fn process_encoding_step(steps : &mut VecDeque<EncodingStep>, step : 
             let slice = getter(packet, index).name.as_bytes();
             let end_offset = process_byte_slice_encoding(slice, offset, dest);
             if end_offset > 0 {
-                steps.push_front(EncodingStep::UserPropertyName(getter, index,end_offset));
+                steps.push_front(EncodingStep::UserPropertyName(getter, index, end_offset));
             }
         }
         EncodingStep::UserPropertyValue(getter, index, offset) => {
             let slice = getter(packet, index).value.as_bytes();
             let end_offset = process_byte_slice_encoding(slice, offset, dest);
             if end_offset > 0 {
-                steps.push_front(EncodingStep::UserPropertyValue(getter, index,end_offset));
+                steps.push_front(EncodingStep::UserPropertyValue(getter, index, end_offset));
             }
         }
     }
