@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum QualityOfService {
     #[default]
     AtMostOnce = 0,
@@ -198,6 +198,8 @@ pub struct ConnectPacket {
     pub receive_maximum : Option<u16>,
     pub topic_alias_maximum : Option<u16>,
     pub maximum_packet_size_bytes : Option<u32>,
+    pub authentication_method : Option<String>,
+    pub authentication_data : Option<Vec<u8>>,
 
     pub will_delay_interval_seconds : Option<u32>,
     pub will : Option<PublishPacket>,
@@ -248,7 +250,7 @@ pub struct PublishPacket {
     pub message_expiry_interval_seconds : Option<u32>,
     pub topic_alias : Option<u16>,
     pub response_topic : Option<String>,
-    pub correlation_data : Option<String>,
+    pub correlation_data : Option<Vec<u8>>,
 
     pub subscription_identifiers : Option<Vec<u32>>,
 

@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     client.close().expect("Hello");
-    
+
     let sleep_duration = time::Duration::from_secs(2);
 
     thread::sleep(sleep_duration);
