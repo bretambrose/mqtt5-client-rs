@@ -11,7 +11,7 @@ pub enum QualityOfService {
     ExactlyOnce = 2,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum PayloadFormatIndicator {
     #[default]
     Bytes = 0,

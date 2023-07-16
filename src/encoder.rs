@@ -298,11 +298,7 @@ impl Encodable for ConnectPacket {
 
         encode_expression!(steps, Uint8, 1u8 << 4);
         encode_expression!(steps, Vli, total_remaining_length);
-
-        //steps.push_back(EncodingStep::BytesSlice(get_connect_protocol_bytes as fn(&MqttPacket) -> &[u8], 0));
-
         encode_raw_bytes!(steps, get_connect_protocol_bytes);
-
         encode_expression!(steps, Uint8, compute_connect_flags(self));
         encode_expression!(steps, Uint16, self.keep_alive_interval_seconds);
 
@@ -313,9 +309,7 @@ impl Encodable for ConnectPacket {
         encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
         encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION, self.request_response_information);
         encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION, self.request_problem_information);
-
         encode_optional_string_property!(steps, get_connect_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
-
         encode_optional_bytes_property!(steps, get_connect_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
         encode_user_properties!(steps, get_connect_packet_user_property, self.user_properties);
 
@@ -324,7 +318,7 @@ impl Encodable for ConnectPacket {
         if let Some(will) = &self.will {
             encode_expression!(steps, Vli, will_property_length);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_WILL_DELAY_INTERVAL, self.will_delay_interval_seconds);
-            //encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, &will.payload_format);
+            encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, will.payload_format);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, will.message_expiry_interval_seconds);
             encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &will.content_type);
             encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, &will.response_topic);
@@ -363,8 +357,50 @@ impl Encoder {
         self.steps.clear();
         packet.write_encoding_steps(&mut self.steps);
     }
+
+    pub fn write_debug(&mut self, packet: &MqttPacket, dest: &mut Vec<u8>) {
+        while !self.steps.is_empty() {
+            let step = self.steps.pop_front().unwrap();
+            handle_step(step, packet, dest);
+        }
+    }
+
+
 }
 
+fn handle_step(step: EncodingStep<MqttPacket>, packet: &MqttPacket, dest: &mut Vec<u8>) {
+    match step {
+        EncodingStep::Uint8(val) => {
+            dest.push(val);
+        }
+        EncodingStep::Uint16(val) => {
+            dest.extend_from_slice(&val.to_le_bytes());
+        }
+        EncodingStep::Uint32(val) => {
+            dest.extend_from_slice(&val.to_le_bytes());
+        }
+        EncodingStep::Vli(val) => {
+            // TODO Fix
+            dest.extend_from_slice(&val.to_le_bytes());
+        }
+        EncodingStep::StringSlice(getter, _) => {
+            let str_slice = getter(packet);
+            dest.extend_from_slice(str_slice.as_bytes());
+        }
+        EncodingStep::BytesSlice(getter, _) => {
+            let slice = getter(packet);
+            dest.extend_from_slice(slice);
+        }
+        EncodingStep::UserPropertyName(getter, index, _) => {
+            let property = getter(packet, index);
+            dest.extend_from_slice(property.name.as_bytes());
+        }
+        EncodingStep::UserPropertyValue(getter, index, _) => {
+            let property = getter(packet, index);
+            dest.extend_from_slice(property.value.as_bytes());
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
