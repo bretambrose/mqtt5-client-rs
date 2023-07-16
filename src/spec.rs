@@ -18,7 +18,7 @@ pub enum PayloadFormatIndicator {
     Utf8 = 1,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum RetainHandlingType {
     #[default]
     SendOnSubscribe = 0,
@@ -26,7 +26,7 @@ pub enum RetainHandlingType {
     DontSend = 2,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum ConnectReasonCode {
     #[default]
     Success = 0,
@@ -53,7 +53,7 @@ pub enum ConnectReasonCode {
     ConnectionRateExceeeded = 159,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum PubackReasonCode {
     #[default]
     Success = 0,
@@ -67,7 +67,7 @@ pub enum PubackReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum PubrecReasonCode {
     #[default]
     Success = 0,
@@ -81,21 +81,21 @@ pub enum PubrecReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum PubrelReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum PubcompReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum DisconnectReasonCode {
     #[default]
     NormalDisconnection = 0,
@@ -129,7 +129,7 @@ pub enum DisconnectReasonCode {
     WildcardSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum SubackReasonCode {
     #[default]
     GrantedQos0 = 0,
@@ -146,7 +146,7 @@ pub enum SubackReasonCode {
     WildcaredSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum UnsubackReasonCode {
     #[default]
     Success = 0,
@@ -158,7 +158,7 @@ pub enum UnsubackReasonCode {
     PacketIdentifierInUse = 145,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum AuthenticateReasonCode {
     #[default]
     Success = 0,
@@ -368,7 +368,7 @@ pub struct AuthPacket {
     pub user_properties : Option<Vec<UserProperty>>,
 }
 
-pub enum MqttPacket {
+pub(crate) enum MqttPacket {
     Connect(ConnectPacket),
     Connack(ConnackPacket),
     Publish(PublishPacket),

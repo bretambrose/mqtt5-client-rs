@@ -4,26 +4,11 @@
  */
 
 use std::collections::VecDeque;
-use crate::client::*;
-use crate::packet::*;
-use crate::packet::MqttPacket;
 
+use crate::{Mqtt5Error, Mqtt5Result};
+use crate::spec::*;
 use crate::encoding_utils::*;
-
-enum EncodingStep {
-    Uint8(u8),
-    Uint16(u16),
-    Uint32(u32),
-    Vli(u32),
-    StringSlice(fn (&MqttPacket) -> &str, usize),
-    BytesSlice(fn (&MqttPacket) -> &[u8], usize),
-    UserPropertyName(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
-    UserPropertyValue(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
-}
-
-trait Encodable {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()>;
-}
+use crate::spec_impl::*;
 
 fn get_connect_packet_client_id(packet: &MqttPacket) -> &str {
     get_optional_packet_field!(packet, MqttPacket::Connect, client_id)
@@ -233,13 +218,13 @@ impl Encodable for ConnectPacket {
 
         let (total_remaining_length, connect_property_length, will_property_length) = length_result.unwrap();
 
-        encode_expression!(steps, Uint8, 1u8 << 4);
-        encode_expression!(steps, Vli, total_remaining_length);
+        encode_integral_expression!(steps, Uint8, 1u8 << 4);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
         encode_raw_bytes!(steps, get_connect_protocol_bytes);
-        encode_expression!(steps, Uint8, compute_connect_flags(self));
-        encode_expression!(steps, Uint16, self.keep_alive_interval_seconds);
+        encode_integral_expression!(steps, Uint8, compute_connect_flags(self));
+        encode_integral_expression!(steps, Uint16, self.keep_alive_interval_seconds);
 
-        encode_expression!(steps, Vli, connect_property_length);
+        encode_integral_expression!(steps, Vli, connect_property_length);
         encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval_seconds);
         encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, self.receive_maximum);
         encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, self.maximum_packet_size_bytes);
@@ -253,7 +238,7 @@ impl Encodable for ConnectPacket {
         encode_length_prefixed_optional_string!(steps, get_connect_packet_client_id, self.client_id);
 
         if let Some(will) = &self.will {
-            encode_expression!(steps, Vli, will_property_length);
+            encode_integral_expression!(steps, Vli, will_property_length);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_WILL_DELAY_INTERVAL, self.will_delay_interval_seconds);
             encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, will.payload_format);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, will.message_expiry_interval_seconds);
@@ -282,12 +267,12 @@ impl Encodable for MqttPacket {
     }
 }
 
-pub enum EncodeResult {
+pub(crate) enum EncodeResult {
     Complete,
     Full,
 }
 
-pub struct Encoder {
+pub(crate) struct Encoder {
     steps : VecDeque<EncodingStep>
 }
 
@@ -326,66 +311,6 @@ impl Encoder {
             Ok(EncodeResult::Full)
         } else {
             Ok(EncodeResult::Complete)
-        }
-    }
-}
-
-fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) -> usize {
-    let dest_space_in_bytes = dest.capacity() - dest.len();
-    let remaining_slice_bytes = bytes.len() - offset;
-    let encodable_length = usize::min(dest_space_in_bytes, remaining_slice_bytes);
-    let end_offset = offset + encodable_length;
-    let encodable_slice = bytes.get(offset..end_offset).unwrap();
-    dest.extend_from_slice(encodable_slice);
-
-    if encodable_length < remaining_slice_bytes {
-        end_offset
-    } else {
-        0
-    }
-}
-
-fn process_encoding_step(steps : &mut VecDeque<EncodingStep>, step : EncodingStep, packet: &MqttPacket, dest: &mut Vec<u8>) {
-    match step {
-        EncodingStep::Uint8(val) => {
-            dest.push(val);
-        }
-        EncodingStep::Uint16(val) => {
-            dest.extend_from_slice(&val.to_le_bytes());
-        }
-        EncodingStep::Uint32(val) => {
-            dest.extend_from_slice(&val.to_le_bytes());
-        }
-        EncodingStep::Vli(val) => {
-            encode_vli(val, dest);
-        }
-        EncodingStep::StringSlice(getter, offset) => {
-            let slice = getter(packet).as_bytes();
-            let end_offset = process_byte_slice_encoding(slice, offset, dest);
-            if end_offset > 0 {
-                steps.push_front(EncodingStep::StringSlice(getter, end_offset));
-            }
-        }
-        EncodingStep::BytesSlice(getter, offset) => {
-            let slice = getter(packet);
-            let end_offset = process_byte_slice_encoding(slice, offset, dest);
-            if end_offset > 0 {
-                steps.push_front(EncodingStep::BytesSlice(getter, end_offset));
-            }
-        }
-        EncodingStep::UserPropertyName(getter, index, offset) => {
-            let slice = getter(packet, index).name.as_bytes();
-            let end_offset = process_byte_slice_encoding(slice, offset, dest);
-            if end_offset > 0 {
-                steps.push_front(EncodingStep::UserPropertyName(getter, index,end_offset));
-            }
-        }
-        EncodingStep::UserPropertyValue(getter, index, offset) => {
-            let slice = getter(packet, index).value.as_bytes();
-            let end_offset = process_byte_slice_encoding(slice, offset, dest);
-            if end_offset > 0 {
-                steps.push_front(EncodingStep::UserPropertyValue(getter, index,end_offset));
-            }
         }
     }
 }

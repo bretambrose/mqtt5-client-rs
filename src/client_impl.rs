@@ -5,10 +5,53 @@
 
 extern crate tokio;
 
+use crate::Mqtt5Error;
 use crate::client::*;
 use tokio::runtime;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+
+macro_rules! client_lifecycle_operation_body {
+    ($lifeycle_operation:ident, $self:ident) => ({
+        match $self.operation_sender.try_send(OperationOptions::$lifeycle_operation()) {
+            Err(_) => {
+                Err(Mqtt5Error::OperationChannelSendError(()))
+            }
+            _ => {
+                Ok(())
+            }
+        }
+    })
+}
+
+pub(crate) use client_lifecycle_operation_body;
+
+macro_rules! client_mqtt_operation_body {
+    ($self:ident, $operation_type:ident, $options_internal_type: ident, $options_value: expr) => ({
+        let (response_sender, rx) = oneshot::channel();
+        let internal_options = $options_internal_type { options : $options_value, response_sender };
+        let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(internal_options));
+        Box::pin(async move {
+            match send_result {
+                Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
+                    match val {
+                        OperationOptions::$operation_type(options) => {
+                            Err(Mqtt5Error::OperationChannelSendError(options.options))
+                        }
+                        _ => {
+                            panic!("Illegal MQTT operation options type encountered in channel send error processing");
+                        }
+                    }
+                }
+                _ => {
+                    rx.await?
+                }
+            }
+        })
+    })
+}
+
+pub(crate) use client_mqtt_operation_body;
 
 pub struct PublishOptionsInternal {
     pub options: PublishOptions,

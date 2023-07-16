@@ -3,49 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-use crate::packet::*;
-use crate::client::*;
+///
+/// Internal utilities to encode MQTT5 packets, based on the MQTT5 spec
 
-pub static PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR : u8 = 1;
-pub static PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL : u8 = 2;
-pub static PROPERTY_KEY_CONTENT_TYPE : u8 = 3;
-pub static PROPERTY_KEY_RESPONSE_TOPIC : u8 = 8;
-pub static PROPERTY_KEY_CORRELATION_DATA : u8 = 9;
-pub static PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER : u8 = 11;
-pub static PROPERTY_KEY_SESSION_EXPIRY_INTERVAL : u8 = 17;
-pub static PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER : u8 = 18;
-pub static PROPERTY_KEY_SERVER_KEEP_ALIVE : u8 = 19;
-pub static PROPERTY_KEY_AUTHENTICATION_METHOD : u8 = 21;
-pub static PROPERTY_KEY_AUTHENTICATION_DATA : u8 = 22;
-pub static PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION : u8 = 23;
-pub static PROPERTY_KEY_WILL_DELAY_INTERVAL : u8 = 24;
-pub static PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION : u8 = 25;
-pub static PROPERTY_KEY_RESPONSE_INFORMATION : u8 = 26;
-pub static PROPERTY_KEY_SERVER_REFERENCE : u8 = 28;
-pub static PROPERTY_KEY_REASON_STRING : u8 = 31;
-pub static PROPERTY_KEY_RECEIVE_MAXIMUM : u8 = 33;
-pub static PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM : u8 = 34;
-pub static PROPERTY_KEY_TOPIC_ALIAS : u8 = 35;
-pub static PROPERTY_KEY_MAXIMUM_QOS : u8 = 36;
-pub static PROPERTY_KEY_RETAIN_AVAILABLE : u8 = 37;
-pub static PROPERTY_KEY_USER_PROPERTY : u8 = 38;
-pub static PROPERTY_KEY_MAXIMUM_PACKET_SIZE : u8 = 39;
-pub static PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE : u8 = 40;
-pub static PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE : u8 = 41;
-pub static PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE : u8 = 42;
+use std::collections::VecDeque;
 
+use crate::spec::{UserProperty, MqttPacket};
+use crate::{Mqtt5Error, Mqtt5Result};
 
-macro_rules! get_packet_field {
-    ($target: expr, $pat: path, $field_name: ident) => {
-        if let $pat(a) = $target { // #1
-            &a.$field_name
-        } else {
-            panic!("Packet variant mismatch");
-        }
-    };
+pub(crate) enum EncodingStep {
+    Uint8(u8),
+    Uint16(u16),
+    Uint32(u32),
+    Vli(u32),
+    StringSlice(fn (&MqttPacket) -> &str, usize),
+    BytesSlice(fn (&MqttPacket) -> &[u8], usize),
+    UserPropertyName(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
+    UserPropertyValue(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
 }
 
-pub(crate) use get_packet_field;
+pub(crate) trait Encodable {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()>;
+}
 
 macro_rules! get_optional_packet_field {
     ($target: expr, $pat: path, $field_name: ident) => {
@@ -59,28 +38,13 @@ macro_rules! get_optional_packet_field {
 
 pub(crate) use get_optional_packet_field;
 
-macro_rules! encode_expression {
+macro_rules! encode_integral_expression {
     ($target: ident, $enum_variant: ident, $value: expr) => {
         $target.push_back(EncodingStep::$enum_variant($value));
     };
 }
 
-pub(crate) use encode_expression;
-
-macro_rules! encode_optional_expression {
-    ($target: ident, $enum_variant: ident, $optional_value: expr) => {
-        if let Some(val) = $optional_value {
-            $target.push_back(EncodingStep::$enum_variant(val));
-        }
-    };
-}
-
-macro_rules! encode_property {
-    ($target: ident, $enum_variant: ident, $property_key: expr, $value: expr) => {
-        $target.push_back(EncodingStep::Uint8($property_key));
-        $target.push_back(EncodingStep::$enum_variant($value));
-    };
-}
+pub(crate) use encode_integral_expression;
 
 macro_rules! encode_optional_property {
     ($target: ident, $enum_variant: ident, $property_key: expr, $optional_value: expr) => {
@@ -313,7 +277,7 @@ pub fn compute_variable_length_integer_encode_size(value : usize) -> Mqtt5Result
     }
 }
 
-pub fn encode_vli(value: u32, dest: &mut Vec<u8>) {
+fn encode_vli(value: u32, dest: &mut Vec<u8>) {
     let mut done = false;
     let mut val = value;
     while !done {
@@ -327,5 +291,66 @@ pub fn encode_vli(value: u32, dest: &mut Vec<u8>) {
         dest.push(byte);
 
         done = val == 0;
+    }
+}
+
+
+fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) -> usize {
+    let dest_space_in_bytes = dest.capacity() - dest.len();
+    let remaining_slice_bytes = bytes.len() - offset;
+    let encodable_length = usize::min(dest_space_in_bytes, remaining_slice_bytes);
+    let end_offset = offset + encodable_length;
+    let encodable_slice = bytes.get(offset..end_offset).unwrap();
+    dest.extend_from_slice(encodable_slice);
+
+    if encodable_length < remaining_slice_bytes {
+        end_offset
+    } else {
+        0
+    }
+}
+
+pub(crate) fn process_encoding_step(steps : &mut VecDeque<EncodingStep>, step : EncodingStep, packet: &MqttPacket, dest: &mut Vec<u8>) {
+    match step {
+        EncodingStep::Uint8(val) => {
+            dest.push(val);
+        }
+        EncodingStep::Uint16(val) => {
+            dest.extend_from_slice(&val.to_le_bytes());
+        }
+        EncodingStep::Uint32(val) => {
+            dest.extend_from_slice(&val.to_le_bytes());
+        }
+        EncodingStep::Vli(val) => {
+            encode_vli(val, dest);
+        }
+        EncodingStep::StringSlice(getter, offset) => {
+            let slice = getter(packet).as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::StringSlice(getter, end_offset));
+            }
+        }
+        EncodingStep::BytesSlice(getter, offset) => {
+            let slice = getter(packet);
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::BytesSlice(getter, end_offset));
+            }
+        }
+        EncodingStep::UserPropertyName(getter, index, offset) => {
+            let slice = getter(packet, index).name.as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::UserPropertyName(getter, index,end_offset));
+            }
+        }
+        EncodingStep::UserPropertyValue(getter, index, offset) => {
+            let slice = getter(packet, index).value.as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::UserPropertyValue(getter, index,end_offset));
+            }
+        }
     }
 }
