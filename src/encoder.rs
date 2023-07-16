@@ -4,197 +4,25 @@
  */
 
 use std::collections::VecDeque;
+use crate::client::*;
 use crate::packet::*;
 use crate::packet::MqttPacket;
 
-static PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR : u8 = 1;
-static PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL : u8 = 2;
-static PROPERTY_KEY_CONTENT_TYPE : u8 = 3;
-static PROPERTY_KEY_RESPONSE_TOPIC : u8 = 8;
-static PROPERTY_KEY_CORRELATION_DATA : u8 = 9;
-static PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER : u8 = 11;
-static PROPERTY_KEY_SESSION_EXPIRY_INTERVAL : u8 = 17;
-static PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER : u8 = 18;
-static PROPERTY_KEY_SERVER_KEEP_ALIVE : u8 = 19;
-static PROPERTY_KEY_AUTHENTICATION_METHOD : u8 = 21;
-static PROPERTY_KEY_AUTHENTICATION_DATA : u8 = 22;
-static PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION : u8 = 23;
-static PROPERTY_KEY_WILL_DELAY_INTERVAL : u8 = 24;
-static PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION : u8 = 25;
-static PROPERTY_KEY_RESPONSE_INFORMATION : u8 = 26;
-static PROPERTY_KEY_SERVER_REFERENCE : u8 = 28;
-static PROPERTY_KEY_REASON_STRING : u8 = 31;
-static PROPERTY_KEY_RECEIVE_MAXIMUM : u8 = 33;
-static PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM : u8 = 34;
-static PROPERTY_KEY_TOPIC_ALIAS : u8 = 35;
-static PROPERTY_KEY_MAXIMUM_QOS : u8 = 36;
-static PROPERTY_KEY_RETAIN_AVAILABLE : u8 = 37;
-static PROPERTY_KEY_USER_PROPERTY : u8 = 38;
-static PROPERTY_KEY_MAXIMUM_PACKET_SIZE : u8 = 39;
-static PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE : u8 = 40;
-static PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE : u8 = 41;
-static PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE : u8 = 42;
+use crate::encoding_utils::*;
 
-pub enum EncodingStep<T> {
+enum EncodingStep {
     Uint8(u8),
     Uint16(u16),
     Uint32(u32),
     Vli(u32),
-    StringSlice(fn (&T) -> &str, u32),
-    BytesSlice(fn (&T) -> &[u8], u32),
-    UserPropertyName(fn (&T, usize) -> &UserProperty, usize, u32),
-    UserPropertyValue(fn (&T, usize) -> &UserProperty, usize, u32),
+    StringSlice(fn (&MqttPacket) -> &str, usize),
+    BytesSlice(fn (&MqttPacket) -> &[u8], usize),
+    UserPropertyName(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
+    UserPropertyValue(fn (&MqttPacket, usize) -> &UserProperty, usize, usize),
 }
 
-pub trait Encodable {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep<MqttPacket>>);
-}
-
-macro_rules! get_packet_field {
-    ($target: expr, $pat: path, $field_name: ident) => {
-        if let $pat(a) = $target { // #1
-            &a.$field_name
-        } else {
-            panic!("Packet variant mismatch");
-        }
-    };
-}
-
-macro_rules! get_optional_packet_field {
-    ($target: expr, $pat: path, $field_name: ident) => {
-        if let $pat(a) = $target { // #1
-            &a.$field_name.as_ref().unwrap()
-        } else {
-            panic!("Packet variant mismatch");
-        }
-    };
-}
-
-macro_rules! encode_expression {
-    ($target: ident, $enum_variant: ident, $value: expr) => {
-        $target.push_back(EncodingStep::$enum_variant($value));
-    };
-}
-
-macro_rules! encode_optional_expression {
-    ($target: ident, $enum_variant: ident, $optional_value: expr) => {
-        if let Some(val) = $optional_value {
-            $target.push_back(EncodingStep::$enum_variant(val));
-        }
-    };
-}
-
-macro_rules! encode_property {
-    ($target: ident, $enum_variant: ident, $property_key: expr, $value: expr) => {
-        $target.push_back(EncodingStep::Uint8($property_key));
-        $target.push_back(EncodingStep::$enum_variant($value));
-    };
-}
-
-macro_rules! encode_optional_property {
-    ($target: ident, $enum_variant: ident, $property_key: expr, $optional_value: expr) => {
-        if let Some(val) = $optional_value {
-            $target.push_back(EncodingStep::Uint8($property_key));
-            $target.push_back(EncodingStep::$enum_variant(val));
-        }
-    };
-}
-
-macro_rules! encode_optional_enum_property {
-    ($target: ident, $enum_variant: ident, $property_key: expr, $int_type: ty, $optional_value: expr) => {
-        if let Some(val) = $optional_value {
-            $target.push_back(EncodingStep::Uint8($property_key));
-            $target.push_back(EncodingStep::$enum_variant(val as $int_type));
-        }
-    };
-}
-
-
-macro_rules! encode_optional_boolean_property {
-    ($target: ident, $property_key: expr, $optional_value: expr) => {
-        if let Some(val) = $optional_value {
-            $target.push_back(EncodingStep::Uint8($property_key));
-            $target.push_back(EncodingStep::Uint8(if val { 1u8 } else { 0u8 }));
-        }
-    };
-}
-
-macro_rules! encode_length_prefixed_string {
-    ($target: ident, $getter: ident, $value: expr) => {
-        $target.push_back(EncodingStep::Uint16($value.len() as u16));
-        $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
-    };
-}
-
-macro_rules! encode_optional_length_prefixed_string {
-    ($target: ident, $getter: ident, $optional_value: expr) => {
-        if let Some(val) = &$optional_value {
-            $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
-        } else {
-            $target.push_back(EncodingStep::Uint16(0));
-        }
-    };
-}
-
-macro_rules! encode_optional_string_property {
-    ($target: ident, $getter: ident, $property_key: expr, $field_value: expr) => {
-        if let Some(val) = &$field_value {
-            $target.push_back(EncodingStep::Uint8($property_key));
-            $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::StringSlice($getter as fn(&MqttPacket) -> &str, 0));
-        }
-    };
-}
-
-macro_rules! encode_raw_bytes {
-    ($target: ident, $getter: ident) => {
-        $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
-    };
-}
-
-macro_rules! encode_optional_length_prefixed_bytes {
-    ($target: ident, $getter: ident, $optional_value: expr) => {
-        if let Some(val) = &$optional_value {
-            $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
-        } else {
-            $target.push_back(EncodingStep::Uint16(0));
-        }
-    };
-}
-
-macro_rules! encode_optional_bytes_property {
-    ($target: ident, $getter: ident, $property_key: expr, $field_value: expr) => {
-        if let Some(val) = &$field_value {
-            $target.push_back(EncodingStep::Uint8($property_key));
-            $target.push_back(EncodingStep::Uint16(val.len() as u16));
-            $target.push_back(EncodingStep::BytesSlice($getter as fn(&MqttPacket) -> &[u8], 0));
-        }
-    };
-}
-
-macro_rules! encode_user_property {
-    ($target: ident, $user_property_getter: ident, $value: ident, $index: expr) => {
-        {
-            $target.push_back(EncodingStep::Uint16($value.name.len() as u16));
-            $target.push_back(EncodingStep::UserPropertyName($user_property_getter as fn(&MqttPacket, usize) -> &UserProperty, $index, 0));
-            $target.push_back(EncodingStep::Uint16($value.value.len() as u16));
-            $target.push_back(EncodingStep::UserPropertyValue($user_property_getter as fn(&MqttPacket, usize) -> &UserProperty, $index, 0));
-        }
-    };
-}
-
-macro_rules! encode_user_properties {
-    ($target: ident, $user_property_getter: ident, $properties_ref: expr) => {
-        {
-            if let Some(properties) = &$properties_ref {
-                for (i, user_property) in properties.iter().enumerate() {
-                    encode_user_property!($target, $user_property_getter, user_property, i);
-                }
-            }
-        }
-    };
+trait Encodable {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()>;
 }
 
 fn get_connect_packet_client_id(packet: &MqttPacket) -> &str {
@@ -227,36 +55,75 @@ fn get_connect_packet_user_property(packet: &MqttPacket, index: usize) -> &UserP
     panic!("Internal encoding error: invalid user property state");
 }
 
-fn get_publish_packet_content_type(packet: &MqttPacket) -> &str {
-    get_optional_packet_field!(packet, MqttPacket::Publish, content_type)
+fn get_connect_packet_will_content_type(packet: &MqttPacket) -> &str {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(will) = &connect.will {
+            if let Some(content_type) = &will.content_type {
+                return content_type;
+            }
+        }
+    }
+
+    panic!("Encoder: will content type accessor invoked in an invalid state");
 }
 
-fn get_publish_packet_response_topic(packet: &MqttPacket) -> &str {
-    get_optional_packet_field!(packet, MqttPacket::Publish, response_topic)
+fn get_connect_packet_will_response_topic(packet: &MqttPacket) -> &str {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(will) = &connect.will {
+            if let Some(response_topic) = &will.response_topic {
+                return response_topic;
+            }
+        }
+    }
+
+    panic!("Will response topic accessor invoked in an invalid state");
 }
 
-fn get_publish_packet_correlation_data(packet: &MqttPacket) -> &[u8] {
-    get_optional_packet_field!(packet, MqttPacket::Publish, correlation_data)
+fn get_connect_packet_will_correlation_data(packet: &MqttPacket) -> &[u8] {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(will) = &connect.will {
+            if let Some(correlation_data) = &will.correlation_data {
+                return correlation_data;
+            }
+        }
+    }
+
+    panic!("Will correlation data accessor invoked in an invalid state");
 }
 
-fn get_publish_packet_topic(packet: &MqttPacket) -> &str {
-    get_packet_field!(packet, MqttPacket::Publish, topic)
+fn get_connect_packet_will_topic(packet: &MqttPacket) -> &str {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(will) = &connect.will {
+            return &will.topic;
+        }
+    }
+
+    panic!("Will topic accessor invoked in an invalid state");
 }
 
-fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
-    get_optional_packet_field!(packet, MqttPacket::Publish, payload)
+fn get_connect_packet_will_payload(packet: &MqttPacket) -> &[u8] {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(will) = &connect.will {
+            if let Some(payload) = &will.payload {
+                return payload;
+            }
+        }
+    }
+
+    panic!("Will payload accessor invoked in an invalid state");
 }
 
-fn get_publish_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
-    if let MqttPacket::Publish(publish) = packet {
-        if let Some(properties) = &publish.user_properties {
-            return &properties[index];
+fn get_connect_packet_will_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Connect(connect) = packet {
+        if let Some(publish) = &connect.will {
+            if let Some(properties) = &publish.user_properties {
+                return &properties[index];
+            }
         }
     }
 
     panic!("Internal encoding error: invalid user property state");
 }
-
 
 static MQTT5_CONNECT_PROTOCOL_BYTES: [u8; 7] = [0, 4, 77, 81, 84, 84, 5];
 fn get_connect_protocol_bytes(_ : &MqttPacket) -> &'static[u8] {
@@ -288,13 +155,83 @@ fn compute_connect_flags(packet: &ConnectPacket) -> u8 {
     flags
 }
 
-fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> (u32, u32, u32) {
-    (0, 0, 0)
+fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Result<(u32, u32, u32), ()> {
+    let mut connect_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    add_optional_u32_property_length!(connect_property_section_length, packet.session_expiry_interval_seconds);
+    add_optional_u16_property_length!(connect_property_section_length, packet.receive_maximum);
+    add_optional_u32_property_length!(connect_property_section_length, packet.maximum_packet_size_bytes);
+    add_optional_u16_property_length!(connect_property_section_length, packet.topic_alias_maximum);
+    add_optional_u8_property_length!(connect_property_section_length, packet.request_response_information);
+    add_optional_u8_property_length!(connect_property_section_length, packet.request_problem_information);
+    add_optional_string_property_length!(connect_property_section_length, packet.authentication_method);
+    add_optional_bytes_property_length!(connect_property_section_length, packet.authentication_data);
+
+    /* variable header length =
+     *    10 bytes (6 for mqtt string, 1 for protocol version, 1 for flags, 2 for keep alive)
+     *  + # bytes(variable_length_encoding(connect_property_section_length))
+     *  + connect_property_section_length
+     */
+    let variable_header_length_result = compute_variable_length_integer_encode_size(connect_property_section_length);
+    if let Err(error) = variable_header_length_result {
+        return Err(error);
+    }
+
+    let mut variable_header_length: usize = variable_header_length_result.unwrap();
+    variable_header_length += 10 + connect_property_section_length;
+
+    let mut payload_length : usize = 0;
+    add_optional_string_length!(payload_length, packet.client_id);
+
+    let mut will_property_length : usize = 0;
+    if let Some(will) = &packet.will {
+        will_property_length = compute_user_properties_length(&will.user_properties);
+
+        add_optional_u32_property_length!(will_property_length, packet.will_delay_interval_seconds);
+        add_optional_u8_property_length!(will_property_length, will.payload_format);
+        add_optional_u32_property_length!(will_property_length, will.message_expiry_interval_seconds);
+        add_optional_string_property_length!(will_property_length, will.content_type);
+        add_optional_string_property_length!(will_property_length, will.response_topic);
+        add_optional_bytes_property_length!(will_property_length, will.correlation_data);
+
+        let will_properties_length_encode_size_result = compute_variable_length_integer_encode_size(will_property_length);
+        if let Err(error) = will_properties_length_encode_size_result {
+            return Err(error);
+        }
+
+        let will_properties_length_encode_size : usize = will_properties_length_encode_size_result.unwrap();
+
+        payload_length += will_property_length;
+        payload_length += will_properties_length_encode_size;
+        payload_length += 2 + will.topic.len();
+        add_optional_bytes_length!(payload_length, will.payload);
+    }
+
+    if let Some(username) = &packet.username {
+        payload_length += 2 + username.len();
+    }
+
+    if let Some(password) = &packet.password {
+        payload_length += 2 + password.len();
+    }
+
+    let total_remaining_length : usize = payload_length + variable_header_length;
+
+    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER {
+        return Err(Mqtt5Error::VariableLengthIntegerMaximumExceeded);
+    }
+
+    Ok((total_remaining_length as u32, connect_property_section_length as u32, will_property_length as u32))
 }
 
 impl Encodable for ConnectPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep<MqttPacket>>) {
-        let (total_remaining_length, connect_property_length, will_property_length) = compute_connect_packet_length_properties(self);
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let length_result = compute_connect_packet_length_properties(self);
+        if let Err(error) = length_result {
+            return Err(error);
+        }
+
+        let (total_remaining_length, connect_property_length, will_property_length) = length_result.unwrap();
 
         encode_expression!(steps, Uint8, 1u8 << 4);
         encode_expression!(steps, Vli, total_remaining_length);
@@ -313,62 +250,102 @@ impl Encodable for ConnectPacket {
         encode_optional_bytes_property!(steps, get_connect_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
         encode_user_properties!(steps, get_connect_packet_user_property, self.user_properties);
 
-        encode_optional_length_prefixed_string!(steps, get_connect_packet_client_id, self.client_id);
+        encode_length_prefixed_optional_string!(steps, get_connect_packet_client_id, self.client_id);
 
         if let Some(will) = &self.will {
             encode_expression!(steps, Vli, will_property_length);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_WILL_DELAY_INTERVAL, self.will_delay_interval_seconds);
             encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, will.payload_format);
             encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, will.message_expiry_interval_seconds);
-            encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &will.content_type);
-            encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, &will.response_topic);
-            encode_optional_bytes_property!(steps, get_publish_packet_correlation_data, PROPERTY_KEY_CORRELATION_DATA, will.correlation_data);
-            encode_user_properties!(steps, get_publish_packet_user_property, will.user_properties);
+            encode_optional_string_property!(steps, get_connect_packet_will_content_type, PROPERTY_KEY_CONTENT_TYPE, &will.content_type);
+            encode_optional_string_property!(steps, get_connect_packet_will_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, &will.response_topic);
+            encode_optional_bytes_property!(steps, get_connect_packet_will_correlation_data, PROPERTY_KEY_CORRELATION_DATA, will.correlation_data);
+            encode_user_properties!(steps, get_connect_packet_will_user_property, will.user_properties);
 
-            encode_length_prefixed_string!(steps, get_publish_packet_topic, will.topic);
-            encode_optional_length_prefixed_bytes!(steps, get_publish_packet_payload, will.payload);
+            encode_length_prefixed_string!(steps, get_connect_packet_will_topic, will.topic);
+            encode_length_prefixed_optional_bytes!(steps, get_connect_packet_will_payload, will.payload);
         }
 
-        encode_optional_length_prefixed_string!(steps, get_connect_packet_username, self.username);
-        encode_optional_length_prefixed_bytes!(steps, get_connect_packet_password, self.password);
+        encode_length_prefixed_optional_string!(steps, get_connect_packet_username, self.username);
+        encode_length_prefixed_optional_bytes!(steps, get_connect_packet_password, self.password);
+
+        Ok(())
     }
 }
 
 impl Encodable for MqttPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep<MqttPacket>>) {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
-            MqttPacket::Connect(packet) => { packet.write_encoding_steps(steps); }
-            _ => {}
+            MqttPacket::Connect(packet) => { return packet.write_encoding_steps(steps); }
+            _ => { Err(Mqtt5Error::Unimplemented(())) }
         }
     }
 }
 
+pub enum EncodeResult {
+    Complete,
+    Full,
+}
+
 pub struct Encoder {
-    steps : VecDeque<EncodingStep<MqttPacket>>
+    steps : VecDeque<EncodingStep>
 }
 
 impl Encoder {
-
     pub fn new() -> Encoder {
         Encoder { steps: VecDeque::new() }
     }
 
-    pub fn reset(&mut self, packet: &MqttPacket) {
+    pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<(), ()> {
         self.steps.clear();
-        packet.write_encoding_steps(&mut self.steps);
+
+        packet.write_encoding_steps(&mut self.steps)
     }
 
-    pub fn write_debug(&mut self, packet: &MqttPacket, dest: &mut Vec<u8>) {
+    pub fn encode(&mut self, packet: &MqttPacket, dest: &mut Vec<u8>) -> Mqtt5Result<EncodeResult, ()>{
+        let capacity = dest.capacity();
+        if capacity < 4 {
+            return Err(Mqtt5Error::EncodeBufferTooSmall);
+        }
+
         while !self.steps.is_empty() {
             let step = self.steps.pop_front().unwrap();
-            handle_step(step, packet, dest);
+            process_encoding_step(&mut self.steps, step, packet, dest);
+
+            // Always want to have at least 4 bytes available to start a new step
+            if dest.len() + 4 > dest.capacity() {
+                break;
+            }
+        }
+
+        if capacity != dest.capacity() {
+            panic!("Internal error: encoding logic resized dest buffer");
+        }
+
+        if dest.len() + 4 > dest.capacity() {
+            Ok(EncodeResult::Full)
+        } else {
+            Ok(EncodeResult::Complete)
         }
     }
-
-
 }
 
-fn handle_step(step: EncodingStep<MqttPacket>, packet: &MqttPacket, dest: &mut Vec<u8>) {
+fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) -> usize {
+    let dest_space_in_bytes = dest.capacity() - dest.len();
+    let remaining_slice_bytes = bytes.len() - offset;
+    let encodable_length = usize::min(dest_space_in_bytes, remaining_slice_bytes);
+    let end_offset = offset + encodable_length;
+    let encodable_slice = bytes.get(offset..end_offset).unwrap();
+    dest.extend_from_slice(encodable_slice);
+
+    if encodable_length < remaining_slice_bytes {
+        end_offset
+    } else {
+        0
+    }
+}
+
+fn process_encoding_step(steps : &mut VecDeque<EncodingStep>, step : EncodingStep, packet: &MqttPacket, dest: &mut Vec<u8>) {
     match step {
         EncodingStep::Uint8(val) => {
             dest.push(val);
@@ -380,39 +357,88 @@ fn handle_step(step: EncodingStep<MqttPacket>, packet: &MqttPacket, dest: &mut V
             dest.extend_from_slice(&val.to_le_bytes());
         }
         EncodingStep::Vli(val) => {
-            // TODO Fix
-            dest.extend_from_slice(&val.to_le_bytes());
+            encode_vli(val, dest);
         }
-        EncodingStep::StringSlice(getter, _) => {
-            let str_slice = getter(packet);
-            dest.extend_from_slice(str_slice.as_bytes());
+        EncodingStep::StringSlice(getter, offset) => {
+            let slice = getter(packet).as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::StringSlice(getter, end_offset));
+            }
         }
-        EncodingStep::BytesSlice(getter, _) => {
+        EncodingStep::BytesSlice(getter, offset) => {
             let slice = getter(packet);
-            dest.extend_from_slice(slice);
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::BytesSlice(getter, end_offset));
+            }
         }
-        EncodingStep::UserPropertyName(getter, index, _) => {
-            let property = getter(packet, index);
-            dest.extend_from_slice(property.name.as_bytes());
+        EncodingStep::UserPropertyName(getter, index, offset) => {
+            let slice = getter(packet, index).name.as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::UserPropertyName(getter, index,end_offset));
+            }
         }
-        EncodingStep::UserPropertyValue(getter, index, _) => {
-            let property = getter(packet, index);
-            dest.extend_from_slice(property.value.as_bytes());
+        EncodingStep::UserPropertyValue(getter, index, offset) => {
+            let slice = getter(packet, index).value.as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::UserPropertyValue(getter, index,end_offset));
+            }
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn encoder_step_lifetime() {
+    fn encoder_hand_check() {
 
         let mut encoder  = Encoder::new();
 
-        let packet = MqttPacket::Connect(ConnectPacket { keep_alive_interval_seconds: 1200, ..Default::default() });
-        encoder.reset(&packet);
+        let packet = MqttPacket::Connect(ConnectPacket {
+            keep_alive_interval_seconds: 1200,
+            clean_start : true,
+            client_id : Some("A-client-id".to_owned()),
+            username : Some("A-username".to_owned()),
+            password : Some([1u8, 2u8, 3u8, 4u8].to_vec()),
+            session_expiry_interval_seconds : Some(3600),
+            request_response_information : Some(true),
+            request_problem_information : Some(true),
+            receive_maximum : Some(100),
+            topic_alias_maximum : Some(25),
+            maximum_packet_size_bytes : Some(128 * 1024),
+            authentication_method : Some("GSSAPI".to_owned()),
+            authentication_data : Some([1u8, 2u8, 3u8, 4u8].to_vec()),
+            will_delay_interval_seconds : Some(1u32 << 24),
+            will : Some(PublishPacket {
+                topic : "oh/no".to_owned(),
+                qos : QualityOfService::AtLeastOnce,
+                retain : true,
+                payload : Some(vec![0u8; 1024]),
+                payload_format : Some(PayloadFormatIndicator::Bytes),
+                message_expiry_interval_seconds : Some(32768),
+                response_topic : Some("here/lies/a/packet".to_owned()),
+                correlation_data : Some([1u8, 2u8, 3u8, 4u8, 5u8].to_vec()),
+                content_type : Some("application/json".to_owned()),
+                user_properties : Some([UserProperty { name : "WillTerb".to_owned(), value : "WillBlah".to_owned()}].to_vec()),
+
+                ..Default::default()
+            }),
+            user_properties : Some([UserProperty { name : "Terb".to_owned(), value : "Blah".to_owned()}].to_vec()),
+        });
+
+        let reset_result = encoder.reset(&packet);
+        assert!(reset_result.is_ok());
+
+        let mut buffer = Vec::<u8>::with_capacity(16384);
+
+        let encoding_result = encoder.encode(&packet, &mut buffer);
+        assert!(encoding_result.is_ok());
     }
 
 }

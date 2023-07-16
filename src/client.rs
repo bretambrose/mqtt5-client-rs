@@ -52,6 +52,8 @@ pub enum Mqtt5Error<T> {
     Unimplemented(T),
     OperationChannelReceiveError,
     OperationChannelSendError(T),
+    VariableLengthIntegerMaximumExceeded,
+    EncodeBufferTooSmall,
 }
 
 impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {

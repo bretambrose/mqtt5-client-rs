@@ -166,7 +166,7 @@ pub enum AuthenticateReasonCode {
     ReAuthenticate = 25,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UserProperty {
     pub name : String,
     pub value : String,
