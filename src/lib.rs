@@ -5,12 +5,13 @@
 
 pub mod client;
 mod client_impl;
+mod decoding_utils;
 mod encoder;
 mod encoding_utils;
 pub mod spec;
 mod spec_impl;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Mqtt5Error<T> {
     Unknown,
     Unimplemented(T),
@@ -18,6 +19,7 @@ pub enum Mqtt5Error<T> {
     OperationChannelSendError(T),
     VariableLengthIntegerMaximumExceeded,
     EncodeBufferTooSmall,
+    DecoderInvalidVli,
 }
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;

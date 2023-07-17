@@ -299,7 +299,11 @@ pub fn compute_variable_length_integer_encode_size(value: usize) -> Mqtt5Result<
     }
 }
 
-fn encode_vli(value: u32, dest: &mut Vec<u8>) {
+fn encode_vli(value: u32, dest: &mut Vec<u8>) -> Mqtt5Result<(), ()>{
+    if value > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
+        return Err(Mqtt5Error::VariableLengthIntegerMaximumExceeded);
+    }
+
     let mut done = false;
     let mut val = value;
     while !done {
@@ -314,6 +318,8 @@ fn encode_vli(value: u32, dest: &mut Vec<u8>) {
 
         done = val == 0;
     }
+
+    Ok(())
 }
 
 fn process_byte_slice_encoding(bytes: &[u8], offset: usize, dest: &mut Vec<u8>) -> usize {
@@ -336,7 +342,7 @@ pub(crate) fn process_encoding_step(
     step: EncodingStep,
     packet: &MqttPacket,
     dest: &mut Vec<u8>,
-) {
+) -> Mqtt5Result<(), ()> {
     match step {
         EncodingStep::Uint8(val) => {
             dest.push(val);
@@ -348,7 +354,7 @@ pub(crate) fn process_encoding_step(
             dest.extend_from_slice(&val.to_le_bytes());
         }
         EncodingStep::Vli(val) => {
-            encode_vli(val, dest);
+            return encode_vli(val, dest);
         }
         EncodingStep::StringSlice(getter, offset) => {
             let slice = getter(packet).as_bytes();
@@ -378,5 +384,107 @@ pub(crate) fn process_encoding_step(
                 steps.push_front(EncodingStep::UserPropertyValue(getter, index, end_offset));
             }
         }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decoding_utils::*;
+
+    macro_rules! assert_vli_encoding_equals {
+        ($target: ident, $value: expr, $expected_result: expr) => {
+            {
+                let mut $target = Vec::<u8>::with_capacity(4);
+                assert!(encode_vli($value, &mut $target).is_ok());
+                assert_eq!($expected_result, &$target[..]);
+            }
+        };
+    }
+
+    macro_rules! assert_vli_encoding_fails {
+        ($target: ident, $value: expr) => {
+            {
+                let mut $target = Vec::<u8>::with_capacity(4);
+                assert!(encode_vli($value, &mut $target).is_err());
+            }
+        };
+    }
+
+    macro_rules! assert_vli_round_trip_success {
+        ($value: expr) => {
+            {
+                let mut dest = Vec::<u8>::with_capacity(4);
+                assert!(encode_vli($value, &mut dest).is_ok());
+
+                for i in 1..dest.len() {
+                    let insufficient_data_result = decode_vli(&dest[..i]);
+                    assert_eq!(Ok(DecodeVliResult::InsufficientData), insufficient_data_result);
+                }
+
+                let final_result = decode_vli(&dest);
+                let expected_bytes = compute_variable_length_integer_encode_size($value as usize).unwrap();
+                assert_eq!(Ok(DecodeVliResult::Value($value, expected_bytes as u8)), final_result);
+            }
+        };
+    }
+
+    #[test]
+    fn vli_round_trips() {
+        assert_vli_round_trip_success!(0);
+        assert_vli_round_trip_success!(1);
+        assert_vli_round_trip_success!(47);
+        assert_vli_round_trip_success!(127);
+        assert_vli_round_trip_success!(128);
+        assert_vli_round_trip_success!(129);
+        assert_vli_round_trip_success!(511);
+        assert_vli_round_trip_success!(8000);
+        assert_vli_round_trip_success!(16383);
+        assert_vli_round_trip_success!(16384);
+        assert_vli_round_trip_success!(16385);
+        assert_vli_round_trip_success!(100000);
+        assert_vli_round_trip_success!(4200000);
+        assert_vli_round_trip_success!(34200000);
+        assert_vli_round_trip_success!(MAXIMUM_VARIABLE_LENGTH_INTEGER as u32);
+    }
+
+    #[test]
+    fn encode_vli_successes() {
+        assert_vli_encoding_equals!(dest, 0, [0u8]);
+        assert_vli_encoding_equals!(dest, 1, [1u8]);
+        assert_vli_encoding_equals!(dest, 127, [127u8]);
+        assert_vli_encoding_equals!(dest, 128, [0x80u8, 1u8]);
+        assert_vli_encoding_equals!(dest, 129, [0x81u8, 1u8]);
+    }
+
+    #[test]
+    fn encode_vli_failures() {
+        assert_vli_encoding_fails!(dest, MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 + 1);
+        assert_vli_encoding_fails!(dest, 0x80000000u32);
+        assert_vli_encoding_fails!(dest, 0xFFFFFFFFu32);
+    }
+
+    #[test]
+    fn compute_vli_encoding_size_successes() {
+        assert_eq!(1, compute_variable_length_integer_encode_size(0).unwrap());
+        assert_eq!(1, compute_variable_length_integer_encode_size(1).unwrap());
+        assert_eq!(1, compute_variable_length_integer_encode_size(127).unwrap());
+        assert_eq!(2, compute_variable_length_integer_encode_size(128).unwrap());
+        assert_eq!(2, compute_variable_length_integer_encode_size(256).unwrap());
+        assert_eq!(2, compute_variable_length_integer_encode_size(16383).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(16384).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(16385).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(2097151).unwrap());
+        assert_eq!(4, compute_variable_length_integer_encode_size(2097152).unwrap());
+        assert_eq!(4, compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER).unwrap());
+    }
+
+    #[test]
+    fn compute_vli_encoding_size_failures() {
+        assert!(compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER + 1).is_err());
+        assert!(compute_variable_length_integer_encode_size(u32::MAX as usize).is_err());
+        assert!(compute_variable_length_integer_encode_size(usize::MAX).is_err());
     }
 }

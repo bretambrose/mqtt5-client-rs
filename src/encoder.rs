@@ -305,7 +305,10 @@ impl Encoder {
 
         while !self.steps.is_empty() {
             let step = self.steps.pop_front().unwrap();
-            process_encoding_step(&mut self.steps, step, packet, dest);
+            let result = process_encoding_step(&mut self.steps, step, packet, dest);
+            if let Err(error) = result {
+                return Err(error);
+            }
 
             // Always want to have at least 4 bytes available to start a new step
             if dest.len() + 4 > dest.capacity() {
