@@ -3,6 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub static PACKET_TYPE_CONNECT: u8 = 1;
+pub static PACKET_TYPE_CONNACK: u8 = 2;
+pub static PACKET_TYPE_PUBLISH: u8 = 3;
+pub static PACKET_TYPE_PUBACK: u8 = 4;
+pub static PACKET_TYPE_PUBREC: u8 = 5;
+pub static PACKET_TYPE_PUBREL: u8 = 6;
+pub static PACKET_TYPE_PUBCOMP: u8 = 7;
+pub static PACKET_TYPE_SUBSCRIBE: u8 = 8;
+pub static PACKET_TYPE_SUBACK: u8 = 9;
+pub static PACKET_TYPE_UNSUBSCRIBE: u8 = 10;
+pub static PACKET_TYPE_UNSUBACK: u8 = 11;
+pub static PACKET_TYPE_PINGREQ: u8 = 12;
+pub static PACKET_TYPE_PINGRESP: u8 = 13;
+pub static PACKET_TYPE_DISCONNECT: u8 = 14;
+pub static PACKET_TYPE_AUTH: u8 = 15;
+
 pub static PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR: u8 = 1;
 pub static PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL: u8 = 2;
 pub static PROPERTY_KEY_CONTENT_TYPE: u8 = 3;

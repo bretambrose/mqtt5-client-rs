@@ -260,10 +260,208 @@ impl Encodable for ConnectPacket {
     }
 }
 
+#[rustfmt::skip]
+fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut publish_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    add_optional_u8_property_length!(publish_property_section_length, packet.payload_format);
+    add_optional_u32_property_length!(publish_property_section_length, packet.message_expiry_interval_seconds);
+    add_optional_u16_property_length!(publish_property_section_length, packet.topic_alias);
+    add_optional_string_property_length!(publish_property_section_length, packet.content_type);
+    add_optional_string_property_length!(publish_property_section_length, packet.response_topic);
+    add_optional_bytes_property_length!(publish_property_section_length, packet.correlation_data);
+
+    /* should never happen on the client, but just to be complete */
+    if let Some(subscription_identifiers) = &packet.subscription_identifiers {
+        for (val, i) in subscription_identifiers.iter().enumerate() {
+            let identifier_encode_size_result = compute_variable_length_integer_encode_size(val);
+            if let Err(error) = identifier_encode_size_result {
+                return Err(error);
+            }
+
+            let encoding_size = identifier_encode_size_result.unwrap();
+            publish_property_section_length += 1 + encoding_size;
+        }
+    }
+
+    /*
+     * Remaining Length:
+     * Variable Header
+     *  - Topic Name
+     *  - Packet Identifier
+     *  - Property Length as VLI x
+     *  - All Properties x
+     * Payload
+     */
+
+    let publish_property_section_length_encode_size_result = compute_variable_length_integer_encode_size(publish_property_section_length);
+    if let Err(error) = publish_property_section_length_encode_size_result {
+        return Err(error);
+    }
+
+    let mut total_remaining_length : usize = publish_property_section_length_encode_size_result.unwrap();
+
+    /* Topic name */
+    total_remaining_length += 2 + packet.topic.len();
+
+    /* Optional (qos1+) packet id */
+    if packet.packet_id != 0 {
+        total_remaining_length += 2;
+    }
+
+    total_remaining_length += publish_property_section_length;
+
+    if let Some(payload) = &packet.payload {
+        total_remaining_length += payload.len();
+    }
+
+    Ok((total_remaining_length as u32, publish_property_section_length as u32))
+}
+
+/*
+ * Fixed Header
+ * byte 1:
+ *  bits 4-7: MQTT Control Packet Type
+ *  bit 3: DUP flag
+ *  bit 1-2: QoS level
+ *  bit 0: RETAIN
+ * byte 2-x: Remaining Length as Variable Byte Integer (1-4 bytes)
+ */
+fn compute_publish_fixed_header_first_byte(packet: &PublishPacket) -> u8 {
+    let mut first_byte: u8 = PACKET_TYPE_PUBLISH << 4;
+
+    if packet.duplicate {
+        first_byte |= 1u8 << 3;
+    }
+
+    first_byte |= (packet.qos as u8) << 1;
+
+    if packet.retain {
+        first_byte |= 1u8;
+    }
+
+    first_byte
+}
+
+fn get_publish_packet_response_topic(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Publish, response_topic)
+}
+
+fn get_publish_packet_correlation_data(packet: &MqttPacket) -> &[u8] {
+    get_optional_packet_field!(packet, MqttPacket::Publish, correlation_data)
+}
+
+fn get_publish_packet_content_type(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Publish, content_type)
+}
+
+fn get_publish_packet_topic(packet: &MqttPacket) -> &str {
+    get_packet_field!(packet, MqttPacket::Publish, topic)
+}
+
+fn get_publish_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Publish(publish) = packet {
+        if let Some(properties) = &publish.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
+    if let MqttPacket::Publish(publish) = packet {
+        if let Some(bytes) = &publish.payload {
+            return bytes;
+        }
+    }
+
+    panic!("Internal encoding error: invalid publish payload state");
+}
+
+#[rustfmt::skip]
+impl Encodable for PublishPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let length_result = compute_publish_packet_length_properties(self);
+        if let Err(error) = length_result {
+            return Err(error);
+        }
+
+        let (total_remaining_length, publish_property_length) = length_result.unwrap();
+
+        encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(self));
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        /*
+         * Variable Header
+         * UTF-8 Encoded Topic Name
+         * 2 byte Packet Identifier
+         * 1-4 byte Property Length as Variable Byte Integer
+         * n bytes Properties
+         */
+        encode_length_prefixed_string!(steps, get_publish_packet_topic, self.topic);
+        if self.qos != QualityOfService::AtMostOnce {
+            encode_integral_expression!(steps, Uint16, self.packet_id);
+        }
+        encode_integral_expression!(steps, Vli, publish_property_length);
+
+        encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, self.payload_format);
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, self.message_expiry_interval_seconds);
+        encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS, self.topic_alias);
+        encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, self.response_topic);
+        encode_optional_bytes_property!(steps, get_publish_packet_correlation_data, PROPERTY_KEY_CORRELATION_DATA, self.correlation_data);
+
+        if let Some(subscription_identifiers) = &self.subscription_identifiers {
+            for val in subscription_identifiers {
+                encode_integral_expression!(steps, Uint8, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER);
+                encode_integral_expression!(steps, Vli, *val);
+            }
+        }
+
+        encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &self.content_type);
+        encode_user_properties!(steps, get_publish_packet_user_property, self.user_properties);
+
+        if let Some(bytes) = &self.payload {
+            encode_raw_bytes!(steps, get_publish_packet_payload);
+        }
+
+        Ok(())
+    }
+}
+
+#[rustfmt::skip]
+impl Encodable for PingreqPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGREQ << 4);
+        encode_integral_expression!(steps, Uint8, 0);
+
+        Ok(())
+    }
+}
+
+#[rustfmt::skip]
+impl Encodable for PingrespPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGRESP << 4);
+        encode_integral_expression!(steps, Uint8, 0);
+
+        Ok(())
+    }
+}
+
 impl Encodable for MqttPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
             MqttPacket::Connect(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Publish(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pingreq(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pingresp(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             _ => Err(Mqtt5Error::Unimplemented(())),

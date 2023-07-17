@@ -12,9 +12,9 @@ pub(crate) enum DecodeVliResult {
 }
 
 pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
-    let mut value : u32 = 0;
-    let mut needs_data : bool = false;
-    let mut shift : u32 = 0;
+    let mut value: u32 = 0;
+    let mut needs_data: bool = false;
+    let mut shift: u32 = 0;
     let data_len = buffer.len();
 
     for i in 0..4 {

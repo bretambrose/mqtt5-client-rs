@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum QualityOfService {
     #[default]
     AtMostOnce = 0,
