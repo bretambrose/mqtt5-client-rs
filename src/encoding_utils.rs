@@ -481,44 +481,25 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn compute_vli_encoding_size_successes() {
         assert_eq!(1, compute_variable_length_integer_encode_size(0).unwrap());
         assert_eq!(1, compute_variable_length_integer_encode_size(1).unwrap());
         assert_eq!(1, compute_variable_length_integer_encode_size(127).unwrap());
         assert_eq!(2, compute_variable_length_integer_encode_size(128).unwrap());
         assert_eq!(2, compute_variable_length_integer_encode_size(256).unwrap());
-        assert_eq!(
-            2,
-            compute_variable_length_integer_encode_size(16383).unwrap()
-        );
-        assert_eq!(
-            3,
-            compute_variable_length_integer_encode_size(16384).unwrap()
-        );
-        assert_eq!(
-            3,
-            compute_variable_length_integer_encode_size(16385).unwrap()
-        );
-        assert_eq!(
-            3,
-            compute_variable_length_integer_encode_size(2097151).unwrap()
-        );
-        assert_eq!(
-            4,
-            compute_variable_length_integer_encode_size(2097152).unwrap()
-        );
-        assert_eq!(
-            4,
-            compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER).unwrap()
-        );
+        assert_eq!(2, compute_variable_length_integer_encode_size(16383).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(16384).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(16385).unwrap());
+        assert_eq!(3, compute_variable_length_integer_encode_size(2097151).unwrap());
+        assert_eq!(4, compute_variable_length_integer_encode_size(2097152).unwrap());
+        assert_eq!(4, compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER).unwrap());
     }
 
     #[test]
+    #[rustfmt::skip]
     fn compute_vli_encoding_size_failures() {
-        assert!(
-            compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER + 1)
-                .is_err()
-        );
+        assert!(compute_variable_length_integer_encode_size(MAXIMUM_VARIABLE_LENGTH_INTEGER + 1).is_err());
         assert!(compute_variable_length_integer_encode_size(u32::MAX as usize).is_err());
         assert!(compute_variable_length_integer_encode_size(usize::MAX).is_err());
     }
