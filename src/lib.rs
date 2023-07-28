@@ -5,6 +5,7 @@
 
 pub mod client;
 mod client_impl;
+mod decoder;
 mod decoding_utils;
 mod encoder;
 mod encoding_utils;
@@ -20,6 +21,7 @@ pub enum Mqtt5Error<T> {
     VariableLengthIntegerMaximumExceeded,
     EncodeBufferTooSmall,
     DecoderInvalidVli,
+    ProtocolError,
 }
 
 pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;

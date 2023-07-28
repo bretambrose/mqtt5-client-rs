@@ -23,7 +23,7 @@ pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
         }
 
         let byte = buffer[i];
-        value |= (((byte & 0x7F) as u32) << shift);
+        value |= ((byte & 0x7F) as u32) << shift;
         shift += 7;
 
         needs_data = (byte & 0x80) != 0;
