@@ -6,9 +6,9 @@
 use crate::{Mqtt5Error, Mqtt5Result};
 
 #[derive(Eq, PartialEq, Debug)]
-pub(crate) enum DecodeVliResult {
+pub(crate) enum DecodeVliResult<'a> {
     InsufficientData,
-    Value(u32, u8), /* (decoded value, bytes read) */
+    Value(u32, &'a[u8]), /* (decoded value, remaining bytes) */
 }
 
 pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
@@ -28,7 +28,7 @@ pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
 
         needs_data = (byte & 0x80) != 0;
         if !needs_data {
-            return Ok(DecodeVliResult::Value(value, i as u8 + 1));
+            return Ok(DecodeVliResult::Value(value, &buffer[(i + 1)..]));
         }
     }
 

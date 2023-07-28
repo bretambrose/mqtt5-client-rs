@@ -439,7 +439,7 @@ mod tests {
             let expected_bytes =
                 compute_variable_length_integer_encode_size($value as usize).unwrap();
             assert_eq!(
-                Ok(DecodeVliResult::Value($value, expected_bytes as u8)),
+                Ok(DecodeVliResult::Value($value, &dest[expected_bytes..])),
                 final_result
             );
         }};
