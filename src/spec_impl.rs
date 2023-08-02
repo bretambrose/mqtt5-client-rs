@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+use crate::spec::*;
+use crate::*;
+
 pub const PACKET_TYPE_CONNECT: u8 = 1;
 pub const PACKET_TYPE_CONNACK: u8 = 2;
 pub const PACKET_TYPE_PUBLISH: u8 = 3;
@@ -46,3 +49,24 @@ pub const PROPERTY_KEY_MAXIMUM_PACKET_SIZE: u8 = 39;
 pub const PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE: u8 = 40;
 pub const PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE: u8 = 41;
 pub const PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE: u8 = 42;
+
+pub const PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG : u8 = 8;
+pub const PUBLISH_PACKET_FIXED_HEADER_RETAIN_FLAG : u8 = 1;
+pub const PUBLISH_PACKET_FIXED_HEADER_QOS_MASK : u8 = 3;
+
+pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService, ()> {
+    match value {
+        0 => { Ok(QualityOfService::AtMostOnce) }
+        1 => { Ok(QualityOfService::AtLeastOnce) }
+        2 => { Ok(QualityOfService::ExactlyOnce) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<PayloadFormatIndicator, ()> {
+    match value {
+        0 => { Ok(PayloadFormatIndicator::Bytes) }
+        1 => { Ok(PayloadFormatIndicator::Utf8) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}

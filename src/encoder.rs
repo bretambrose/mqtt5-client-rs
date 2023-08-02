@@ -273,13 +273,8 @@ fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Resu
 
     /* should never happen on the client, but just to be complete */
     if let Some(subscription_identifiers) = &packet.subscription_identifiers {
-        for (val, i) in subscription_identifiers.iter().enumerate() {
-            let identifier_encode_size_result = compute_variable_length_integer_encode_size(val);
-            if let Err(error) = identifier_encode_size_result {
-                return Err(error);
-            }
-
-            let encoding_size = identifier_encode_size_result.unwrap();
+        for val in subscription_identifiers.iter() {
+            let encoding_size = compute_variable_length_integer_encode_size(*val as usize)?;
             publish_property_section_length += 1 + encoding_size;
         }
     }
@@ -305,7 +300,7 @@ fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Resu
     total_remaining_length += 2 + packet.topic.len();
 
     /* Optional (qos1+) packet id */
-    if packet.packet_id != 0 {
+    if packet.qos != QualityOfService::AtMostOnce {
         total_remaining_length += 2;
     }
 
@@ -469,6 +464,7 @@ impl Encodable for MqttPacket {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum EncodeResult {
     Complete,
     Full,

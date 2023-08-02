@@ -179,6 +179,7 @@ pub(crate) use encode_optional_bytes_property;
 
 macro_rules! encode_user_property {
     ($target: ident, $user_property_getter: ident, $value: ident, $index: expr) => {{
+        $target.push_back(EncodingStep::Uint8(PROPERTY_KEY_USER_PROPERTY));
         $target.push_back(EncodingStep::Uint16($value.name.len() as u16));
         $target.push_back(EncodingStep::UserPropertyName(
             $user_property_getter as fn(&MqttPacket, usize) -> &UserProperty,
@@ -288,7 +289,7 @@ pub fn compute_user_properties_length(properties: &Option<Vec<UserProperty>>) ->
     let mut total = 0;
     if let Some(props) = properties {
         let property_count = props.len();
-        total += property_count * 4; // 4 bytes of length-prefix per property
+        total += property_count * 5; // 4 bytes of length-prefix per property, 1 byte for property key
         for property in props {
             total += property.name.len();
             total += property.value.len();

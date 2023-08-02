@@ -11,14 +11,14 @@ pub enum QualityOfService {
     ExactlyOnce = 2,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PayloadFormatIndicator {
     #[default]
     Bytes = 0,
     Utf8 = 1,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RetainHandlingType {
     #[default]
     SendOnSubscribe = 0,
@@ -26,7 +26,7 @@ pub enum RetainHandlingType {
     DontSend = 2,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ConnectReasonCode {
     #[default]
     Success = 0,
@@ -53,7 +53,7 @@ pub enum ConnectReasonCode {
     ConnectionRateExceeeded = 159,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PubackReasonCode {
     #[default]
     Success = 0,
@@ -67,7 +67,7 @@ pub enum PubackReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PubrecReasonCode {
     #[default]
     Success = 0,
@@ -81,21 +81,21 @@ pub enum PubrecReasonCode {
     PayloadFormatInvalid = 153,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PubrelReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PubcompReasonCode {
     #[default]
     Success = 0,
     PacketIdentifierNotFound = 146,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DisconnectReasonCode {
     #[default]
     NormalDisconnection = 0,
@@ -129,7 +129,7 @@ pub enum DisconnectReasonCode {
     WildcardSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SubackReasonCode {
     #[default]
     GrantedQos0 = 0,
@@ -146,7 +146,7 @@ pub enum SubackReasonCode {
     WildcaredSubscriptionsNotSupported = 162,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum UnsubackReasonCode {
     #[default]
     Success = 0,
@@ -158,7 +158,7 @@ pub enum UnsubackReasonCode {
     PacketIdentifierInUse = 145,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum AuthenticateReasonCode {
     #[default]
     Success = 0,
@@ -166,13 +166,15 @@ pub enum AuthenticateReasonCode {
     ReAuthenticate = 25,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UserProperty {
     pub name: String,
     pub value: String,
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Subscription {
     pub topic_filter: String,
     pub qos: QualityOfService,
@@ -182,6 +184,7 @@ pub struct Subscription {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct ConnectPacket {
     pub keep_alive_interval_seconds: u16,
     pub clean_start: bool,
@@ -208,6 +211,7 @@ pub struct ConnectPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct ConnackPacket {
     pub session_present: bool,
     pub reason_code: ConnectReasonCode,
@@ -235,6 +239,7 @@ pub struct ConnackPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PublishPacket {
     pub packet_id: u16,
 
@@ -260,6 +265,7 @@ pub struct PublishPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PubackPacket {
     pub packet_id: u16,
 
@@ -270,6 +276,7 @@ pub struct PubackPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PubrecPacket {
     pub packet_id: u16,
 
@@ -280,6 +287,7 @@ pub struct PubrecPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PubrelPacket {
     pub packet_id: u16,
 
@@ -290,6 +298,7 @@ pub struct PubrelPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PubcompPacket {
     pub packet_id: u16,
 
@@ -300,6 +309,7 @@ pub struct PubcompPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SubscribePacket {
     pub packet_id: u16,
 
@@ -311,6 +321,7 @@ pub struct SubscribePacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SubackPacket {
     pub packet_id: u16,
 
@@ -322,6 +333,7 @@ pub struct SubackPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UnsubscribePacket {
     pub packet_id: u16,
 
@@ -331,6 +343,7 @@ pub struct UnsubscribePacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UnsubackPacket {
     pub packet_id: u16,
 
@@ -341,11 +354,16 @@ pub struct UnsubackPacket {
     pub reason_codes: Vec<UnsubackReasonCode>,
 }
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PingreqPacket {}
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PingrespPacket {}
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct DisconnectPacket {
     pub reason_code: DisconnectReasonCode,
 
@@ -356,6 +374,7 @@ pub struct DisconnectPacket {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct AuthPacket {
     pub reason_code: AuthenticateReasonCode,
 
@@ -366,6 +385,8 @@ pub struct AuthPacket {
     pub user_properties: Option<Vec<UserProperty>>,
 }
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) enum MqttPacket {
     Connect(ConnectPacket),
     Connack(ConnackPacket),

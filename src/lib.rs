@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate core;
+
 pub mod client;
 mod client_impl;
 mod decoder;
