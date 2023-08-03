@@ -416,13 +416,47 @@ impl Encodable for PublishPacket {
         encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &self.content_type);
         encode_user_properties!(steps, get_publish_packet_user_property, self.user_properties);
 
-        if let Some(bytes) = &self.payload {
+        if self.payload.is_some() {
             encode_raw_bytes!(steps, get_publish_packet_payload);
         }
 
         Ok(())
     }
 }
+
+#[rustfmt::skip]
+define_ack_packet_lengths_function!(compute_puback_packet_length_properties, PubackPacket, PubackReasonCode);
+define_ack_packet_reason_string_accessor!(get_puback_packet_reason_string, Puback);
+define_ack_packet_user_property_accessor!(get_puback_packet_user_property, Puback);
+
+#[rustfmt::skip]
+define_ack_packet_encoding_impl!(PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
+
+
+#[rustfmt::skip]
+define_ack_packet_lengths_function!(compute_pubrec_packet_length_properties, PubrecPacket, PubrecReasonCode);
+define_ack_packet_reason_string_accessor!(get_pubrec_packet_reason_string, Pubrec);
+define_ack_packet_user_property_accessor!(get_pubrec_packet_user_property, Pubrec);
+
+#[rustfmt::skip]
+define_ack_packet_encoding_impl!(PubrecPacket, PubrecReasonCode, PACKET_TYPE_PUBREC, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
+
+#[rustfmt::skip]
+define_ack_packet_lengths_function!(compute_pubrel_packet_length_properties, PubrelPacket, PubrelReasonCode);
+define_ack_packet_reason_string_accessor!(get_pubrel_packet_reason_string, Pubrel);
+define_ack_packet_user_property_accessor!(get_pubrel_packet_user_property, Pubrel);
+
+#[rustfmt::skip]
+define_ack_packet_encoding_impl!(PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
+
+#[rustfmt::skip]
+define_ack_packet_lengths_function!(compute_pubcomp_packet_length_properties, PubcompPacket, PubcompReasonCode);
+define_ack_packet_reason_string_accessor!(get_pubcomp_packet_reason_string, Pubcomp);
+define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubcomp);
+
+#[rustfmt::skip]
+define_ack_packet_encoding_impl!(PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
+
 
 #[rustfmt::skip]
 impl Encodable for PingreqPacket {
@@ -457,6 +491,18 @@ impl Encodable for MqttPacket {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Pingresp(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Puback(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pubrec(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pubrel(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pubcomp(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             _ => Err(Mqtt5Error::Unimplemented(())),

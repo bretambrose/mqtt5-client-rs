@@ -209,6 +209,102 @@ macro_rules! encode_user_properties {
 
 pub(crate) use encode_user_properties;
 
+macro_rules! encode_enum {
+    ($target: ident, $enum_variant: ident, $int_type: ty, $value: expr) => {
+        $target.push_back(EncodingStep::$enum_variant($value as $int_type));
+    };
+}
+
+pub(crate) use encode_enum;
+
+/*****************************************************/
+
+macro_rules! define_ack_packet_lengths_function {
+    ($function_name: ident, $packet_type: ident, $reason_code_type: ident) => {
+        fn $function_name(packet: &$packet_type) -> Mqtt5Result<(u32, u32), ()> {
+            let mut property_section_length = compute_user_properties_length(&packet.user_properties);
+
+            add_optional_string_property_length!(property_section_length, packet.reason_string);
+
+            if property_section_length == 0 {
+                if packet.reason_code == $reason_code_type::Success {
+                    return Ok((2, 0));
+                } else {
+                    return Ok((3, 0));
+                }
+            }
+
+            Ok(((3 + property_section_length + compute_variable_length_integer_encode_size(property_section_length)?) as u32, property_section_length as u32))
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_lengths_function;
+
+macro_rules! define_ack_packet_reason_string_accessor {
+    ($accessor_name: ident, $packet_type: ident) => {
+        fn $accessor_name(packet: &MqttPacket) -> &str {
+            get_optional_packet_field!(packet, MqttPacket::$packet_type, reason_string)
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_reason_string_accessor;
+
+macro_rules! define_ack_packet_user_property_accessor {
+    ($accessor_name: ident, $packet_type: ident) => {
+        fn $accessor_name(packet: &MqttPacket, index: usize) -> &UserProperty {
+            if let MqttPacket::$packet_type(ack) = packet {
+                if let Some(properties) = &ack.user_properties {
+                    return &properties[index];
+                }
+            }
+
+            panic!("Internal encoding error: invalid user property state");
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_user_property_accessor;
+
+macro_rules! define_ack_packet_encoding_impl {
+    ($packet_type: ident, $reason_code_type: ident, $packet_type_value: expr, $length_function: ident, $reason_string_accessor: ident, $user_property_accessor: ident) => {
+        impl Encodable for $packet_type {
+            fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+                let (total_remaining_length, property_length) = $length_function(self)?;
+
+                encode_integral_expression!(steps, Uint8, ($packet_type_value << 4));
+                encode_integral_expression!(steps, Vli, total_remaining_length);
+
+                /* Variable header */
+                encode_integral_expression!(steps, Uint16, self.packet_id);
+
+                /* per spec: empty properties + success = allowed to drop the reason code */
+                if self.reason_code == $reason_code_type::Success && property_length == 0 {
+                    assert_eq!(2, total_remaining_length);
+                    return Ok(());
+                }
+
+                encode_enum!(steps, Uint8, u8, self.reason_code);
+
+                /* slightly speculative: empty properties = allowed to drop the property length vli */
+                if property_length == 0 {
+                    assert_eq!(3, total_remaining_length);
+                    return Ok(());
+                }
+
+                encode_integral_expression!(steps, Vli, property_length);
+                encode_optional_string_property!(steps, $reason_string_accessor, PROPERTY_KEY_REASON_STRING, self.reason_string);
+                encode_user_properties!(steps, $user_property_accessor, self.user_properties);
+
+                Ok(())
+            }
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_encoding_impl;
+
 /*****************************************************/
 
 macro_rules! add_optional_u8_property_length {

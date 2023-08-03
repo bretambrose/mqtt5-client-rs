@@ -122,7 +122,7 @@ pub(crate) fn decode_user_property<'a>(bytes: &'a[u8], properties: &mut Option<V
 }
 
 pub(crate) fn decode_optional_u8<'a>(bytes: &'a[u8], value: &mut Option<u8>) -> Mqtt5Result<&'a[u8], ()> {
-    if (bytes.len() < 1) {
+    if bytes.len() < 1 {
         return Err(Mqtt5Error::ProtocolError);
     }
 
@@ -132,7 +132,7 @@ pub(crate) fn decode_optional_u8<'a>(bytes: &'a[u8], value: &mut Option<u8>) -> 
 }
 
 pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Option<T>, converter: fn(u8) ->Mqtt5Result<T, ()>) -> Mqtt5Result<&'a[u8], ()> {
-    if (bytes.len() < 1) {
+    if bytes.len() < 1 {
         return Err(Mqtt5Error::ProtocolError);
     }
 

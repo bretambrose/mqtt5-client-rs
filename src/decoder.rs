@@ -49,8 +49,6 @@ fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     Err(Mqtt5Error::Unimplemented(()))
 }
 
-
-
 fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket) -> Mqtt5Result<(), ()> {
     let mut mutable_property_bytes = property_bytes;
 
@@ -410,7 +408,8 @@ mod tests {
 
         let mut matching_packets : u32 = 0;
 
-        while let receive_result = packet_receiver.try_recv() {
+        loop {
+            let receive_result = packet_receiver.try_recv();
             if let Err(error) = receive_result {
                 assert_eq!(TryRecvError::Empty, error);
                 break;
@@ -533,5 +532,17 @@ mod tests {
         for decode_size in decode_fragment_sizes.iter() {
             assert!(do_single_encode_decode_test(&packet, 1024, *decode_size, 5));
         }
+    }
+
+    #[test]
+    fn pingreq_round_trip_encode_decode() {
+        let packet = PingreqPacket {};
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingreq(packet)));
+    }
+
+    #[test]
+    fn pingresp_round_trip_encode_decode() {
+        let packet = PingrespPacket {};
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
     }
 }
