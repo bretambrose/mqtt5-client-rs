@@ -70,3 +70,49 @@ pub(crate) fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<P
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
+
+pub(crate) fn convert_u8_to_puback_reason_code(value: u8) -> Mqtt5Result<PubackReasonCode, ()> {
+    match value {
+        0 => { Ok(PubackReasonCode::Success) }
+        16 => { Ok(PubackReasonCode::NoMatchingSubscribers) }
+        128 => { Ok(PubackReasonCode::UnspecifiedError) }
+        131 => { Ok(PubackReasonCode::ImplementationSpecificError) }
+        135 => { Ok(PubackReasonCode::NotAuthorized) }
+        144 => { Ok(PubackReasonCode::TopicNameInvalid) }
+        145 => { Ok(PubackReasonCode::PacketIdentifierInUse) }
+        151 => { Ok(PubackReasonCode::QuotaExceeded) }
+        153 => { Ok(PubackReasonCode::PayloadFormatInvalid) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_pubrec_reason_code(value: u8) -> Mqtt5Result<PubrecReasonCode, ()> {
+    match value {
+        0 => { Ok(PubrecReasonCode::Success) }
+        16 => { Ok(PubrecReasonCode::NoMatchingSubscribers) }
+        128 => { Ok(PubrecReasonCode::UnspecifiedError) }
+        131 => { Ok(PubrecReasonCode::ImplementationSpecificError) }
+        135 => { Ok(PubrecReasonCode::NotAuthorized) }
+        144 => { Ok(PubrecReasonCode::TopicNameInvalid) }
+        145 => { Ok(PubrecReasonCode::PacketIdentifierInUse) }
+        151 => { Ok(PubrecReasonCode::QuotaExceeded) }
+        153 => { Ok(PubrecReasonCode::PayloadFormatInvalid) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_pubrel_reason_code(value: u8) -> Mqtt5Result<PubrelReasonCode, ()> {
+    match value {
+        0 => { Ok(PubrelReasonCode::Success) }
+        146 => { Ok(PubrelReasonCode::PacketIdentifierNotFound) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_pubcomp_reason_code(value: u8) -> Mqtt5Result<PubcompReasonCode, ()> {
+    match value {
+        0 => { Ok(PubcompReasonCode::Success) }
+        146 => { Ok(PubcompReasonCode::PacketIdentifierNotFound) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}

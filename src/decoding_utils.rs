@@ -131,6 +131,16 @@ pub(crate) fn decode_optional_u8<'a>(bytes: &'a[u8], value: &mut Option<u8>) -> 
     Ok(&bytes[1..])
 }
 
+pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter: fn(u8) ->Mqtt5Result<T, ()>) -> Mqtt5Result<&'a[u8], ()> {
+    if bytes.len() < 1 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    *value = converter(bytes[0])?;
+
+    Ok(&bytes[1..])
+}
+
 pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Option<T>, converter: fn(u8) ->Mqtt5Result<T, ()>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
         return Err(Mqtt5Error::ProtocolError);
@@ -170,3 +180,65 @@ pub(crate) fn decode_optional_u32<'a>(bytes: &'a[u8], value: &mut Option<u32>) -
 
     Ok(&bytes[4..])
 }
+
+macro_rules! define_ack_packet_decode_properties_function {
+    ($function_name: ident, $packet_type: ident) => {
+        fn $function_name(property_bytes: &[u8], packet : &mut $packet_type) -> Mqtt5Result<(), ()> {
+            let mut mutable_property_bytes = property_bytes;
+
+            while mutable_property_bytes.len() > 0 {
+                let property_key = mutable_property_bytes[0];
+                mutable_property_bytes = &mutable_property_bytes[1..];
+
+                match property_key {
+                    PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+                    PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
+                    _ => { return Err(Mqtt5Error::ProtocolError); }
+                }
+            }
+
+            Ok(())
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_decode_properties_function;
+
+macro_rules! define_ack_packet_decode_function {
+    ($function_name: ident, $packet_type: ident, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
+        fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<$packet_type, ()> {
+            let mut packet = $packet_type { ..Default::default() };
+
+            if first_byte != ($packet_type_value << 4) {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+
+            let mut mutable_body = packet_body;
+            let mut properties_length : usize = 0;
+
+            mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+            if mutable_body.len() == 0 {
+                /* Success is the default, so nothing to do */
+                return Ok(packet);
+            }
+
+            mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, $reason_code_converter_function_name)?;
+            if mutable_body.len() == 0 {
+                return Ok(packet);
+            }
+
+            /* it's a mystery why the specification adds this field; it's completely unnecessary */
+            let mut properties_length = 0;
+            mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+            if properties_length != mutable_body.len() {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+
+            $decode_properties_function_name(mutable_body, &mut packet)?;
+
+            Ok(packet)
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_decode_function;

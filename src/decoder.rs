@@ -117,21 +117,17 @@ fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Publ
     Ok(packet)
 }
 
-fn decode_puback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PubackPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
-}
+define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket);
+define_ack_packet_decode_function!(decode_puback_packet, PubackPacket, PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
 
-fn decode_pubrec_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PubrecPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
-}
+define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket);
+define_ack_packet_decode_function!(decode_pubrec_packet, PubrecPacket, PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
 
-fn decode_pubrel_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PubrelPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
-}
+define_ack_packet_decode_properties_function!(decode_pubrel_properties, PubrelPacket);
+define_ack_packet_decode_function!(decode_pubrel_packet, PubrelPacket, PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
 
-fn decode_pubcomp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PubcompPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
-}
+define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket);
+define_ack_packet_decode_function!(decode_pubcomp_packet, PubcompPacket, PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
 
 fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<SubscribePacket, ()> {
     Err(Mqtt5Error::Unimplemented(()))
@@ -544,5 +540,269 @@ mod tests {
     fn pingresp_round_trip_encode_decode() {
         let packet = PingrespPacket {};
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
+    }
+
+    #[test]
+    fn puback_round_trip_encode_decode_default() {
+        let packet = PubackPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+    }
+
+    #[test]
+    fn puback_round_trip_encode_decode_success_no_props() {
+
+        let packet = PubackPacket {
+            packet_id: 123,
+            reason_code: PubackReasonCode::Success,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+    }
+
+    #[test]
+    fn puback_round_trip_encode_decode_failure_no_props() {
+
+        let packet = PubackPacket {
+            packet_id: 16384,
+            reason_code: PubackReasonCode::NotAuthorized,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+    }
+
+    #[test]
+    fn puback_round_trip_encode_decode_success_with_props() {
+
+        let packet = PubackPacket {
+            packet_id: 1025,
+            reason_code: PubackReasonCode::Success,
+            reason_string: Some("This was the best publish I've ever seen.  Take a bow.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "puback1".to_string(), value: "value1".to_string()},
+                UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
+                UserProperty{name: "puback2".to_string(), value: "value3".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+    }
+
+    #[test]
+    fn puback_round_trip_encode_decode_failure_with_props() {
+
+        let packet = PubackPacket {
+            packet_id: 1025,
+            reason_code: PubackReasonCode::ImplementationSpecificError,
+            reason_string: Some("Wow!  What a terrible publish.  You should be ashamed.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "puback1".to_string(), value: "value1".to_string()},
+                UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_default() {
+        let packet = PubrecPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_success_no_props() {
+
+        let packet = PubrecPacket {
+            packet_id: 1234,
+            reason_code: PubrecReasonCode::Success,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_failure_no_props() {
+
+        let packet = PubrecPacket {
+            packet_id: 8191,
+            reason_code: PubrecReasonCode::PacketIdentifierInUse,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_success_with_props() {
+
+        let packet = PubrecPacket {
+            packet_id: 10253,
+            reason_code: PubrecReasonCode::Success,
+            reason_string: Some("Whoa, qos2.  Brave and inspired.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "pubrec1".to_string(), value: "value1".to_string()},
+                UserProperty{name: "pubrec2".to_string(), value: "value2".to_string()},
+                UserProperty{name: "pubrec2".to_string(), value: "value3".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_failure_with_props() {
+
+        let packet = PubrecPacket {
+            packet_id: 125,
+            reason_code: PubrecReasonCode::UnspecifiedError,
+            reason_string: Some("Qos2?  Get that nonsense outta here.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "pubwreck1".to_string(), value: "krabbypatty".to_string()},
+                UserProperty{name: "pubwreck2".to_string(), value: "spongebob".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
+    }
+
+    #[test]
+    fn pubrel_round_trip_encode_decode_default() {
+        let packet = PubrelPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
+    }
+
+    #[test]
+    fn pubrel_round_trip_encode_decode_success_no_props() {
+
+        let packet = PubrelPacket {
+            packet_id: 12,
+            reason_code: PubrelReasonCode::Success,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
+    }
+
+    #[test]
+    fn pubrel_round_trip_encode_decode_failure_no_props() {
+
+        let packet = PubrelPacket {
+            packet_id: 8193,
+            reason_code: PubrelReasonCode::PacketIdentifierNotFound,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
+    }
+
+    #[test]
+    fn pubrel_round_trip_encode_decode_success_with_props() {
+
+        let packet = PubrelPacket {
+            packet_id: 10253,
+            reason_code: PubrelReasonCode::Success,
+            reason_string: Some("Qos2, I can do this.  Believe in me.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "pubrel1".to_string(), value: "value1".to_string()},
+                UserProperty{name: "pubrel2".to_string(), value: "value2".to_string()},
+                UserProperty{name: "pubrel2".to_string(), value: "value3".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
+    }
+
+    #[test]
+    fn pubrel_round_trip_encode_decode_failure_with_props() {
+
+        let packet = PubrelPacket {
+            packet_id: 12500,
+            reason_code: PubrelReasonCode::PacketIdentifierNotFound,
+            reason_string: Some("Aw shucks, I forgot what I was doing.  Sorry!".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "hello1".to_string(), value: "squidward".to_string()},
+                UserProperty{name: "patrick".to_string(), value: "star".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_default() {
+        let packet = PubcompPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_success_no_props() {
+
+        let packet = PubcompPacket {
+            packet_id: 132,
+            reason_code: PubcompReasonCode::Success,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_failure_no_props() {
+
+        let packet = PubcompPacket {
+            packet_id: 4095,
+            reason_code: PubcompReasonCode::PacketIdentifierNotFound,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_success_with_props() {
+
+        let packet = PubcompPacket {
+            packet_id: 1253,
+            reason_code: PubcompReasonCode::Success,
+            reason_string: Some("We did it!  High five.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "pubcomp1".to_string(), value: "value1".to_string()},
+                UserProperty{name: "pubcomp2".to_string(), value: "value2".to_string()},
+                UserProperty{name: "pubcomp2".to_string(), value: "value3".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_failure_with_props() {
+
+        let packet = PubcompPacket {
+            packet_id: 1500,
+            reason_code: PubcompReasonCode::PacketIdentifierNotFound,
+            reason_string: Some("I tried so hard, and got so far, but in the end, we totally face-planted".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "uf".to_string(), value: "dah".to_string()},
+                UserProperty{name: "velkomen".to_string(), value: "stanwood".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
 }
