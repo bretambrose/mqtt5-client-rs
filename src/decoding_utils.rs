@@ -131,6 +131,26 @@ pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &
     Ok(&mutable_bytes[(value_length)..])
 }
 
+pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8], ()> {
+    if bytes.len() < 2 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let mutable_bytes = &bytes[2..];
+
+    if value_length == 0 {
+        *value = None;
+        return Ok(mutable_bytes);
+    }
+
+    if value_length > mutable_bytes.len() {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    *value = Some(Vec::from(&mutable_bytes[..value_length]));
+    Ok(&mutable_bytes[(value_length)..])
+}
+
 pub(crate) fn decode_user_property<'a>(bytes: &'a[u8], properties: &mut Option<Vec<UserProperty>>) -> Mqtt5Result<&'a[u8], ()> {
     let mut property : UserProperty = UserProperty { ..Default::default() };
 

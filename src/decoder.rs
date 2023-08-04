@@ -160,12 +160,16 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
         let will_property_body = &mutable_body[..will_property_length];
         mutable_body = &mutable_body[will_property_length..];
 
-        let mut will : PublishPacket = PublishPacket { ..Default::default() };
+        let mut will : PublishPacket = PublishPacket {
+            qos : will_qos,
+            retain : will_retain,
+            ..Default::default()
+        };
 
         decode_will_properties(will_property_body, &mut will, &mut packet)?;
 
         mutable_body = decode_length_prefixed_string(mutable_body, &mut will.topic)?;
-        mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut will.payload)?;
+        mutable_body = decode_length_prefixed_optional_bytes(mutable_body, &mut will.payload)?;
 
         packet.will = Some(will);
     }
@@ -483,6 +487,7 @@ mod tests {
     use std::sync::mpsc::TryRecvError;
     use super::*;
     use crate::encoder::*;
+    use crate::spec::PubackReasonCode::PayloadFormatInvalid;
 
     #[test]
     fn create_decoder() {
@@ -950,6 +955,182 @@ mod tests {
     #[test]
     fn connect_round_trip_encode_decode_default() {
         let packet = ConnectPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_basic() {
+        let packet = ConnectPacket {
+            keep_alive_interval_seconds : 1200,
+            clean_start : true,
+            client_id : Some("MyClient".to_string()),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_no_flags_all_optional_properties() {
+        let packet = ConnectPacket {
+            keep_alive_interval_seconds : 3600,
+            clean_start : true,
+            client_id : Some("MyClient2".to_string()),
+            session_expiry_interval_seconds: Some(0xFFFFFFFFu32),
+            request_response_information: Some(true),
+            request_problem_information: Some(false),
+            receive_maximum: Some(100),
+            topic_alias_maximum: Some(20),
+            maximum_packet_size_bytes: Some(128 * 1024),
+            authentication_method: Some("Kerberos".to_string()),
+            authentication_data: Some(vec![5, 4, 3, 2, 1]),
+            user_properties: Some(vec!(
+                UserProperty{name: "connecting".to_string(), value: "future".to_string()},
+                UserProperty{name: "Iamabanana".to_string(), value: "Hamizilla".to_string()},
+            )),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_username_only() {
+        let packet = ConnectPacket {
+            username : Some("SpaceUnicorn".to_string()),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_password_only() {
+        let packet = ConnectPacket {
+            password : Some("Marshmallow Lasers".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_all_non_will_properties() {
+        let packet = ConnectPacket {
+            keep_alive_interval_seconds : 3600,
+            clean_start : true,
+            client_id : Some("NotAHaxxor".to_string()),
+            session_expiry_interval_seconds: Some(0x1234ABCDu32),
+            request_response_information: Some(false),
+            request_problem_information: Some(true),
+            receive_maximum: Some(1000),
+            topic_alias_maximum: Some(2),
+            maximum_packet_size_bytes: Some(512 * 1024 - 1),
+            authentication_method: Some("GSSAPI".to_string()),
+            authentication_data: Some(vec![15, 14, 13, 12, 11]),
+            user_properties: Some(vec!(
+                UserProperty{name: "Another".to_string(), value: "brick".to_string()},
+                UserProperty{name: "WhenIwas".to_string(), value: "ayoungboy".to_string()},
+            )),
+            username: Some("Gluten-free armada".to_string()),
+            password: Some("PancakeRobot".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_default_will() {
+        let packet = ConnectPacket {
+            will : Some(PublishPacket {
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_simple_will() {
+        let packet = ConnectPacket {
+            will : Some(PublishPacket {
+                topic : "in/rememberance".to_string(),
+                qos: QualityOfService::ExactlyOnce,
+                payload: Some("I'llbealright".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_all_will_fields() {
+        let packet = ConnectPacket {
+            will_delay_interval_seconds : Some(60),
+            will : Some(PublishPacket {
+                topic : "in/rememberance/of/mrkrabs".to_string(),
+                qos: QualityOfService::ExactlyOnce,
+                payload: Some("Arrrrrrrrrrrrrrr".as_bytes().to_vec()),
+                retain: true,
+                payload_format : Some(PayloadFormatIndicator::Utf8),
+                message_expiry_interval_seconds : Some(1800),
+                content_type : Some("QueryXML".to_string()),
+                response_topic : Some("forever/today".to_string()),
+                correlation_data : Some("Request1".as_bytes().to_vec()),
+                user_properties: Some(vec!(
+                    UserProperty{name: "WillProp1".to_string(), value: "WillValue1".to_string()},
+                )),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_everything() {
+        let packet = ConnectPacket {
+            keep_alive_interval_seconds : 3600,
+            clean_start : true,
+            client_id : Some("NotAHaxxor".to_string()),
+            session_expiry_interval_seconds: Some(0x1234ABCDu32),
+            request_response_information: Some(false),
+            request_problem_information: Some(true),
+            receive_maximum: Some(1000),
+            topic_alias_maximum: Some(2),
+            maximum_packet_size_bytes: Some(512 * 1024 - 1),
+            authentication_method: Some("GSSAPI".to_string()),
+            authentication_data: Some(vec![15, 14, 13, 12, 11]),
+            user_properties: Some(vec!(
+                UserProperty{name: "Another".to_string(), value: "brick".to_string()},
+                UserProperty{name: "WhenIwas".to_string(), value: "ayoungboy".to_string()},
+            )),
+            will_delay_interval_seconds : Some(60),
+            will : Some(PublishPacket {
+                topic : "in/rememberance/of/mrkrabs".to_string(),
+                qos: QualityOfService::ExactlyOnce,
+                payload: Some("Arrrrrrrrrrrrrrr".as_bytes().to_vec()),
+                retain: true,
+                payload_format : Some(PayloadFormatIndicator::Utf8),
+                message_expiry_interval_seconds : Some(1800),
+                content_type : Some("QueryXML".to_string()),
+                response_topic : Some("forever/today".to_string()),
+                correlation_data : Some("Request1".as_bytes().to_vec()),
+                user_properties: Some(vec!(
+                    UserProperty{name: "WillProp1".to_string(), value: "WillValue1".to_string()},
+                )),
+                ..Default::default()
+            }),
+            username: Some("Gluten-free armada".to_string()),
+            password: Some("PancakeRobot".as_bytes().to_vec()),
             ..Default::default()
         };
 
