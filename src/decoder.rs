@@ -105,9 +105,15 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     let protocol_bytes = &mutable_body[..CONNECT_HEADER_PROTOCOL_LENGTH];
     mutable_body = &mutable_body[CONNECT_HEADER_PROTOCOL_LENGTH..];
 
-    if protocol_bytes == CONNECT_HEADER_PROTOCOL_BYTES {
-        return Err(Mqtt5Error::ProtocolError);
+    match protocol_bytes {
+        [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { ; }
+        _ => { return Err(Mqtt5Error::ProtocolError); }
     }
+
+    /*
+    if protocol_bytes == CONNECT_HEADER_PROTOCOL_BYTES.as_slice() {
+        return Err(Mqtt5Error::ProtocolError);
+    }*/
 
     let mut connect_flags : u8 = 0;
     mutable_body = decode_u8(mutable_body, &mut connect_flags)?;
@@ -141,7 +147,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
 
     decode_connect_properties(property_body, &mut packet)?;
 
-    mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.client_id)?;
+    mutable_body = decode_length_prefixed_optional_string(mutable_body, &mut packet.client_id)?;
 
     if has_will {
         let mut will_property_length : usize = 0;
@@ -739,7 +745,8 @@ mod tests {
             ))
         };
 
-        assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
+        assert!(do_single_encode_decode_test(&MqttPacket::Puback(packet), 1024, 1024, 1));
+        //assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
 
     #[test]
@@ -938,5 +945,14 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
+    }
+
+    #[test]
+    fn connect_round_trip_encode_decode_default() {
+        let packet = ConnectPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 }

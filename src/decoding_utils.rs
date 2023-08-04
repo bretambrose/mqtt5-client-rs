@@ -91,6 +91,32 @@ pub(crate) fn decode_optional_length_prefixed_string<'a>(bytes: &'a[u8], value: 
     }
 }
 
+pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: &mut Option<String>) -> Mqtt5Result<&'a[u8], ()> {
+    if bytes.len() < 2 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let mutable_bytes = &bytes[2..];
+
+    if value_length == 0 {
+        *value = None;
+        return Ok(mutable_bytes);
+    }
+
+    if value_length > mutable_bytes.len() {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let value_result = std::str::from_utf8(&mutable_bytes[..value_length]);
+    match value_result {
+        Ok(string_value) => {
+            *value = Some(string_value.to_string());
+            Ok(&mutable_bytes[(value_length)..])
+        }
+        Err(_) => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
 pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
         return Err(Mqtt5Error::ProtocolError);
@@ -261,10 +287,6 @@ macro_rules! define_ack_packet_decode_function {
             }
 
             $decode_properties_function_name(mutable_body, &mut packet)?;
-
-            if mutable_body.len() > 0 {
-                return Err(Mqtt5Error::ProtocolError);
-            }
 
             Ok(packet)
         }

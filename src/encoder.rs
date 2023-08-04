@@ -253,8 +253,13 @@ impl Encodable for ConnectPacket {
             encode_length_prefixed_optional_bytes!(steps, get_connect_packet_will_payload, will.payload);
         }
 
-        encode_length_prefixed_optional_string!(steps, get_connect_packet_username, self.username);
-        encode_length_prefixed_optional_bytes!(steps, get_connect_packet_password, self.password);
+        if self.username.is_some() {
+            encode_length_prefixed_optional_string!(steps, get_connect_packet_username, self.username);
+        }
+
+        if self.password.is_some() {
+            encode_length_prefixed_optional_bytes!(steps, get_connect_packet_password, self.password);
+        }
 
         Ok(())
     }
