@@ -14,7 +14,7 @@ pub(crate) enum DecodeVliResult<'a> {
 
 pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
     let mut value: u32 = 0;
-    let mut needs_data: bool = false;
+    let mut needs_data: bool;
     let mut shift: u32 = 0;
     let data_len = buffer.len();
 
@@ -286,8 +286,6 @@ macro_rules! define_ack_packet_decode_function {
             }
 
             let mut mutable_body = packet_body;
-            let mut properties_length : usize = 0;
-
             mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
             if mutable_body.len() == 0 {
                 /* Success is the default, so nothing to do */

@@ -88,7 +88,6 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
 }
 
 const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
-const CONNECT_HEADER_PROTOCOL_BYTES : [u8; 7] = [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8];
 
 fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnectPacket, ()> {
     let mut packet = ConnectPacket { ..Default::default() };
@@ -106,7 +105,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     mutable_body = &mutable_body[CONNECT_HEADER_PROTOCOL_LENGTH..];
 
     match protocol_bytes {
-        [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { ; }
+        [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { }
         _ => { return Err(Mqtt5Error::ProtocolError); }
     }
 
@@ -174,11 +173,11 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
         packet.will = Some(will);
     }
 
-    if (has_username) {
+    if has_username {
         mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.username)?;
     }
 
-    if (has_password) {
+    if has_password {
         mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut packet.password)?;
     }
 
@@ -189,8 +188,76 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     Ok(packet)
 }
 
+fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_SESSION_EXPIRY_INTERVAL => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.session_expiry_interval)?; }
+            PROPERTY_KEY_RECEIVE_MAXIMUM => { mutable_property_bytes = decode_optional_u16(mutable_property_bytes, &mut packet.receive_maximum)?; }
+            PROPERTY_KEY_MAXIMUM_QOS => { mutable_property_bytes = decode_optional_u8_as_enum(mutable_property_bytes, &mut packet.maximum_qos, convert_u8_to_quality_of_service)?; }
+            PROPERTY_KEY_RETAIN_AVAILABLE => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.retain_available)?; }
+            PROPERTY_KEY_MAXIMUM_PACKET_SIZE => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.maximum_packet_size)?; }
+            PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.assigned_client_identifier)?; }
+            PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM => { mutable_property_bytes = decode_optional_u16(mutable_property_bytes, &mut packet.topic_alias_maximum)?; }
+            PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.wildcard_subscriptions_available)?; }
+            PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.subscription_identifiers_available)?; }
+            PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.shared_subscriptions_available)?; }
+            PROPERTY_KEY_SERVER_KEEP_ALIVE => { mutable_property_bytes = decode_optional_u16(mutable_property_bytes, &mut packet.server_keep_alive)?; }
+            PROPERTY_KEY_RESPONSE_INFORMATION => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.response_information)?; }
+            PROPERTY_KEY_SERVER_REFERENCE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.server_reference)?; }
+            PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
+            PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    if let Some(qos) = packet.maximum_qos {
+        if qos == QualityOfService::ExactlyOnce {
+            return Err(Mqtt5Error::ProtocolError);
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnackPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = ConnackPacket { ..Default::default() };
+
+    if first_byte != (PACKET_TYPE_CONNACK << 4) {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    if mutable_body.len() == 0 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let flags : u8 = mutable_body[0];
+    mutable_body = &mutable_body[1..];
+
+    if flags == 1 {
+        packet.session_present = true;
+    } else if flags != 0 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_connect_reason_code)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length != mutable_body.len() {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    decode_connack_properties(mutable_body, &mut packet)?;
+
+    Ok(packet)
 }
 
 fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket) -> Mqtt5Result<(), ()> {
@@ -487,7 +554,6 @@ mod tests {
     use std::sync::mpsc::TryRecvError;
     use super::*;
     use crate::encoder::*;
-    use crate::spec::PubackReasonCode::PayloadFormatInvalid;
 
     #[test]
     fn create_decoder() {
@@ -510,7 +576,7 @@ mod tests {
         let mut encode_buffer = Vec::with_capacity(encode_size);
 
         /* encode 5 copies of the packet */
-        for i in 0..encode_repetitions {
+        for _ in 0..encode_repetitions {
             assert!(!encoder.reset(&packet).is_err());
 
             let mut cumulative_result : EncodeResult = EncodeResult::Full;
@@ -1135,5 +1201,57 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
+    }
+
+    #[test]
+    fn connack_round_trip_encode_decode_default() {
+        let packet = ConnackPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
+    }
+
+    #[test]
+    fn connack_round_trip_encode_decode_required() {
+        let packet = ConnackPacket {
+            session_present : true,
+            reason_code : ConnectReasonCode::Banned,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
+    }
+
+    #[test]
+    fn connack_round_trip_encode_decode_all() {
+        let packet = ConnackPacket {
+            session_present : true,
+            reason_code : ConnectReasonCode::NotAuthorized,
+
+            session_expiry_interval: Some(7200),
+            receive_maximum: Some(200),
+            maximum_qos: Some(QualityOfService::AtLeastOnce),
+            retain_available: Some(true),
+            maximum_packet_size: Some(256 * 1024),
+            assigned_client_identifier: Some("I dub thee Stinky".to_string()),
+            topic_alias_maximum: Some(30),
+            reason_string: Some("You're sketchy.".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "Go".to_string(), value: "Away".to_string()},
+                UserProperty{name: "".to_string(), value: "Uff da".to_string()},
+            )),
+            wildcard_subscriptions_available: Some(true),
+            subscription_identifiers_available:Some(false),
+            shared_subscriptions_available: Some(true),
+            server_keep_alive: Some(1600),
+            response_information: Some("We/care/a/lot".to_string()),
+            server_reference: Some("lolcats.com".to_string()),
+            authentication_method: Some("Sekrit".to_string()),
+            authentication_data: Some("TopSekrit".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }
 }

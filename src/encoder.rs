@@ -266,6 +266,111 @@ impl Encodable for ConnectPacket {
 }
 
 #[rustfmt::skip]
+fn compute_connack_packet_length_properties(packet: &ConnackPacket) -> Mqtt5Result<(u32, u32), ()> {
+
+    let mut connack_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    add_optional_u32_property_length!(connack_property_section_length, packet.session_expiry_interval);
+    add_optional_u16_property_length!(connack_property_section_length, packet.receive_maximum);
+    add_optional_u8_property_length!(connack_property_section_length, packet.maximum_qos);
+    add_optional_u8_property_length!(connack_property_section_length, packet.retain_available);
+    add_optional_u32_property_length!(connack_property_section_length, packet.maximum_packet_size);
+    add_optional_string_property_length!(connack_property_section_length, packet.assigned_client_identifier);
+    add_optional_u16_property_length!(connack_property_section_length, packet.topic_alias_maximum);
+    add_optional_string_property_length!(connack_property_section_length, packet.reason_string);
+    add_optional_u8_property_length!(connack_property_section_length, packet.wildcard_subscriptions_available);
+    add_optional_u8_property_length!(connack_property_section_length, packet.subscription_identifiers_available);
+    add_optional_u8_property_length!(connack_property_section_length, packet.shared_subscriptions_available);
+    add_optional_u16_property_length!(connack_property_section_length, packet.server_keep_alive);
+    add_optional_string_property_length!(connack_property_section_length, packet.response_information);
+    add_optional_string_property_length!(connack_property_section_length, packet.server_reference);
+    add_optional_string_property_length!(connack_property_section_length, packet.authentication_method);
+    add_optional_bytes_property_length!(connack_property_section_length, packet.authentication_data);
+
+    let mut total_remaining_length : usize = compute_variable_length_integer_encode_size(connack_property_section_length)?;
+
+    total_remaining_length += 2;
+    total_remaining_length += connack_property_section_length;
+
+    Ok((total_remaining_length as u32, connack_property_section_length as u32))
+}
+
+fn get_connack_packet_assigned_client_identifier(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Connack, assigned_client_identifier)
+}
+
+fn get_connack_packet_reason_string(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Connack, reason_string)
+}
+
+fn get_connack_packet_response_information(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Connack, response_information)
+}
+
+fn get_connack_packet_server_reference(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Connack, server_reference)
+}
+
+fn get_connack_packet_authentication_method(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Connack, authentication_method)
+}
+
+fn get_connack_packet_authentication_data(packet: &MqttPacket) -> &[u8] {
+    get_optional_packet_field!(packet, MqttPacket::Connack, authentication_data)
+}
+
+fn get_connack_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Connack(connack) = packet {
+        if let Some(properties) = &connack.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+#[rustfmt::skip]
+impl Encodable for ConnackPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        /*
+         * Variable Header
+         * 1 byte flags
+         * 1 byte reason code
+         * 1-4 byte Property Length as Variable Byte Integer
+         * n bytes Properties
+         */
+        encode_integral_expression!(steps, Uint8, if self.session_present { 1 } else { 0 });
+        encode_enum!(steps, Uint8, u8, self.reason_code);
+        encode_integral_expression!(steps, Vli, connack_property_length);
+
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval);
+        encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, self.receive_maximum);
+        encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_MAXIMUM_QOS, u8, self.maximum_qos);
+        encode_optional_boolean_property!(steps, PROPERTY_KEY_RETAIN_AVAILABLE, self.retain_available);
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, self.maximum_packet_size);
+        encode_optional_string_property!(steps, get_connack_packet_assigned_client_identifier, PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER, self.assigned_client_identifier);
+        encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
+        encode_optional_string_property!(steps, get_connack_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
+        encode_user_properties!(steps, get_connack_packet_user_property, self.user_properties);
+        encode_optional_boolean_property!(steps, PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE, self.wildcard_subscriptions_available);
+        encode_optional_boolean_property!(steps, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE, self.subscription_identifiers_available);
+        encode_optional_boolean_property!(steps, PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE, self.shared_subscriptions_available);
+        encode_optional_property!(steps, Uint16, PROPERTY_KEY_SERVER_KEEP_ALIVE, self.server_keep_alive);
+        encode_optional_string_property!(steps, get_connack_packet_response_information, PROPERTY_KEY_RESPONSE_INFORMATION, self.response_information);
+        encode_optional_string_property!(steps, get_connack_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, self.server_reference);
+        encode_optional_string_property!(steps, get_connack_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
+        encode_optional_bytes_property!(steps, get_connack_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
+
+        Ok(())
+    }
+}
+
+#[rustfmt::skip]
 fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32), ()> {
     let mut publish_property_section_length = compute_user_properties_length(&packet.user_properties);
 
@@ -487,6 +592,9 @@ impl Encodable for MqttPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
             MqttPacket::Connect(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Connack(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Publish(packet) => {

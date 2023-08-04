@@ -54,12 +54,12 @@ pub const PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG : u8 = 8;
 pub const PUBLISH_PACKET_FIXED_HEADER_RETAIN_FLAG : u8 = 1;
 pub const QOS_MASK : u8 = 3;
 
-pub const CONNECT_PACKET_CLEAN_START_FLAG_MASK : u8 = (1 << 1);
-pub const CONNECT_PACKET_HAS_WILL_FLAG_MASK : u8 = (1 << 2);
-pub const CONNECT_PACKET_WILL_RETAIN_FLAG_MASK : u8 = (1 << 5);
+pub const CONNECT_PACKET_CLEAN_START_FLAG_MASK : u8 = 1 << 1;
+pub const CONNECT_PACKET_HAS_WILL_FLAG_MASK : u8 = 1 << 2;
+pub const CONNECT_PACKET_WILL_RETAIN_FLAG_MASK : u8 = 1 << 5;
 pub const CONNECT_PACKET_WILL_QOS_FLAG_SHIFT : u8 = 3;
-pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = (1 << 7);
-pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = (1 << 6);
+pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = 1 << 7;
+pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = 1 << 6;
 
 pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService, ()> {
     match value {
@@ -120,6 +120,35 @@ pub(crate) fn convert_u8_to_pubcomp_reason_code(value: u8) -> Mqtt5Result<Pubcom
     match value {
         0 => { Ok(PubcompReasonCode::Success) }
         146 => { Ok(PubcompReasonCode::PacketIdentifierNotFound) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_connect_reason_code(value: u8) -> Mqtt5Result<ConnectReasonCode, ()> {
+    match value {
+        0 => { Ok(ConnectReasonCode::Success) }
+        128 => { Ok(ConnectReasonCode::UnspecifiedError) }
+        129 => { Ok(ConnectReasonCode::MalformedPacket) }
+        130 => { Ok(ConnectReasonCode::ProtocolError) }
+        131 => { Ok(ConnectReasonCode::ImplementationSpecificError) }
+        132 => { Ok(ConnectReasonCode::UnsupportedProtocolVersion) }
+        133 => { Ok(ConnectReasonCode::ClientIdentifierNotValid) }
+        134 => { Ok(ConnectReasonCode::BadUsernameOrPassword) }
+        135 => { Ok(ConnectReasonCode::NotAuthorized) }
+        136 => { Ok(ConnectReasonCode::ServerUnavailable) }
+        137 => { Ok(ConnectReasonCode::ServerBusy) }
+        138 => { Ok(ConnectReasonCode::Banned) }
+        140 => { Ok(ConnectReasonCode::BadAuthenticationMethod) }
+        144 => { Ok(ConnectReasonCode::TopicNameInvalid) }
+        149 => { Ok(ConnectReasonCode::PacketTooLarge) }
+        151 => { Ok(ConnectReasonCode::QuotaExceeded) }
+        153 => { Ok(ConnectReasonCode::PayloadFormatInvalid) }
+        154 => { Ok(ConnectReasonCode::RetainNotSupported) }
+        155 => { Ok(ConnectReasonCode::QosNotSupported) }
+        156 => { Ok(ConnectReasonCode::UseAnotherServer) }
+        157 => { Ok(ConnectReasonCode::ServerMoved) }
+        159 => { Ok(ConnectReasonCode::ConnectionRateExceeeded) }
+
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
