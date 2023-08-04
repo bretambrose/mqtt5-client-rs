@@ -121,12 +121,38 @@ pub(crate) fn decode_user_property<'a>(bytes: &'a[u8], properties: &mut Option<V
     Ok(mutable_bytes)
 }
 
+pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u8], ()> {
+    if bytes.len() < 1 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    *value = bytes[0];
+
+    Ok(&bytes[1..])
+}
+
 pub(crate) fn decode_optional_u8<'a>(bytes: &'a[u8], value: &mut Option<u8>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
         return Err(Mqtt5Error::ProtocolError);
     }
 
     *value = Some(bytes[0]);
+
+    Ok(&bytes[1..])
+}
+
+pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<bool>) -> Mqtt5Result<&'a[u8], ()> {
+    if bytes.len() < 1 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    if bytes[0] == 0 {
+        *value = Some(false);
+    } else if bytes[0] == 1 {
+        *value = Some(true);
+    } else {
+        return Err(Mqtt5Error::ProtocolError);
+    }
 
     Ok(&bytes[1..])
 }
@@ -235,6 +261,10 @@ macro_rules! define_ack_packet_decode_function {
             }
 
             $decode_properties_function_name(mutable_body, &mut packet)?;
+
+            if mutable_body.len() > 0 {
+                return Err(Mqtt5Error::ProtocolError);
+            }
 
             Ok(packet)
         }

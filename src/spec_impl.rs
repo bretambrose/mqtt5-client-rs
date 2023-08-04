@@ -52,7 +52,14 @@ pub const PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE: u8 = 42;
 
 pub const PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG : u8 = 8;
 pub const PUBLISH_PACKET_FIXED_HEADER_RETAIN_FLAG : u8 = 1;
-pub const PUBLISH_PACKET_FIXED_HEADER_QOS_MASK : u8 = 3;
+pub const QOS_MASK : u8 = 3;
+
+pub const CONNECT_PACKET_CLEAN_START_FLAG_MASK : u8 = (1 << 1);
+pub const CONNECT_PACKET_HAS_WILL_FLAG_MASK : u8 = (1 << 2);
+pub const CONNECT_PACKET_WILL_RETAIN_FLAG_MASK : u8 = (1 << 5);
+pub const CONNECT_PACKET_WILL_QOS_FLAG_SHIFT : u8 = 3;
+pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = (1 << 7);
+pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = (1 << 6);
 
 pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService, ()> {
     match value {

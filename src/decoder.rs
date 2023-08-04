@@ -41,8 +41,142 @@ pub struct Decoder {
     remaining_length : Option<usize>,
 }
 
+fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_SESSION_EXPIRY_INTERVAL => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.session_expiry_interval_seconds)?; }
+            PROPERTY_KEY_RECEIVE_MAXIMUM => { mutable_property_bytes = decode_optional_u16(mutable_property_bytes, &mut packet.receive_maximum)?; }
+            PROPERTY_KEY_MAXIMUM_PACKET_SIZE => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.maximum_packet_size_bytes)?; }
+            PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM => { mutable_property_bytes = decode_optional_u16(mutable_property_bytes, &mut packet.topic_alias_maximum)?; }
+            PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.request_response_information)?; }
+            PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION => { mutable_property_bytes = decode_optional_u8_as_bool(mutable_property_bytes, &mut packet.request_problem_information)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
+            PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, connect : &mut ConnectPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_WILL_DELAY_INTERVAL => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut connect.will_delay_interval_seconds)?; }
+            PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR => { mutable_property_bytes = decode_optional_u8_as_enum(mutable_property_bytes, &mut will.payload_format, convert_u8_to_payload_format_indicator)?; }
+            PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut will.message_expiry_interval_seconds)?; }
+            PROPERTY_KEY_CONTENT_TYPE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut will.content_type)?; }
+            PROPERTY_KEY_RESPONSE_TOPIC => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut will.response_topic)?; }
+            PROPERTY_KEY_CORRELATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut will.correlation_data)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut will.user_properties)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
+const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
+const CONNECT_HEADER_PROTOCOL_BYTES : [u8; 7] = [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8];
+
 fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnectPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = ConnectPacket { ..Default::default() };
+
+    if first_byte != (PACKET_TYPE_CONNECT << 4)  {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    if mutable_body.len() < CONNECT_HEADER_PROTOCOL_LENGTH {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let protocol_bytes = &mutable_body[..CONNECT_HEADER_PROTOCOL_LENGTH];
+    mutable_body = &mutable_body[CONNECT_HEADER_PROTOCOL_LENGTH..];
+
+    if protocol_bytes == CONNECT_HEADER_PROTOCOL_BYTES {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut connect_flags : u8 = 0;
+    mutable_body = decode_u8(mutable_body, &mut connect_flags)?;
+
+    packet.clean_start = (connect_flags & CONNECT_PACKET_CLEAN_START_FLAG_MASK) != 0;
+    let has_will = (connect_flags & CONNECT_PACKET_HAS_WILL_FLAG_MASK) != 0;
+    let will_retain = (connect_flags & CONNECT_PACKET_WILL_RETAIN_FLAG_MASK) != 0;
+    let will_qos = convert_u8_to_quality_of_service((connect_flags >> CONNECT_PACKET_WILL_QOS_FLAG_SHIFT) & QOS_MASK)?;
+
+    if !has_will {
+        /* indirectly check bits of connect flags vs. spec */
+        if will_retain || will_qos != QualityOfService::AtMostOnce {
+            return Err(Mqtt5Error::ProtocolError);
+        }
+    }
+
+    let has_username = (connect_flags & CONNECT_PACKET_HAS_USERNAME_FLAG_MASK) != 0;
+    let has_password = (connect_flags & CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK) != 0;
+
+    mutable_body = decode_u16(mutable_body, &mut packet.keep_alive_interval_seconds)?;
+
+    let mut connect_property_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut connect_property_length)?;
+
+    if mutable_body.len() < connect_property_length {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let property_body = &mutable_body[..connect_property_length];
+    mutable_body = &mutable_body[connect_property_length..];
+
+    decode_connect_properties(property_body, &mut packet)?;
+
+    mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.client_id)?;
+
+    if has_will {
+        let mut will_property_length : usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut will_property_length)?;
+
+        if mutable_body.len() < will_property_length {
+            return Err(Mqtt5Error::ProtocolError);
+        }
+
+        let will_property_body = &mutable_body[..will_property_length];
+        mutable_body = &mutable_body[will_property_length..];
+
+        let mut will : PublishPacket = PublishPacket { ..Default::default() };
+
+        decode_will_properties(will_property_body, &mut will, &mut packet)?;
+
+        mutable_body = decode_length_prefixed_string(mutable_body, &mut will.topic)?;
+        mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut will.payload)?;
+
+        packet.will = Some(will);
+    }
+
+    if (has_username) {
+        mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.username)?;
+    }
+
+    if (has_password) {
+        mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut packet.password)?;
+    }
+
+    if mutable_body.len() > 0 {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    Ok(packet)
 }
 
 fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnackPacket, ()> {
@@ -92,7 +226,7 @@ fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Publ
         packet.retain = true;
     }
 
-    packet.qos = convert_u8_to_quality_of_service((first_byte >> 1) & PUBLISH_PACKET_FIXED_HEADER_QOS_MASK)?;
+    packet.qos = convert_u8_to_quality_of_service((first_byte >> 1) & QOS_MASK)?;
 
     let mut mutable_body = packet_body;
     let mut properties_length : usize = 0;
