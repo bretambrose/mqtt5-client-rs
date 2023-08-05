@@ -567,6 +567,59 @@ define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubc
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
+#[rustfmt::skip]
+fn compute_unsubscribe_packet_length_properties(packet: &UnsubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut unsubscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    let mut total_remaining_length : usize = 2 + compute_variable_length_integer_encode_size(unsubscribe_property_section_length)?;
+    total_remaining_length += unsubscribe_property_section_length;
+
+    total_remaining_length += packet.topic_filters.len() * 2;
+    for filter in &packet.topic_filters {
+        total_remaining_length += filter.len();
+    }
+
+    Ok((total_remaining_length as u32, unsubscribe_property_section_length as u32))
+}
+
+fn get_unsubscribe_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Unsubscribe(unsubscribe) = packet {
+        if let Some(properties) = &unsubscribe.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+fn get_unsubscribe_packet_topic_filter(packet: &MqttPacket, index: usize) -> &str {
+    if let MqttPacket::Unsubscribe(unsubscribe) = packet {
+        return &unsubscribe.topic_filters[index];
+    }
+
+    panic!("Internal encoding error: invalid unsubscribe topic filter state");
+}
+
+#[rustfmt::skip]
+impl Encodable for UnsubscribePacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, unsubscribe_property_length) = compute_unsubscribe_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, UNSUBSCRIBE_FIRST_BYTE);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        encode_integral_expression!(steps, Uint16, self.packet_id);
+        encode_integral_expression!(steps, Vli, unsubscribe_property_length);
+        encode_user_properties!(steps, get_unsubscribe_packet_user_property, self.user_properties);
+
+        let topic_filters = &self.topic_filters;
+        for (i, topic_filter) in topic_filters.iter().enumerate() {
+            encode_indexed_string!(steps, get_unsubscribe_packet_topic_filter, topic_filter, i);
+        }
+
+        Ok(())
+    }
+}
 
 #[rustfmt::skip]
 impl Encodable for PingreqPacket {
@@ -727,6 +780,9 @@ impl Encodable for MqttPacket {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Pubcomp(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Unsubscribe(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Pingreq(packet) => {

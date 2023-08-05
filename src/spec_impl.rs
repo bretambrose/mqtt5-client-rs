@@ -61,6 +61,8 @@ pub const CONNECT_PACKET_WILL_QOS_FLAG_SHIFT : u8 = 3;
 pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = 1 << 7;
 pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = 1 << 6;
 
+pub const UNSUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_UNSUBSCRIBE << 4) | (0x02u8);
+
 pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService, ()> {
     match value {
         0 => { Ok(QualityOfService::AtMostOnce) }

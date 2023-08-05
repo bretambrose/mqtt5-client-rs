@@ -17,6 +17,7 @@ pub(crate) enum EncodingStep {
     Vli(u32),
     StringSlice(fn(&MqttPacket) -> &str, usize),
     BytesSlice(fn(&MqttPacket) -> &[u8], usize),
+    IndexedString(fn(&MqttPacket, usize) -> &str, usize, usize),
     UserPropertyName(fn(&MqttPacket, usize) -> &UserProperty, usize, usize),
     UserPropertyValue(fn(&MqttPacket, usize) -> &UserProperty, usize, usize),
 }
@@ -208,6 +209,19 @@ macro_rules! encode_user_properties {
 }
 
 pub(crate) use encode_user_properties;
+
+macro_rules! encode_indexed_string {
+    ($target: ident, $indexed_string_getter: ident, $value: ident, $index: expr) => {{
+        $target.push_back(EncodingStep::Uint16($value.len() as u16));
+        $target.push_back(EncodingStep::IndexedString(
+            $indexed_string_getter as fn(&MqttPacket, usize) -> &str,
+            $index,
+            0,
+        ));
+    }};
+}
+
+pub(crate) use encode_indexed_string;
 
 macro_rules! encode_enum {
     ($target: ident, $enum_variant: ident, $int_type: ty, $value: expr) => {
@@ -478,6 +492,13 @@ pub(crate) fn process_encoding_step(
             let end_offset = process_byte_slice_encoding(slice, offset, dest);
             if end_offset > 0 {
                 steps.push_front(EncodingStep::BytesSlice(getter, end_offset));
+            }
+        }
+        EncodingStep::IndexedString(getter, index, offset) => {
+            let slice = getter(packet, index).as_bytes();
+            let end_offset = process_byte_slice_encoding(slice, offset, dest);
+            if end_offset > 0 {
+                steps.push_front(EncodingStep::IndexedString(getter, index, end_offset));
             }
         }
         EncodingStep::UserPropertyName(getter, index, offset) => {

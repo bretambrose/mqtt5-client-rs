@@ -348,8 +348,48 @@ fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Subac
     Err(Mqtt5Error::Unimplemented(()))
 }
 
+fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut UnsubscribePacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<UnsubscribePacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = UnsubscribePacket { ..Default::default() };
+
+    if first_byte != UNSUBSCRIBE_FIRST_BYTE {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+
+    let properties_bytes = &mutable_body[..properties_length];
+    let mut payload_bytes = &mutable_body[properties_length..];
+
+    decode_unsubscribe_properties(properties_bytes, &mut packet)?;
+
+    while payload_bytes.len() > 0 {
+        let mut topic_filter = String::new();
+        payload_bytes = decode_length_prefixed_string(payload_bytes, &mut topic_filter)?;
+
+        packet.topic_filters.push(topic_filter);
+    }
+
+    Ok(packet)
 }
 
 fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<UnsubackPacket, ()> {
@@ -1410,5 +1450,42 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
+    }
+
+    #[test]
+    fn unsubscribe_round_trip_encode_decode_default() {
+        let packet = UnsubscribePacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
+    }
+
+    #[test]
+    fn unsubscribe_round_trip_encode_decode_basic() {
+        let packet = UnsubscribePacket {
+            packet_id : 123,
+            topic_filters : vec![ "hello/world".to_string() ],
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
+    }
+
+    #[test]
+    fn unsubscribe_round_trip_encode_decode_all_properties() {
+        let packet = UnsubscribePacket {
+            packet_id : 123,
+            topic_filters : vec![
+                "hello/world".to_string(),
+                "calvin/is/a/goof".to_string(),
+                "wild/+/card".to_string()
+            ],
+            user_properties: Some(vec!(
+                UserProperty{name: "Clickergames".to_string(), value: "arelame".to_string()},
+            )),
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 }
