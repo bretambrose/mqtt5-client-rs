@@ -152,3 +152,38 @@ pub(crate) fn convert_u8_to_connect_reason_code(value: u8) -> Mqtt5Result<Connec
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
+
+pub(crate) fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<DisconnectReasonCode, ()> {
+    match value {
+        0 => { Ok(DisconnectReasonCode::NormalDisconnection) }
+        4 => { Ok(DisconnectReasonCode::DisconnectWithWillMessage) }
+        128 => { Ok(DisconnectReasonCode::UnspecifiedError) }
+        129 => { Ok(DisconnectReasonCode::MalformedPacket) }
+        130 => { Ok(DisconnectReasonCode::ProtocolError) }
+        131 => { Ok(DisconnectReasonCode::ImplementationSpecificError) }
+        135 => { Ok(DisconnectReasonCode::NotAuthorized) }
+        137 => { Ok(DisconnectReasonCode::ServerBusy) }
+        139 => { Ok(DisconnectReasonCode::ServerShuttingDown) }
+        141 => { Ok(DisconnectReasonCode::KeepAliveTimeout) }
+        142 => { Ok(DisconnectReasonCode::SessionTakenOver) }
+        143 => { Ok(DisconnectReasonCode::TopicFilterInvalid) }
+        144 => { Ok(DisconnectReasonCode::TopicNameInvalid) }
+        147 => { Ok(DisconnectReasonCode::ReceiveMaximumExceeded) }
+        148 => { Ok(DisconnectReasonCode::TopicAliasInvalid) }
+        149 => { Ok(DisconnectReasonCode::PacketTooLarge) }
+        150 => { Ok(DisconnectReasonCode::MessageRateTooHigh) }
+        151 => { Ok(DisconnectReasonCode::QuotaExceeded) }
+        152 => { Ok(DisconnectReasonCode::AdministrativeAction) }
+        153 => { Ok(DisconnectReasonCode::PayloadFormatInvalid) }
+        154 => { Ok(DisconnectReasonCode::RetainNotSupported) }
+        155 => { Ok(DisconnectReasonCode::QosNotSupported) }
+        156 => { Ok(DisconnectReasonCode::UseAnotherServer) }
+        157 => { Ok(DisconnectReasonCode::ServerMoved) }
+        158 => { Ok(DisconnectReasonCode::SharedSubscriptionsNotSupported) }
+        159 => { Ok(DisconnectReasonCode::ConnectionRateExceeded) }
+        160 => { Ok(DisconnectReasonCode::MaximumConnectTime) }
+        161 => { Ok(DisconnectReasonCode::SubscriptionIdentifiersNotSupported) }
+        162 => { Ok(DisconnectReasonCode::WildcardSubscriptionsNotSupported) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}

@@ -384,8 +384,48 @@ fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Pin
     return Ok(PingrespPacket{});
 }
 
+fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_SESSION_EXPIRY_INTERVAL => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.session_expiry_interval_seconds)?; }
+            PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            PROPERTY_KEY_SERVER_REFERENCE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.server_reference)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<DisconnectPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = DisconnectPacket { ..Default::default() };
+
+    if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    if mutable_body.len() == 0 {
+        return Ok(packet);
+    }
+
+    mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_disconnect_reason_code)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length != mutable_body.len() {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    decode_disconnect_properties(mutable_body, &mut packet)?;
+
+    Ok(packet)
 }
 
 fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<AuthPacket, ()> {
@@ -1253,5 +1293,50 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
+    }
+
+    #[test]
+    fn disconnect_round_trip_encode_decode_default() {
+        let packet = DisconnectPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
+    }
+
+    #[test]
+    fn disconnect_round_trip_encode_decode_normal_reason_code() {
+        let packet = DisconnectPacket {
+            reason_code : DisconnectReasonCode::NormalDisconnection,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
+    }
+
+    #[test]
+    fn disconnect_round_trip_encode_decode_abnormal_reason_code() {
+        let packet = DisconnectPacket {
+            reason_code : DisconnectReasonCode::ConnectionRateExceeded,
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
+    }
+
+    #[test]
+    fn disconnect_round_trip_encode_decode_all_properties() {
+        let packet = DisconnectPacket {
+            reason_code : DisconnectReasonCode::ConnectionRateExceeded,
+            reason_string : Some("I don't like you".to_string()),
+            server_reference : Some("far.far.away.com".to_string()),
+            session_expiry_interval_seconds : Some(14400),
+            user_properties: Some(vec!(
+                UserProperty{name: "Super".to_string(), value: "Meatboy".to_string()},
+                UserProperty{name: "Minsc".to_string(), value: "Boo".to_string()},
+            )),
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 }

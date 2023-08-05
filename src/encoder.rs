@@ -588,6 +588,67 @@ impl Encodable for PingrespPacket {
     }
 }
 
+#[rustfmt::skip]
+fn compute_disconnect_packet_length_properties(packet: &DisconnectPacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut disconnect_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    add_optional_u32_property_length!(disconnect_property_section_length, packet.session_expiry_interval_seconds);
+    add_optional_string_property_length!(disconnect_property_section_length, packet.reason_string);
+    add_optional_string_property_length!(disconnect_property_section_length, packet.server_reference);
+
+    if disconnect_property_section_length == 0 && packet.reason_code == DisconnectReasonCode::NormalDisconnection {
+        return Ok((0, 0));
+    }
+
+    let mut total_remaining_length : usize = 1 + compute_variable_length_integer_encode_size(disconnect_property_section_length)?;
+    total_remaining_length += disconnect_property_section_length;
+
+    Ok((total_remaining_length as u32, disconnect_property_section_length as u32))
+}
+
+fn get_disconnect_packet_reason_string(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Disconnect, reason_string)
+}
+
+fn get_disconnect_packet_server_reference(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Disconnect, server_reference)
+}
+
+fn get_disconnect_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Disconnect(disconnect) = packet {
+        if let Some(properties) = &disconnect.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+#[rustfmt::skip]
+impl Encodable for DisconnectPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, disconnect_property_length) = compute_disconnect_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_DISCONNECT << 4);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        if disconnect_property_length == 0 && self.reason_code == DisconnectReasonCode::NormalDisconnection {
+            assert_eq!(0, total_remaining_length);
+            return Ok(());
+        }
+
+        encode_enum!(steps, Uint8, u8, self.reason_code);
+        encode_integral_expression!(steps, Vli, disconnect_property_length);
+
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval_seconds);
+        encode_optional_string_property!(steps, get_disconnect_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
+        encode_optional_string_property!(steps, get_disconnect_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, self.server_reference);
+        encode_user_properties!(steps, get_disconnect_packet_user_property, self.user_properties);
+
+        Ok(())
+    }
+}
+
 impl Encodable for MqttPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
@@ -600,12 +661,6 @@ impl Encodable for MqttPacket {
             MqttPacket::Publish(packet) => {
                 return packet.write_encoding_steps(steps);
             }
-            MqttPacket::Pingreq(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pingresp(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
             MqttPacket::Puback(packet) => {
                 return packet.write_encoding_steps(steps);
             }
@@ -616,6 +671,15 @@ impl Encodable for MqttPacket {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Pubcomp(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pingreq(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Pingresp(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Disconnect(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             _ => Err(Mqtt5Error::Unimplemented(())),
