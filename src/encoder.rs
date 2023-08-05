@@ -568,6 +568,56 @@ define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubc
 define_ack_packet_encoding_impl!(PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
 #[rustfmt::skip]
+fn compute_suback_packet_length_properties(packet: &SubackPacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut suback_property_section_length = compute_user_properties_length(&packet.user_properties);
+    add_optional_string_property_length!(suback_property_section_length, packet.reason_string);
+
+    let mut total_remaining_length : usize = 2 + compute_variable_length_integer_encode_size(suback_property_section_length)?;
+    total_remaining_length += suback_property_section_length;
+
+    total_remaining_length += packet.reason_codes.len();
+
+    Ok((total_remaining_length as u32, suback_property_section_length as u32))
+}
+
+fn get_suback_packet_reason_string(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Suback, reason_string)
+}
+
+fn get_suback_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Suback(suback) = packet {
+        if let Some(properties) = &suback.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+#[rustfmt::skip]
+impl Encodable for SubackPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        encode_integral_expression!(steps, Uint16, self.packet_id);
+        encode_integral_expression!(steps, Vli, suback_property_length);
+
+        encode_optional_string_property!(steps, get_suback_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
+        encode_user_properties!(steps, get_suback_packet_user_property, self.user_properties);
+
+        let reason_codes = &self.reason_codes;
+        for reason_code in reason_codes {
+            encode_enum!(steps, Uint8, u8, *reason_code);
+        }
+
+        Ok(())
+    }
+}
+
+#[rustfmt::skip]
 fn compute_unsubscribe_packet_length_properties(packet: &UnsubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
     let mut unsubscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
 
@@ -830,6 +880,9 @@ impl Encodable for MqttPacket {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Pubcomp(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Suback(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Unsubscribe(packet) => {

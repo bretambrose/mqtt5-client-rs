@@ -344,8 +344,49 @@ fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Su
     Err(Mqtt5Error::Unimplemented(()))
 }
 
+fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<SubackPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = SubackPacket { ..Default::default() };
+
+    if first_byte != (PACKET_TYPE_SUBACK << 4) {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+
+    let properties_bytes = &mutable_body[..properties_length];
+    let payload_bytes = &mutable_body[properties_length..];
+
+    decode_suback_properties(properties_bytes, &mut packet)?;
+
+    let reason_code_count = payload_bytes.len();
+    packet.reason_codes.reserve(reason_code_count);
+
+    for i in 0..reason_code_count {
+        packet.reason_codes.push(convert_u8_to_suback_reason_code(payload_bytes[i])?);
+    }
+
+    Ok(packet)
 }
 
 fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut UnsubscribePacket) -> Mqtt5Result<(), ()> {
@@ -1571,5 +1612,48 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
+    }
+
+    #[test]
+    fn suback_round_trip_encode_decode_default() {
+        let packet = SubackPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
+    }
+
+    #[test]
+    fn suback_round_trip_encode_decode_required() {
+        let packet = SubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                SubackReasonCode::GrantedQos1,
+                SubackReasonCode::QuotaExceeded,
+                SubackReasonCode::SubscriptionIdentifiersNotSupported,
+            ],
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
+    }
+
+    #[test]
+    fn suback_round_trip_encode_decode_all() {
+        let packet = SubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                SubackReasonCode::GrantedQos2,
+                SubackReasonCode::UnspecifiedError,
+                SubackReasonCode::SharedSubscriptionsNotSupported
+            ],
+            reason_string : Some("Maybe tomorrow".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "This".to_string(), value: "wasfast".to_string()},
+                UserProperty{name: "Onepacket".to_string(), value: "left".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
 }

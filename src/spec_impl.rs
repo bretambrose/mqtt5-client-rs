@@ -211,3 +211,21 @@ pub(crate) fn convert_u8_to_unsuback_reason_code(value: u8) -> Mqtt5Result<Unsub
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
+
+pub(crate) fn convert_u8_to_suback_reason_code(value: u8) -> Mqtt5Result<SubackReasonCode, ()> {
+    match value {
+        0 => { Ok(SubackReasonCode::GrantedQos0) }
+        1 => { Ok(SubackReasonCode::GrantedQos1) }
+        2 => { Ok(SubackReasonCode::GrantedQos2) }
+        128 => { Ok(SubackReasonCode::UnspecifiedError) }
+        131 => { Ok(SubackReasonCode::ImplementationSpecificError) }
+        135 => { Ok(SubackReasonCode::NotAuthorized) }
+        143 => { Ok(SubackReasonCode::TopicFilterInvalid) }
+        145 => { Ok(SubackReasonCode::PacketIdentifierInUse) }
+        151 => { Ok(SubackReasonCode::QuotaExceeded) }
+        158 => { Ok(SubackReasonCode::SharedSubscriptionsNotSupported) }
+        161 => { Ok(SubackReasonCode::SubscriptionIdentifiersNotSupported) }
+        162 => { Ok(SubackReasonCode::WildcaredSubscriptionsNotSupported) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
