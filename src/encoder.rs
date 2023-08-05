@@ -649,6 +649,62 @@ impl Encodable for DisconnectPacket {
     }
 }
 
+#[rustfmt::skip]
+fn compute_auth_packet_length_properties(packet: &AuthPacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut auth_property_section_length = compute_user_properties_length(&packet.user_properties);
+
+    add_optional_string_property_length!(auth_property_section_length, packet.authentication_method);
+    add_optional_bytes_property_length!(auth_property_section_length, packet.authentication_data);
+    add_optional_string_property_length!(auth_property_section_length, packet.reason_string);
+
+    let mut total_remaining_length : usize = 1 + compute_variable_length_integer_encode_size(auth_property_section_length)?;
+    total_remaining_length += auth_property_section_length;
+
+    Ok((total_remaining_length as u32, auth_property_section_length as u32))
+}
+
+fn get_auth_packet_authentication_method(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Auth, authentication_method)
+}
+
+fn get_auth_packet_authentication_data(packet: &MqttPacket) -> &[u8] {
+    get_optional_packet_field!(packet, MqttPacket::Auth, authentication_data)
+}
+
+fn get_auth_packet_reason_string(packet: &MqttPacket) -> &str {
+    get_optional_packet_field!(packet, MqttPacket::Auth, reason_string)
+}
+
+fn get_auth_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Auth(auth) = packet {
+        if let Some(properties) = &auth.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+#[rustfmt::skip]
+impl Encodable for AuthPacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        encode_enum!(steps, Uint8, u8, self.reason_code);
+        encode_integral_expression!(steps, Vli, auth_property_length);
+
+        encode_optional_string_property!(steps, get_auth_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
+        encode_optional_bytes_property!(steps, get_auth_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
+        encode_optional_string_property!(steps, get_auth_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
+        encode_user_properties!(steps, get_auth_packet_user_property, self.user_properties);
+
+        Ok(())
+    }
+}
+
 impl Encodable for MqttPacket {
     fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
         match self {
@@ -680,6 +736,9 @@ impl Encodable for MqttPacket {
                 return packet.write_encoding_steps(steps);
             }
             MqttPacket::Disconnect(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
+            MqttPacket::Auth(packet) => {
                 return packet.write_encoding_steps(steps);
             }
             _ => Err(Mqtt5Error::Unimplemented(())),

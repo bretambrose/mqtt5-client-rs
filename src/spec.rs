@@ -378,8 +378,8 @@ pub struct DisconnectPacket {
 pub struct AuthPacket {
     pub reason_code: AuthenticateReasonCode,
 
-    pub method: Option<String>,
-    pub data: Option<Vec<u8>>,
+    pub authentication_method: Option<String>,
+    pub authentication_data: Option<Vec<u8>>,
     pub reason_string: Option<String>,
 
     pub user_properties: Option<Vec<UserProperty>>,

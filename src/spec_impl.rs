@@ -187,3 +187,12 @@ pub(crate) fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<Dis
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
+
+pub(crate) fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<AuthenticateReasonCode, ()> {
+    match value {
+        0 => { Ok(AuthenticateReasonCode::Success) }
+        24 => { Ok(AuthenticateReasonCode::ContinueAuthentication) }
+        25 => { Ok(AuthenticateReasonCode::ReAuthenticate) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
