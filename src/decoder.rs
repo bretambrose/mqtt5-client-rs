@@ -392,8 +392,49 @@ fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<
     Ok(packet)
 }
 
+fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<UnsubackPacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = UnsubackPacket { ..Default::default() };
+
+    if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+
+    let properties_bytes = &mutable_body[..properties_length];
+    let payload_bytes = &mutable_body[properties_length..];
+
+    decode_unsuback_properties(properties_bytes, &mut packet)?;
+
+    let reason_code_count = payload_bytes.len();
+    packet.reason_codes.reserve(reason_code_count);
+
+    for i in 0..reason_code_count {
+        packet.reason_codes.push(convert_u8_to_unsuback_reason_code(payload_bytes[i])?);
+    }
+
+    Ok(packet)
 }
 
 const PINGREQ_FIRST_BYTE : u8 = PACKET_TYPE_PINGREQ << 4;
@@ -1487,5 +1528,48 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
+    }
+
+    #[test]
+    fn unsuback_round_trip_encode_decode_default() {
+        let packet = UnsubackPacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
+    }
+
+    #[test]
+    fn unsuback_round_trip_encode_decode_required() {
+        let packet = UnsubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                UnsubackReasonCode::ImplementationSpecificError,
+                UnsubackReasonCode::Success,
+                UnsubackReasonCode::TopicNameInvalid
+            ],
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
+    }
+
+    #[test]
+    fn unsuback_round_trip_encode_decode_all() {
+        let packet = UnsubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                UnsubackReasonCode::NotAuthorized,
+                UnsubackReasonCode::PacketIdentifierInUse,
+                UnsubackReasonCode::Success
+            ],
+            reason_string : Some("Didn't feel like it".to_string()),
+            user_properties: Some(vec!(
+                UserProperty{name: "Time".to_string(), value: "togohome".to_string()},
+                UserProperty{name: "Ouch".to_string(), value: "backhurts".to_string()},
+            ))
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 }

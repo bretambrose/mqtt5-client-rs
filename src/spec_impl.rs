@@ -198,3 +198,16 @@ pub(crate) fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<A
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }
+
+pub(crate) fn convert_u8_to_unsuback_reason_code(value: u8) -> Mqtt5Result<UnsubackReasonCode, ()> {
+    match value {
+        0 => { Ok(UnsubackReasonCode::Success) }
+        17 => { Ok(UnsubackReasonCode::NoSubscriptionExisted) }
+        128 => { Ok(UnsubackReasonCode::UnspecifiedError) }
+        131 => { Ok(UnsubackReasonCode::ImplementationSpecificError) }
+        135 => { Ok(UnsubackReasonCode::NotAuthorized) }
+        144 => { Ok(UnsubackReasonCode::TopicNameInvalid) }
+        145 => { Ok(UnsubackReasonCode::PacketIdentifierInUse) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
