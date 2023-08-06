@@ -177,16 +177,6 @@ pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u
     Ok(&bytes[1..])
 }
 
-pub(crate) fn decode_optional_u8<'a>(bytes: &'a[u8], value: &mut Option<u8>) -> Mqtt5Result<&'a[u8], ()> {
-    if bytes.len() < 1 {
-        return Err(Mqtt5Error::ProtocolError);
-    }
-
-    *value = Some(bytes[0]);
-
-    Ok(&bytes[1..])
-}
-
 pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<bool>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
         return Err(Mqtt5Error::ProtocolError);

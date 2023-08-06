@@ -62,6 +62,11 @@ pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = 1 << 7;
 pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = 1 << 6;
 
 pub const UNSUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_UNSUBSCRIBE << 4) | (0x02u8);
+pub const SUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_SUBSCRIBE << 4) | (0x0Au8);
+
+pub const SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK : u8 = 1u8 << 2;
+pub const SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK : u8 = 1u8 << 3;
+pub const SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT : u8 = 4;
 
 pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService, ()> {
     match value {
@@ -226,6 +231,15 @@ pub(crate) fn convert_u8_to_suback_reason_code(value: u8) -> Mqtt5Result<SubackR
         158 => { Ok(SubackReasonCode::SharedSubscriptionsNotSupported) }
         161 => { Ok(SubackReasonCode::SubscriptionIdentifiersNotSupported) }
         162 => { Ok(SubackReasonCode::WildcaredSubscriptionsNotSupported) }
+        _ => { Err(Mqtt5Error::ProtocolError) }
+    }
+}
+
+pub(crate) fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<RetainHandlingType, ()> {
+    match value {
+        0 => { Ok(RetainHandlingType::SendOnSubscribe) }
+        1 => { Ok(RetainHandlingType::SendOnSubscribeIfNew) }
+        2 => { Ok(RetainHandlingType::DontSend) }
         _ => { Err(Mqtt5Error::ProtocolError) }
     }
 }

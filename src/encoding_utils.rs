@@ -211,7 +211,7 @@ macro_rules! encode_user_properties {
 pub(crate) use encode_user_properties;
 
 macro_rules! encode_indexed_string {
-    ($target: ident, $indexed_string_getter: ident, $value: ident, $index: expr) => {{
+    ($target: ident, $indexed_string_getter: ident, $value: expr, $index: expr) => {{
         $target.push_back(EncodingStep::Uint16($value.len() as u16));
         $target.push_back(EncodingStep::IndexedString(
             $indexed_string_getter as fn(&MqttPacket, usize) -> &str,

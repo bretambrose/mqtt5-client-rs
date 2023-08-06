@@ -568,6 +568,79 @@ define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubc
 define_ack_packet_encoding_impl!(PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
 #[rustfmt::skip]
+fn compute_subscribe_packet_length_properties(packet: &SubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
+    let mut subscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
+    add_optional_u32_property_length!(subscribe_property_section_length, packet.subscription_identifier);
+
+    let mut total_remaining_length : usize = 2 + compute_variable_length_integer_encode_size(subscribe_property_section_length)?;
+    total_remaining_length += subscribe_property_section_length;
+
+    total_remaining_length += packet.subscriptions.len() * 3;
+    for subscription in &packet.subscriptions {
+        total_remaining_length += subscription.topic_filter.len();
+    }
+
+    Ok((total_remaining_length as u32, subscribe_property_section_length as u32))
+}
+
+fn get_subscribe_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProperty {
+    if let MqttPacket::Subscribe(subscribe) = packet {
+        if let Some(properties) = &subscribe.user_properties {
+            return &properties[index];
+        }
+    }
+
+    panic!("Internal encoding error: invalid user property state");
+}
+
+fn get_subscribe_packet_topic_filter(packet: &MqttPacket, index: usize) -> &str {
+    if let MqttPacket::Subscribe(subscribe) = packet {
+        return &subscribe.subscriptions[index].topic_filter;
+    }
+
+    panic!("Internal encoding error: invalid subscribe topic filter state");
+}
+
+fn compute_subscription_options_byte(subscription: &Subscription) -> u8 {
+    let mut options_byte = subscription.qos as u8;
+
+    if subscription.no_local {
+        options_byte |= SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK;
+    }
+
+    if subscription.retain_as_published {
+        options_byte |= SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK;
+    }
+
+    options_byte |= (subscription.retain_handling_type as u8) << SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT;
+
+    options_byte
+}
+
+#[rustfmt::skip]
+impl Encodable for SubscribePacket {
+    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        let (total_remaining_length, subscribe_property_length) = compute_subscribe_packet_length_properties(self)?;
+
+        encode_integral_expression!(steps, Uint8, SUBSCRIBE_FIRST_BYTE);
+        encode_integral_expression!(steps, Vli, total_remaining_length);
+
+        encode_integral_expression!(steps, Uint16, self.packet_id);
+        encode_integral_expression!(steps, Vli, subscribe_property_length);
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER, self.subscription_identifier);
+        encode_user_properties!(steps, get_subscribe_packet_user_property, self.user_properties);
+
+        let subscriptions = &self.subscriptions;
+        for (i, subscription) in subscriptions.iter().enumerate() {
+            encode_indexed_string!(steps, get_subscribe_packet_topic_filter, subscription.topic_filter, i);
+            encode_integral_expression!(steps, Uint8, compute_subscription_options_byte(subscription));
+        }
+
+        Ok(())
+    }
+}
+
+#[rustfmt::skip]
 fn compute_suback_packet_length_properties(packet: &SubackPacket) -> Mqtt5Result<(u32, u32), ()> {
     let mut suback_property_section_length = compute_user_properties_length(&packet.user_properties);
     add_optional_string_property_length!(suback_property_section_length, packet.reason_string);
@@ -619,7 +692,7 @@ impl Encodable for SubackPacket {
 
 #[rustfmt::skip]
 fn compute_unsubscribe_packet_length_properties(packet: &UnsubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
-    let mut unsubscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
+    let unsubscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     let mut total_remaining_length : usize = 2 + compute_variable_length_integer_encode_size(unsubscribe_property_section_length)?;
     total_remaining_length += unsubscribe_property_section_length;
@@ -882,6 +955,9 @@ impl Encodable for MqttPacket {
             MqttPacket::Pubcomp(packet) => {
                 return packet.write_encoding_steps(steps);
             }
+            MqttPacket::Subscribe(packet) => {
+                return packet.write_encoding_steps(steps);
+            }
             MqttPacket::Suback(packet) => {
                 return packet.write_encoding_steps(steps);
             }
@@ -903,7 +979,6 @@ impl Encodable for MqttPacket {
             MqttPacket::Auth(packet) => {
                 return packet.write_encoding_steps(steps);
             }
-            _ => Err(Mqtt5Error::Unimplemented(())),
         }
     }
 }

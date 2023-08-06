@@ -340,8 +340,67 @@ define_ack_packet_decode_function!(decode_pubrel_packet, PubrelPacket, PACKET_TY
 define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket);
 define_ack_packet_decode_function!(decode_pubcomp_packet, PubcompPacket, PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
 
+fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePacket) -> Mqtt5Result<(), ()> {
+    let mut mutable_property_bytes = property_bytes;
+
+    while mutable_property_bytes.len() > 0 {
+        let property_key = mutable_property_bytes[0];
+        mutable_property_bytes = &mutable_property_bytes[1..];
+
+        match property_key {
+            PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.subscription_identifier)?; }
+            PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
+            _ => { return Err(Mqtt5Error::ProtocolError); }
+        }
+    }
+
+    Ok(())
+}
+
 fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<SubscribePacket, ()> {
-    Err(Mqtt5Error::Unimplemented(()))
+    let mut packet = SubscribePacket { ..Default::default() };
+
+    if first_byte != SUBSCRIBE_FIRST_BYTE {
+        return Err(Mqtt5Error::ProtocolError);
+    }
+
+    let mut mutable_body = packet_body;
+    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+    let mut properties_length : usize = 0;
+    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+
+    let properties_bytes = &mutable_body[..properties_length];
+    let mut payload_bytes = &mutable_body[properties_length..];
+
+    decode_subscribe_properties(properties_bytes, &mut packet)?;
+
+    while payload_bytes.len() > 0 {
+        let mut subscription = Subscription {
+            ..Default::default()
+        };
+
+        payload_bytes = decode_length_prefixed_string(payload_bytes, &mut subscription.topic_filter)?;
+
+        let mut subscription_options : u8 = 0;
+        payload_bytes = decode_u8(payload_bytes, &mut subscription_options)?;
+
+        subscription.qos = convert_u8_to_quality_of_service(subscription_options & 0x03)?;
+
+        if (subscription_options & SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK) != 0 {
+            subscription.no_local = true;
+        }
+
+        if (subscription_options & SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK) != 0 {
+            subscription.retain_as_published = true;
+        }
+
+        subscription.retain_handling_type = convert_u8_to_retain_handling_type((subscription_options >> SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT) & 0x03)?;
+
+        packet.subscriptions.push(subscription);
+    }
+
+    Ok(packet)
 }
 
 fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<(), ()> {
@@ -1655,5 +1714,54 @@ mod tests {
         };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
+    }
+
+    #[test]
+    fn subscribe_round_trip_encode_decode_default() {
+        let packet = SubscribePacket {
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
+    }
+
+    #[test]
+    fn subscribe_round_trip_encode_decode_basic() {
+        let packet = SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
+            ..Default::default()
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
+    }
+
+    #[test]
+    fn subscribe_round_trip_encode_decode_all_properties() {
+        let packet = SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![
+                Subscription {
+                    topic_filter: "a/b/c/d/e".to_string(),
+                    qos: QualityOfService::ExactlyOnce,
+                    retain_as_published: true,
+                    no_local: false,
+                    retain_handling_type: RetainHandlingType::DontSend
+                },
+                Subscription {
+                    topic_filter: "the/best/+/filter/*".to_string(),
+                    qos: QualityOfService::AtMostOnce,
+                    retain_as_published: false,
+                    no_local: true,
+                    retain_handling_type: RetainHandlingType::SendOnSubscribeIfNew
+                }
+            ],
+            subscription_identifier : Some(41),
+            user_properties: Some(vec!(
+                UserProperty{name: "Worms".to_string(), value: "inmyhead".to_string()},
+            )),
+        };
+
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 }
