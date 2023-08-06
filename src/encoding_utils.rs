@@ -22,10 +22,6 @@ pub(crate) enum EncodingStep {
     UserPropertyValue(fn(&MqttPacket, usize) -> &UserProperty, usize, usize),
 }
 
-pub(crate) trait Encodable {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()>;
-}
-
 macro_rules! get_packet_field {
     ($target: expr, $pat: path, $field_name: ident) => {
         if let $pat(a) = $target {
@@ -282,37 +278,35 @@ macro_rules! define_ack_packet_user_property_accessor {
 pub(crate) use define_ack_packet_user_property_accessor;
 
 macro_rules! define_ack_packet_encoding_impl {
-    ($packet_type: ident, $reason_code_type: ident, $packet_type_value: expr, $length_function: ident, $reason_string_accessor: ident, $user_property_accessor: ident) => {
-        impl Encodable for $packet_type {
-            fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-                let (total_remaining_length, property_length) = $length_function(self)?;
+    ($function_name: ident, $packet_type: ident, $reason_code_type: ident, $packet_type_value: expr, $length_function: ident, $reason_string_accessor: ident, $user_property_accessor: ident) => {
+        fn $function_name(packet: &$packet_type, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+            let (total_remaining_length, property_length) = $length_function(packet)?;
 
-                encode_integral_expression!(steps, Uint8, ($packet_type_value << 4));
-                encode_integral_expression!(steps, Vli, total_remaining_length);
+            encode_integral_expression!(steps, Uint8, ($packet_type_value << 4));
+            encode_integral_expression!(steps, Vli, total_remaining_length);
 
-                /* Variable header */
-                encode_integral_expression!(steps, Uint16, self.packet_id);
+            /* Variable header */
+            encode_integral_expression!(steps, Uint16, packet.packet_id);
 
-                /* per spec: empty properties + success = allowed to drop the reason code */
-                if self.reason_code == $reason_code_type::Success && property_length == 0 {
-                    assert_eq!(2, total_remaining_length);
-                    return Ok(());
-                }
-
-                encode_enum!(steps, Uint8, u8, self.reason_code);
-
-                /* slightly speculative: empty properties = allowed to drop the property length vli */
-                if property_length == 0 {
-                    assert_eq!(3, total_remaining_length);
-                    return Ok(());
-                }
-
-                encode_integral_expression!(steps, Vli, property_length);
-                encode_optional_string_property!(steps, $reason_string_accessor, PROPERTY_KEY_REASON_STRING, self.reason_string);
-                encode_user_properties!(steps, $user_property_accessor, self.user_properties);
-
-                Ok(())
+            /* per spec: empty properties + success = allowed to drop the reason code */
+            if packet.reason_code == $reason_code_type::Success && property_length == 0 {
+                assert_eq!(2, total_remaining_length);
+                return Ok(());
             }
+
+            encode_enum!(steps, Uint8, u8, packet.reason_code);
+
+            /* slightly speculative: empty properties = allowed to drop the property length vli */
+            if property_length == 0 {
+                assert_eq!(3, total_remaining_length);
+                return Ok(());
+            }
+
+            encode_integral_expression!(steps, Vli, property_length);
+            encode_optional_string_property!(steps, $reason_string_accessor, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+            encode_user_properties!(steps, $user_property_accessor, packet.user_properties);
+
+            Ok(())
         }
     };
 }

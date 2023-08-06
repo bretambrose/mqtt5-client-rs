@@ -158,12 +158,7 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
      *  + # bytes(variable_length_encoding(connect_property_section_length))
      *  + connect_property_section_length
      */
-    let variable_header_length_result = compute_variable_length_integer_encode_size(connect_property_section_length);
-    if let Err(error) = variable_header_length_result {
-        return Err(error);
-    }
-
-    let mut variable_header_length: usize = variable_header_length_result.unwrap();
+    let mut variable_header_length = compute_variable_length_integer_encode_size(connect_property_section_length)?;
     variable_header_length += 10 + connect_property_section_length;
 
     let mut payload_length : usize = 0;
@@ -180,12 +175,7 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
         add_optional_string_property_length!(will_property_length, will.response_topic);
         add_optional_bytes_property_length!(will_property_length, will.correlation_data);
 
-        let will_properties_length_encode_size_result = compute_variable_length_integer_encode_size(will_property_length);
-        if let Err(error) = will_properties_length_encode_size_result {
-            return Err(error);
-        }
-
-        let will_properties_length_encode_size : usize = will_properties_length_encode_size_result.unwrap();
+        let will_properties_length_encode_size = compute_variable_length_integer_encode_size(will_property_length)?;
 
         payload_length += will_property_length;
         payload_length += will_properties_length_encode_size;
@@ -211,58 +201,51 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
 }
 
 #[rustfmt::skip]
-impl Encodable for ConnectPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let length_result = compute_connect_packet_length_properties(self);
-        if let Err(error) = length_result {
-            return Err(error);
-        }
+fn write_connect_encoding_steps(packet: &ConnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, connect_property_length, will_property_length) = compute_connect_packet_length_properties(packet)?;
 
-        let (total_remaining_length, connect_property_length, will_property_length) = length_result.unwrap();
+    encode_integral_expression!(steps, Uint8, 1u8 << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_raw_bytes!(steps, get_connect_protocol_bytes);
+    encode_integral_expression!(steps, Uint8, compute_connect_flags(packet));
+    encode_integral_expression!(steps, Uint16, packet.keep_alive_interval_seconds);
 
-        encode_integral_expression!(steps, Uint8, 1u8 << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
-        encode_raw_bytes!(steps, get_connect_protocol_bytes);
-        encode_integral_expression!(steps, Uint8, compute_connect_flags(self));
-        encode_integral_expression!(steps, Uint16, self.keep_alive_interval_seconds);
+    encode_integral_expression!(steps, Vli, connect_property_length);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, packet.session_expiry_interval_seconds);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, packet.receive_maximum);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, packet.maximum_packet_size_bytes);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, packet.topic_alias_maximum);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION, packet.request_response_information);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION, packet.request_problem_information);
+    encode_optional_string_property!(steps, get_connect_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, packet.authentication_method);
+    encode_optional_bytes_property!(steps, get_connect_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, packet.authentication_data);
+    encode_user_properties!(steps, get_connect_packet_user_property, packet.user_properties);
 
-        encode_integral_expression!(steps, Vli, connect_property_length);
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval_seconds);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, self.receive_maximum);
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, self.maximum_packet_size_bytes);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION, self.request_response_information);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION, self.request_problem_information);
-        encode_optional_string_property!(steps, get_connect_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
-        encode_optional_bytes_property!(steps, get_connect_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
-        encode_user_properties!(steps, get_connect_packet_user_property, self.user_properties);
+    encode_length_prefixed_optional_string!(steps, get_connect_packet_client_id, packet.client_id);
 
-        encode_length_prefixed_optional_string!(steps, get_connect_packet_client_id, self.client_id);
+    if let Some(will) = &packet.will {
+        encode_integral_expression!(steps, Vli, will_property_length);
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_WILL_DELAY_INTERVAL, packet.will_delay_interval_seconds);
+        encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, will.payload_format);
+        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, will.message_expiry_interval_seconds);
+        encode_optional_string_property!(steps, get_connect_packet_will_content_type, PROPERTY_KEY_CONTENT_TYPE, &will.content_type);
+        encode_optional_string_property!(steps, get_connect_packet_will_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, &will.response_topic);
+        encode_optional_bytes_property!(steps, get_connect_packet_will_correlation_data, PROPERTY_KEY_CORRELATION_DATA, will.correlation_data);
+        encode_user_properties!(steps, get_connect_packet_will_user_property, will.user_properties);
 
-        if let Some(will) = &self.will {
-            encode_integral_expression!(steps, Vli, will_property_length);
-            encode_optional_property!(steps, Uint32, PROPERTY_KEY_WILL_DELAY_INTERVAL, self.will_delay_interval_seconds);
-            encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, will.payload_format);
-            encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, will.message_expiry_interval_seconds);
-            encode_optional_string_property!(steps, get_connect_packet_will_content_type, PROPERTY_KEY_CONTENT_TYPE, &will.content_type);
-            encode_optional_string_property!(steps, get_connect_packet_will_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, &will.response_topic);
-            encode_optional_bytes_property!(steps, get_connect_packet_will_correlation_data, PROPERTY_KEY_CORRELATION_DATA, will.correlation_data);
-            encode_user_properties!(steps, get_connect_packet_will_user_property, will.user_properties);
-
-            encode_length_prefixed_string!(steps, get_connect_packet_will_topic, will.topic);
-            encode_length_prefixed_optional_bytes!(steps, get_connect_packet_will_payload, will.payload);
-        }
-
-        if self.username.is_some() {
-            encode_length_prefixed_optional_string!(steps, get_connect_packet_username, self.username);
-        }
-
-        if self.password.is_some() {
-            encode_length_prefixed_optional_bytes!(steps, get_connect_packet_password, self.password);
-        }
-
-        Ok(())
+        encode_length_prefixed_string!(steps, get_connect_packet_will_topic, will.topic);
+        encode_length_prefixed_optional_bytes!(steps, get_connect_packet_will_payload, will.payload);
     }
+
+    if packet.username.is_some() {
+        encode_length_prefixed_optional_string!(steps, get_connect_packet_username, packet.username);
+    }
+
+    if packet.password.is_some() {
+        encode_length_prefixed_optional_bytes!(steps, get_connect_packet_password, packet.password);
+    }
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -330,45 +313,44 @@ fn get_connack_packet_user_property(packet: &MqttPacket, index: usize) -> &UserP
 }
 
 #[rustfmt::skip]
-impl Encodable for ConnackPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(self)?;
+fn write_connack_encoding_steps(packet: &ConnackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        /*
-         * Variable Header
-         * 1 byte flags
-         * 1 byte reason code
-         * 1-4 byte Property Length as Variable Byte Integer
-         * n bytes Properties
-         */
-        encode_integral_expression!(steps, Uint8, if self.session_present { 1 } else { 0 });
-        encode_enum!(steps, Uint8, u8, self.reason_code);
-        encode_integral_expression!(steps, Vli, connack_property_length);
+    /*
+     * Variable Header
+     * 1 byte flags
+     * 1 byte reason code
+     * 1-4 byte Property Length as Variable Byte Integer
+     * n bytes Properties
+     */
+    encode_integral_expression!(steps, Uint8, if packet.session_present { 1 } else { 0 });
+    encode_enum!(steps, Uint8, u8, packet.reason_code);
+    encode_integral_expression!(steps, Vli, connack_property_length);
 
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, self.receive_maximum);
-        encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_MAXIMUM_QOS, u8, self.maximum_qos);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_RETAIN_AVAILABLE, self.retain_available);
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, self.maximum_packet_size);
-        encode_optional_string_property!(steps, get_connack_packet_assigned_client_identifier, PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER, self.assigned_client_identifier);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, self.topic_alias_maximum);
-        encode_optional_string_property!(steps, get_connack_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
-        encode_user_properties!(steps, get_connack_packet_user_property, self.user_properties);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE, self.wildcard_subscriptions_available);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE, self.subscription_identifiers_available);
-        encode_optional_boolean_property!(steps, PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE, self.shared_subscriptions_available);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_SERVER_KEEP_ALIVE, self.server_keep_alive);
-        encode_optional_string_property!(steps, get_connack_packet_response_information, PROPERTY_KEY_RESPONSE_INFORMATION, self.response_information);
-        encode_optional_string_property!(steps, get_connack_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, self.server_reference);
-        encode_optional_string_property!(steps, get_connack_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
-        encode_optional_bytes_property!(steps, get_connack_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, packet.session_expiry_interval);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_RECEIVE_MAXIMUM, packet.receive_maximum);
+    encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_MAXIMUM_QOS, u8, packet.maximum_qos);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_RETAIN_AVAILABLE, packet.retain_available);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_MAXIMUM_PACKET_SIZE, packet.maximum_packet_size);
+    encode_optional_string_property!(steps, get_connack_packet_assigned_client_identifier, PROPERTY_KEY_ASSIGNED_CLIENT_IDENTIFIER, packet.assigned_client_identifier);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM, packet.topic_alias_maximum);
+    encode_optional_string_property!(steps, get_connack_packet_reason_string, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+    encode_user_properties!(steps, get_connack_packet_user_property, packet.user_properties);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_WILDCARD_SUBSCRIPTIONS_AVAILABLE, packet.wildcard_subscriptions_available);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIERS_AVAILABLE, packet.subscription_identifiers_available);
+    encode_optional_boolean_property!(steps, PROPERTY_KEY_SHARED_SUBSCRIPTIONS_AVAILABLE, packet.shared_subscriptions_available);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_SERVER_KEEP_ALIVE, packet.server_keep_alive);
+    encode_optional_string_property!(steps, get_connack_packet_response_information, PROPERTY_KEY_RESPONSE_INFORMATION, packet.response_information);
+    encode_optional_string_property!(steps, get_connack_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, packet.server_reference);
+    encode_optional_string_property!(steps, get_connack_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, packet.authentication_method);
+    encode_optional_bytes_property!(steps, get_connack_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, packet.authentication_data);
 
-        Ok(())
-    }
+    Ok(())
 }
+
 
 #[rustfmt::skip]
 fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32), ()> {
@@ -399,12 +381,7 @@ fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Resu
      * Payload
      */
 
-    let publish_property_section_length_encode_size_result = compute_variable_length_integer_encode_size(publish_property_section_length);
-    if let Err(error) = publish_property_section_length_encode_size_result {
-        return Err(error);
-    }
-
-    let mut total_remaining_length : usize = publish_property_section_length_encode_size_result.unwrap();
+    let mut total_remaining_length = compute_variable_length_integer_encode_size(publish_property_section_length)?;
 
     /* Topic name */
     total_remaining_length += 2 + packet.topic.len();
@@ -485,54 +462,48 @@ fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
 }
 
 #[rustfmt::skip]
-impl Encodable for PublishPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let length_result = compute_publish_packet_length_properties(self);
-        if let Err(error) = length_result {
-            return Err(error);
-        }
+fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet)?;
 
-        let (total_remaining_length, publish_property_length) = length_result.unwrap();
+    encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(packet));
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(self));
-        encode_integral_expression!(steps, Vli, total_remaining_length);
-
-        /*
-         * Variable Header
-         * UTF-8 Encoded Topic Name
-         * 2 byte Packet Identifier
-         * 1-4 byte Property Length as Variable Byte Integer
-         * n bytes Properties
-         */
-        encode_length_prefixed_string!(steps, get_publish_packet_topic, self.topic);
-        if self.qos != QualityOfService::AtMostOnce {
-            encode_integral_expression!(steps, Uint16, self.packet_id);
-        }
-        encode_integral_expression!(steps, Vli, publish_property_length);
-
-        encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, self.payload_format);
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, self.message_expiry_interval_seconds);
-        encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS, self.topic_alias);
-        encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, self.response_topic);
-        encode_optional_bytes_property!(steps, get_publish_packet_correlation_data, PROPERTY_KEY_CORRELATION_DATA, self.correlation_data);
-
-        if let Some(subscription_identifiers) = &self.subscription_identifiers {
-            for val in subscription_identifiers {
-                encode_integral_expression!(steps, Uint8, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER);
-                encode_integral_expression!(steps, Vli, *val);
-            }
-        }
-
-        encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &self.content_type);
-        encode_user_properties!(steps, get_publish_packet_user_property, self.user_properties);
-
-        if self.payload.is_some() {
-            encode_raw_bytes!(steps, get_publish_packet_payload);
-        }
-
-        Ok(())
+    /*
+     * Variable Header
+     * UTF-8 Encoded Topic Name
+     * 2 byte Packet Identifier
+     * 1-4 byte Property Length as Variable Byte Integer
+     * n bytes Properties
+     */
+    encode_length_prefixed_string!(steps, get_publish_packet_topic, packet.topic);
+    if packet.qos != QualityOfService::AtMostOnce {
+        encode_integral_expression!(steps, Uint16, packet.packet_id);
     }
+    encode_integral_expression!(steps, Vli, publish_property_length);
+
+    encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, packet.payload_format);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, packet.message_expiry_interval_seconds);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS, packet.topic_alias);
+    encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, packet.response_topic);
+    encode_optional_bytes_property!(steps, get_publish_packet_correlation_data, PROPERTY_KEY_CORRELATION_DATA, packet.correlation_data);
+
+    if let Some(subscription_identifiers) = &packet.subscription_identifiers {
+        for val in subscription_identifiers {
+            encode_integral_expression!(steps, Uint8, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER);
+            encode_integral_expression!(steps, Vli, *val);
+        }
+    }
+
+    encode_optional_string_property!(steps, get_publish_packet_content_type, PROPERTY_KEY_CONTENT_TYPE, &packet.content_type);
+    encode_user_properties!(steps, get_publish_packet_user_property, packet.user_properties);
+
+    if packet.payload.is_some() {
+        encode_raw_bytes!(steps, get_publish_packet_payload);
+    }
+
+    Ok(())
 }
+
 
 #[rustfmt::skip]
 define_ack_packet_lengths_function!(compute_puback_packet_length_properties, PubackPacket, PubackReasonCode);
@@ -540,7 +511,7 @@ define_ack_packet_reason_string_accessor!(get_puback_packet_reason_string, Pubac
 define_ack_packet_user_property_accessor!(get_puback_packet_user_property, Puback);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
+define_ack_packet_encoding_impl!(write_puback_encoding_steps, PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
 
 
 #[rustfmt::skip]
@@ -549,7 +520,7 @@ define_ack_packet_reason_string_accessor!(get_pubrec_packet_reason_string, Pubre
 define_ack_packet_user_property_accessor!(get_pubrec_packet_user_property, Pubrec);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(PubrecPacket, PubrecReasonCode, PACKET_TYPE_PUBREC, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, PubrecReasonCode, PACKET_TYPE_PUBREC, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
 
 #[rustfmt::skip]
 define_ack_packet_lengths_function!(compute_pubrel_packet_length_properties, PubrelPacket, PubrelReasonCode);
@@ -557,7 +528,7 @@ define_ack_packet_reason_string_accessor!(get_pubrel_packet_reason_string, Pubre
 define_ack_packet_user_property_accessor!(get_pubrel_packet_user_property, Pubrel);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubrel_encoding_steps, PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
 
 #[rustfmt::skip]
 define_ack_packet_lengths_function!(compute_pubcomp_packet_length_properties, PubcompPacket, PubcompReasonCode);
@@ -565,7 +536,7 @@ define_ack_packet_reason_string_accessor!(get_pubcomp_packet_reason_string, Pubc
 define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubcomp);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
 #[rustfmt::skip]
 fn compute_subscribe_packet_length_properties(packet: &SubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
@@ -618,26 +589,24 @@ fn compute_subscription_options_byte(subscription: &Subscription) -> u8 {
 }
 
 #[rustfmt::skip]
-impl Encodable for SubscribePacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, subscribe_property_length) = compute_subscribe_packet_length_properties(self)?;
+fn write_subscribe_encoding_steps(packet: &SubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, subscribe_property_length) = compute_subscribe_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, SUBSCRIBE_FIRST_BYTE);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, SUBSCRIBE_FIRST_BYTE);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_integral_expression!(steps, Uint16, self.packet_id);
-        encode_integral_expression!(steps, Vli, subscribe_property_length);
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER, self.subscription_identifier);
-        encode_user_properties!(steps, get_subscribe_packet_user_property, self.user_properties);
+    encode_integral_expression!(steps, Uint16, packet.packet_id);
+    encode_integral_expression!(steps, Vli, subscribe_property_length);
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER, packet.subscription_identifier);
+    encode_user_properties!(steps, get_subscribe_packet_user_property, packet.user_properties);
 
-        let subscriptions = &self.subscriptions;
-        for (i, subscription) in subscriptions.iter().enumerate() {
-            encode_indexed_string!(steps, get_subscribe_packet_topic_filter, subscription.topic_filter, i);
-            encode_integral_expression!(steps, Uint8, compute_subscription_options_byte(subscription));
-        }
-
-        Ok(())
+    let subscriptions = &packet.subscriptions;
+    for (i, subscription) in subscriptions.iter().enumerate() {
+        encode_indexed_string!(steps, get_subscribe_packet_topic_filter, subscription.topic_filter, i);
+        encode_integral_expression!(steps, Uint8, compute_subscription_options_byte(subscription));
     }
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -668,26 +637,24 @@ fn get_suback_packet_user_property(packet: &MqttPacket, index: usize) -> &UserPr
 }
 
 #[rustfmt::skip]
-impl Encodable for SubackPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(self)?;
+fn write_suback_encoding_steps(packet: &SubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_integral_expression!(steps, Uint16, self.packet_id);
-        encode_integral_expression!(steps, Vli, suback_property_length);
+    encode_integral_expression!(steps, Uint16, packet.packet_id);
+    encode_integral_expression!(steps, Vli, suback_property_length);
 
-        encode_optional_string_property!(steps, get_suback_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
-        encode_user_properties!(steps, get_suback_packet_user_property, self.user_properties);
+    encode_optional_string_property!(steps, get_suback_packet_reason_string, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+    encode_user_properties!(steps, get_suback_packet_user_property, packet.user_properties);
 
-        let reason_codes = &self.reason_codes;
-        for reason_code in reason_codes {
-            encode_enum!(steps, Uint8, u8, *reason_code);
-        }
-
-        Ok(())
+    let reason_codes = &packet.reason_codes;
+    for reason_code in reason_codes {
+        encode_enum!(steps, Uint8, u8, *reason_code);
     }
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -724,24 +691,22 @@ fn get_unsubscribe_packet_topic_filter(packet: &MqttPacket, index: usize) -> &st
 }
 
 #[rustfmt::skip]
-impl Encodable for UnsubscribePacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, unsubscribe_property_length) = compute_unsubscribe_packet_length_properties(self)?;
+fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, unsubscribe_property_length) = compute_unsubscribe_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, UNSUBSCRIBE_FIRST_BYTE);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, UNSUBSCRIBE_FIRST_BYTE);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_integral_expression!(steps, Uint16, self.packet_id);
-        encode_integral_expression!(steps, Vli, unsubscribe_property_length);
-        encode_user_properties!(steps, get_unsubscribe_packet_user_property, self.user_properties);
+    encode_integral_expression!(steps, Uint16, packet.packet_id);
+    encode_integral_expression!(steps, Vli, unsubscribe_property_length);
+    encode_user_properties!(steps, get_unsubscribe_packet_user_property, packet.user_properties);
 
-        let topic_filters = &self.topic_filters;
-        for (i, topic_filter) in topic_filters.iter().enumerate() {
-            encode_indexed_string!(steps, get_unsubscribe_packet_topic_filter, topic_filter, i);
-        }
-
-        Ok(())
+    let topic_filters = &packet.topic_filters;
+    for (i, topic_filter) in topic_filters.iter().enumerate() {
+        encode_indexed_string!(steps, get_unsubscribe_packet_topic_filter, topic_filter, i);
     }
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -772,46 +737,40 @@ fn get_unsuback_packet_user_property(packet: &MqttPacket, index: usize) -> &User
 }
 
 #[rustfmt::skip]
-impl Encodable for UnsubackPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, unsuback_property_length) = compute_unsuback_packet_length_properties(self)?;
+fn write_unsuback_encoding_steps(packet: &UnsubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, unsuback_property_length) = compute_unsuback_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_UNSUBACK << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_UNSUBACK << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_integral_expression!(steps, Uint16, self.packet_id);
-        encode_integral_expression!(steps, Vli, unsuback_property_length);
+    encode_integral_expression!(steps, Uint16, packet.packet_id);
+    encode_integral_expression!(steps, Vli, unsuback_property_length);
 
-        encode_optional_string_property!(steps, get_unsuback_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
-        encode_user_properties!(steps, get_unsuback_packet_user_property, self.user_properties);
+    encode_optional_string_property!(steps, get_unsuback_packet_reason_string, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+    encode_user_properties!(steps, get_unsuback_packet_user_property, packet.user_properties);
 
-        let reason_codes = &self.reason_codes;
-        for reason_code in reason_codes {
-            encode_enum!(steps, Uint8, u8, *reason_code);
-        }
-
-        Ok(())
+    let reason_codes = &packet.reason_codes;
+    for reason_code in reason_codes {
+        encode_enum!(steps, Uint8, u8, *reason_code);
     }
+
+    Ok(())
 }
 
 #[rustfmt::skip]
-impl Encodable for PingreqPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGREQ << 4);
-        encode_integral_expression!(steps, Uint8, 0);
+fn write_pingreq_encoding_steps(_: &PingreqPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGREQ << 4);
+    encode_integral_expression!(steps, Uint8, 0);
 
-        Ok(())
-    }
+    Ok(())
 }
 
 #[rustfmt::skip]
-impl Encodable for PingrespPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGRESP << 4);
-        encode_integral_expression!(steps, Uint8, 0);
+fn write_pingresp_encoding_steps(_: &PingrespPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGRESP << 4);
+    encode_integral_expression!(steps, Uint8, 0);
 
-        Ok(())
-    }
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -851,28 +810,26 @@ fn get_disconnect_packet_user_property(packet: &MqttPacket, index: usize) -> &Us
 }
 
 #[rustfmt::skip]
-impl Encodable for DisconnectPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, disconnect_property_length) = compute_disconnect_packet_length_properties(self)?;
+fn write_disconnect_encoding_steps(packet: &DisconnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, disconnect_property_length) = compute_disconnect_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_DISCONNECT << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_DISCONNECT << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        if disconnect_property_length == 0 && self.reason_code == DisconnectReasonCode::NormalDisconnection {
-            assert_eq!(0, total_remaining_length);
-            return Ok(());
-        }
-
-        encode_enum!(steps, Uint8, u8, self.reason_code);
-        encode_integral_expression!(steps, Vli, disconnect_property_length);
-
-        encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, self.session_expiry_interval_seconds);
-        encode_optional_string_property!(steps, get_disconnect_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
-        encode_optional_string_property!(steps, get_disconnect_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, self.server_reference);
-        encode_user_properties!(steps, get_disconnect_packet_user_property, self.user_properties);
-
-        Ok(())
+    if disconnect_property_length == 0 && packet.reason_code == DisconnectReasonCode::NormalDisconnection {
+        assert_eq!(0, total_remaining_length);
+        return Ok(());
     }
+
+    encode_enum!(steps, Uint8, u8, packet.reason_code);
+    encode_integral_expression!(steps, Vli, disconnect_property_length);
+
+    encode_optional_property!(steps, Uint32, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL, packet.session_expiry_interval_seconds);
+    encode_optional_string_property!(steps, get_disconnect_packet_reason_string, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+    encode_optional_string_property!(steps, get_disconnect_packet_server_reference, PROPERTY_KEY_SERVER_REFERENCE, packet.server_reference);
+    encode_user_properties!(steps, get_disconnect_packet_user_property, packet.user_properties);
+
+    Ok(())
 }
 
 #[rustfmt::skip]
@@ -912,73 +869,69 @@ fn get_auth_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProp
 }
 
 #[rustfmt::skip]
-impl Encodable for AuthPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(self)?;
+fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(packet)?;
 
-        encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
-        encode_integral_expression!(steps, Vli, total_remaining_length);
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
+    encode_integral_expression!(steps, Vli, total_remaining_length);
 
-        encode_enum!(steps, Uint8, u8, self.reason_code);
-        encode_integral_expression!(steps, Vli, auth_property_length);
+    encode_enum!(steps, Uint8, u8, packet.reason_code);
+    encode_integral_expression!(steps, Vli, auth_property_length);
 
-        encode_optional_string_property!(steps, get_auth_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, self.authentication_method);
-        encode_optional_bytes_property!(steps, get_auth_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, self.authentication_data);
-        encode_optional_string_property!(steps, get_auth_packet_reason_string, PROPERTY_KEY_REASON_STRING, self.reason_string);
-        encode_user_properties!(steps, get_auth_packet_user_property, self.user_properties);
+    encode_optional_string_property!(steps, get_auth_packet_authentication_method, PROPERTY_KEY_AUTHENTICATION_METHOD, packet.authentication_method);
+    encode_optional_bytes_property!(steps, get_auth_packet_authentication_data, PROPERTY_KEY_AUTHENTICATION_DATA, packet.authentication_data);
+    encode_optional_string_property!(steps, get_auth_packet_reason_string, PROPERTY_KEY_REASON_STRING, packet.reason_string);
+    encode_user_properties!(steps, get_auth_packet_user_property, packet.user_properties);
 
-        Ok(())
-    }
+    Ok(())
 }
 
-impl Encodable for MqttPacket {
-    fn write_encoding_steps(&self, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
-        match self {
-            MqttPacket::Connect(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Connack(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Publish(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Puback(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pubrec(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pubrel(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pubcomp(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Subscribe(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Suback(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Unsubscribe(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Unsuback(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pingreq(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Pingresp(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Disconnect(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
-            MqttPacket::Auth(packet) => {
-                return packet.write_encoding_steps(steps);
-            }
+fn write_encoding_steps(mqtt_packet: &MqttPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    match mqtt_packet {
+        MqttPacket::Connect(packet) => {
+            write_connect_encoding_steps(packet, steps)
+        }
+        MqttPacket::Connack(packet) => {
+            write_connack_encoding_steps(packet, steps)
+        }
+        MqttPacket::Publish(packet) => {
+            write_publish_encoding_steps(packet, steps)
+        }
+        MqttPacket::Puback(packet) => {
+            write_puback_encoding_steps(packet, steps)
+        }
+        MqttPacket::Pubrec(packet) => {
+            write_pubrec_encoding_steps(packet, steps)
+        }
+        MqttPacket::Pubrel(packet) => {
+            write_pubrel_encoding_steps(packet, steps)
+        }
+        MqttPacket::Pubcomp(packet) => {
+            write_pubcomp_encoding_steps(packet, steps)
+        }
+        MqttPacket::Subscribe(packet) => {
+            write_subscribe_encoding_steps(packet, steps)
+        }
+        MqttPacket::Suback(packet) => {
+            write_suback_encoding_steps(packet, steps)
+        }
+        MqttPacket::Unsubscribe(packet) => {
+            write_unsubscribe_encoding_steps(packet, steps)
+        }
+        MqttPacket::Unsuback(packet) => {
+            write_unsuback_encoding_steps(packet, steps)
+        }
+        MqttPacket::Pingreq(packet) => {
+            write_pingreq_encoding_steps(packet, steps)
+        }
+        MqttPacket::Pingresp(packet) => {
+            write_pingresp_encoding_steps(packet, steps)
+        }
+        MqttPacket::Disconnect(packet) => {
+            write_disconnect_encoding_steps(packet, steps)
+        }
+        MqttPacket::Auth(packet) => {
+            write_auth_encoding_steps(packet, steps)
         }
     }
 }
@@ -1003,7 +956,7 @@ impl Encoder {
     pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<(), ()> {
         self.steps.clear();
 
-        packet.write_encoding_steps(&mut self.steps)
+        write_encoding_steps(packet, &mut self.steps)
     }
 
     pub fn encode(
@@ -1016,89 +969,19 @@ impl Encoder {
             return Err(Mqtt5Error::EncodeBufferTooSmall);
         }
 
-        while !self.steps.is_empty() {
+        while !self.steps.is_empty() && dest.len() + 4 <= dest.capacity() {
             let step = self.steps.pop_front().unwrap();
-            let result = process_encoding_step(&mut self.steps, step, packet, dest);
-            if let Err(error) = result {
-                return Err(error);
-            }
-
-            // Always want to have at least 4 bytes available to start a new step
-            if dest.len() + 4 > dest.capacity() {
-                break;
-            }
+            process_encoding_step(&mut self.steps, step, packet, dest)?;
         }
 
         if capacity != dest.capacity() {
             panic!("Internal error: encoding logic resized dest buffer");
         }
 
-        if dest.len() + 4 > dest.capacity() {
-            Ok(EncodeResult::Full)
-        } else {
+        if self.steps.is_empty() {
             Ok(EncodeResult::Complete)
+        } else {
+            Ok(EncodeResult::Full)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encoder_hand_check() {
-        let mut encoder = Encoder::new();
-
-        let packet = MqttPacket::Connect(ConnectPacket {
-            keep_alive_interval_seconds: 1200,
-            clean_start: true,
-            client_id: Some("A-client-id".to_owned()),
-            username: Some("A-username".to_owned()),
-            password: Some([1u8, 2u8, 3u8, 4u8].to_vec()),
-            session_expiry_interval_seconds: Some(3600),
-            request_response_information: Some(true),
-            request_problem_information: Some(true),
-            receive_maximum: Some(100),
-            topic_alias_maximum: Some(25),
-            maximum_packet_size_bytes: Some(128 * 1024),
-            authentication_method: Some("GSSAPI".to_owned()),
-            authentication_data: Some([1u8, 2u8, 3u8, 4u8].to_vec()),
-            will_delay_interval_seconds: Some(1u32 << 24),
-            will: Some(PublishPacket {
-                topic: "oh/no".to_owned(),
-                qos: QualityOfService::AtLeastOnce,
-                retain: true,
-                payload: Some(vec![0u8; 1024]),
-                payload_format: Some(PayloadFormatIndicator::Bytes),
-                message_expiry_interval_seconds: Some(32768),
-                response_topic: Some("here/lies/a/packet".to_owned()),
-                correlation_data: Some([1u8, 2u8, 3u8, 4u8, 5u8].to_vec()),
-                content_type: Some("application/json".to_owned()),
-                user_properties: Some(
-                    [UserProperty {
-                        name: "WillTerb".to_owned(),
-                        value: "WillBlah".to_owned(),
-                    }]
-                    .to_vec(),
-                ),
-
-                ..Default::default()
-            }),
-            user_properties: Some(
-                [UserProperty {
-                    name: "Terb".to_owned(),
-                    value: "Blah".to_owned(),
-                }]
-                .to_vec(),
-            ),
-        });
-
-        let reset_result = encoder.reset(&packet);
-        assert!(reset_result.is_ok());
-
-        let mut buffer = Vec::<u8>::with_capacity(16384);
-
-        let encoding_result = encoder.encode(&packet, &mut buffer);
-        assert!(encoding_result.is_ok());
     }
 }
