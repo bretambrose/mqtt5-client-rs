@@ -3,6 +3,38 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub(crate) mod auth;
+pub(crate) mod connack;
+pub(crate) mod connect;
+pub(crate) mod disconnect;
+pub(crate) mod pingreq;
+pub(crate) mod pingresp;
+pub(crate) mod puback;
+pub(crate) mod pubcomp;
+pub(crate) mod publish;
+pub(crate) mod pubrec;
+pub(crate) mod pubrel;
+pub(crate) mod suback;
+pub(crate) mod subscribe;
+pub(crate) mod unsuback;
+pub(crate) mod unsubscribe;
+
+use crate::spec::auth::*;
+use crate::spec::connack::*;
+use crate::spec::connect::*;
+use crate::spec::disconnect::*;
+use crate::spec::pingreq::*;
+use crate::spec::pingresp::*;
+use crate::spec::puback::*;
+use crate::spec::pubcomp::*;
+use crate::spec::publish::*;
+use crate::spec::pubrec::*;
+use crate::spec::pubrel::*;
+use crate::spec::suback::*;
+use crate::spec::subscribe::*;
+use crate::spec::unsuback::*;
+use crate::spec::unsubscribe::*;
+
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum QualityOfService {
     #[default]
@@ -181,208 +213,6 @@ pub struct Subscription {
     pub no_local: bool,
     pub retain_as_published: bool,
     pub retain_handling_type: RetainHandlingType,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct ConnectPacket {
-    pub keep_alive_interval_seconds: u16,
-    pub clean_start: bool,
-
-    pub client_id: Option<String>,
-
-    pub username: Option<String>,
-    pub password: Option<Vec<u8>>,
-
-    pub session_expiry_interval_seconds: Option<u32>,
-
-    pub request_response_information: Option<bool>,
-    pub request_problem_information: Option<bool>,
-    pub receive_maximum: Option<u16>,
-    pub topic_alias_maximum: Option<u16>,
-    pub maximum_packet_size_bytes: Option<u32>,
-    pub authentication_method: Option<String>,
-    pub authentication_data: Option<Vec<u8>>,
-
-    pub will_delay_interval_seconds: Option<u32>,
-    pub will: Option<PublishPacket>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct ConnackPacket {
-    pub session_present: bool,
-    pub reason_code: ConnectReasonCode,
-
-    pub session_expiry_interval: Option<u32>,
-    pub receive_maximum: Option<u16>,
-    pub maximum_qos: Option<QualityOfService>,
-    pub retain_available: Option<bool>,
-    pub maximum_packet_size: Option<u32>,
-    pub assigned_client_identifier: Option<String>,
-    pub topic_alias_maximum: Option<u16>,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-
-    pub wildcard_subscriptions_available: Option<bool>,
-    pub subscription_identifiers_available: Option<bool>,
-    pub shared_subscriptions_available: Option<bool>,
-
-    pub server_keep_alive: Option<u16>,
-    pub response_information: Option<String>,
-    pub server_reference: Option<String>,
-    pub authentication_method: Option<String>,
-    pub authentication_data: Option<Vec<u8>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PublishPacket {
-    pub packet_id: u16,
-
-    pub topic: String,
-
-    pub qos: QualityOfService,
-    pub duplicate: bool,
-    pub retain: bool,
-
-    pub payload: Option<Vec<u8>>,
-
-    pub payload_format: Option<PayloadFormatIndicator>,
-    pub message_expiry_interval_seconds: Option<u32>,
-    pub topic_alias: Option<u16>,
-    pub response_topic: Option<String>,
-    pub correlation_data: Option<Vec<u8>>,
-
-    pub subscription_identifiers: Option<Vec<u32>>,
-
-    pub content_type: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PubackPacket {
-    pub packet_id: u16,
-
-    pub reason_code: PubackReasonCode,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PubrecPacket {
-    pub packet_id: u16,
-
-    pub reason_code: PubrecReasonCode,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PubrelPacket {
-    pub packet_id: u16,
-
-    pub reason_code: PubrelReasonCode,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PubcompPacket {
-    pub packet_id: u16,
-
-    pub reason_code: PubcompReasonCode,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct SubscribePacket {
-    pub packet_id: u16,
-
-    pub subscriptions: Vec<Subscription>,
-
-    pub subscription_identifier: Option<u32>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct SubackPacket {
-    pub packet_id: u16,
-
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-
-    pub reason_codes: Vec<SubackReasonCode>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct UnsubscribePacket {
-    pub packet_id: u16,
-
-    pub topic_filters: Vec<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct UnsubackPacket {
-    pub packet_id: u16,
-
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
-
-    pub reason_codes: Vec<UnsubackReasonCode>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PingreqPacket {}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct PingrespPacket {}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct DisconnectPacket {
-    pub reason_code: DisconnectReasonCode,
-
-    pub session_expiry_interval_seconds: Option<u32>,
-    pub reason_string: Option<String>,
-    pub user_properties: Option<Vec<UserProperty>>,
-    pub server_reference: Option<String>,
-}
-
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct AuthPacket {
-    pub reason_code: AuthenticateReasonCode,
-
-    pub authentication_method: Option<String>,
-    pub authentication_data: Option<Vec<u8>>,
-    pub reason_string: Option<String>,
-
-    pub user_properties: Option<Vec<UserProperty>>,
 }
 
 #[derive(Debug)]

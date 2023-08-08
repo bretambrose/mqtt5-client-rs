@@ -6,12 +6,19 @@
 extern crate tokio;
 
 use crate::client_impl::*;
-use crate::spec::*;
 use crate::{Mqtt5Error, Mqtt5Result};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::runtime;
 use tokio::sync::oneshot;
+
+use crate::spec::puback::PubackPacket;
+use crate::spec::pubcomp::PubcompPacket;
+use crate::spec::publish::PublishPacket;
+use crate::spec::suback::SubackPacket;
+use crate::spec::subscribe::SubscribePacket;
+use crate::spec::unsuback::UnsubackPacket;
+use crate::spec::unsubscribe::UnsubscribePacket;
 
 #[derive(Debug)]
 pub struct PublishOptions {

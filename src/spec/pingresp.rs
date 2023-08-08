@@ -1,0 +1,50 @@
+/*
+ * Copyright Bret Ambrose. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
+ */
+
+use crate::*;
+use crate::encoding_utils::*;
+use crate::spec::*;
+use crate::spec_impl::*;
+
+use std::collections::VecDeque;
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub struct PingrespPacket {}
+
+#[rustfmt::skip]
+pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+    encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGRESP << 4);
+    encode_integral_expression!(steps, Uint8, 0);
+
+    Ok(())
+}
+
+const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
+
+pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PingrespPacket, ()> {
+    if packet_body.len() != 0 {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    if first_byte != PINGRESP_FIRST_BYTE {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    return Ok(PingrespPacket{});
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::decoder::testing::*;
+
+    #[test]
+    fn pingresp_round_trip_encode_decode() {
+        let packet = PingrespPacket {};
+        assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
+    }
+}

@@ -279,7 +279,7 @@ pub(crate) use define_ack_packet_user_property_accessor;
 
 macro_rules! define_ack_packet_encoding_impl {
     ($function_name: ident, $packet_type: ident, $reason_code_type: ident, $packet_type_value: expr, $length_function: ident, $reason_string_accessor: ident, $user_property_accessor: ident) => {
-        fn $function_name(packet: &$packet_type, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+        pub(crate) fn $function_name(packet: &$packet_type, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
             let (total_remaining_length, property_length) = $length_function(packet)?;
 
             encode_integral_expression!(steps, Uint8, ($packet_type_value << 4));

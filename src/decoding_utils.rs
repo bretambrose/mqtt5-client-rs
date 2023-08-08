@@ -293,7 +293,7 @@ pub(crate) use define_ack_packet_decode_properties_function;
 
 macro_rules! define_ack_packet_decode_function {
     ($function_name: ident, $packet_type: ident, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
-        fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<$packet_type, ()> {
+        pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<$packet_type, ()> {
             let mut packet = $packet_type { ..Default::default() };
 
             if first_byte != ($packet_type_value << 4) {

@@ -10,6 +10,8 @@ use mqtt5_client_rs::client;
 use std::{thread, time};
 use tokio::runtime::Handle;
 
+use mqtt5_client_rs::*;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = client::Mqtt5ClientOptions {};
