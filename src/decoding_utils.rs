@@ -39,62 +39,66 @@ pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult, ()> {
 pub(crate) fn decode_vli_into_mutable<'a>(buffer: &'a[u8], value: &mut usize) -> Mqtt5Result<&'a[u8], ()> {
     let decode_result = decode_vli(buffer);
     match decode_result {
-        Ok(DecodeVliResult::InsufficientData) => { Err(Mqtt5Error::ProtocolError)}
+        Ok(DecodeVliResult::InsufficientData) => { Err(Mqtt5Error::MalformedPacket)}
         Ok(DecodeVliResult::Value(vli, remaining_slice)) => {
             *value = vli as usize;
             Ok(remaining_slice)
         }
         Err(_) => {
-            Err(Mqtt5Error::ProtocolError)
+            Err(Mqtt5Error::MalformedPacket)
         }
     }
+}
+
+fn map_utf8_err_to_malformed_packet(_: std::str::Utf8Error) -> Mqtt5Error<()> {
+    return Mqtt5Error::MalformedPacket;
 }
 
 pub(crate) fn decode_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut String) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_result = std::str::from_utf8(&mutable_bytes[..value_length]);
-    match value_result {
-        Ok(string_value) => {
-            *value = string_value.to_string();
-            Ok(&mutable_bytes[(value_length)..])
-        }
-        Err(_) => { Err(Mqtt5Error::ProtocolError) }
-    }
+    let decode_utf8_result = std::str::from_utf8(&mutable_bytes[..value_length]).map_err(map_utf8_err_to_malformed_packet)?;
+    *value = decode_utf8_result.to_string();
+    Ok(&mutable_bytes[(value_length)..])
 }
 
 pub(crate) fn decode_optional_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut Option<String>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_result = std::str::from_utf8(&mutable_bytes[..value_length]);
-    match value_result {
-        Ok(string_value) => {
-            *value = Some(string_value.to_string());
-            Ok(&mutable_bytes[(value_length)..])
-        }
-        Err(_) => { Err(Mqtt5Error::ProtocolError) }
-    }
+    let decode_utf8_result = std::str::from_utf8(&mutable_bytes[..value_length]).map_err(map_utf8_err_to_malformed_packet)?;
+    *value = Some(decode_utf8_result.to_string());
+    Ok(&mutable_bytes[(value_length)..])
 }
 
 pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: &mut Option<String>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
 
@@ -104,27 +108,27 @@ pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: 
     }
 
     if value_length > mutable_bytes.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_result = std::str::from_utf8(&mutable_bytes[..value_length]);
-    match value_result {
-        Ok(string_value) => {
-            *value = Some(string_value.to_string());
-            Ok(&mutable_bytes[(value_length)..])
-        }
-        Err(_) => { Err(Mqtt5Error::ProtocolError) }
-    }
+    let decode_utf8_result = std::str::from_utf8(&mutable_bytes[..value_length]).map_err(map_utf8_err_to_malformed_packet)?;
+    *value = Some(decode_utf8_result.to_string());
+    Ok(&mutable_bytes[(value_length)..])
 }
 
 pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = Some(Vec::from(&mutable_bytes[..value_length]));
@@ -133,8 +137,13 @@ pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &
 
 pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
 
@@ -144,7 +153,7 @@ pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &
     }
 
     if value_length > mutable_bytes.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = Some(Vec::from(&mutable_bytes[..value_length]));
@@ -169,7 +178,7 @@ pub(crate) fn decode_user_property<'a>(bytes: &'a[u8], properties: &mut Option<V
 
 pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = bytes[0];
@@ -179,7 +188,11 @@ pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u
 
 pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<bool>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     if bytes[0] == 0 {
@@ -187,7 +200,7 @@ pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<
     } else if bytes[0] == 1 {
         *value = Some(true);
     } else {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     Ok(&bytes[1..])
@@ -195,7 +208,7 @@ pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<
 
 pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter: fn(u8) ->Mqtt5Result<T, ()>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = converter(bytes[0])?;
@@ -205,7 +218,11 @@ pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter:
 
 pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Option<T>, converter: fn(u8) ->Mqtt5Result<T, ()>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 1 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = Some(converter(bytes[0])?);
@@ -215,7 +232,7 @@ pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Opti
 
 pub(crate) fn decode_u16<'a>(bytes: &'a[u8], value: &mut u16) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = u16::from_le_bytes(bytes[..2].try_into().unwrap());
@@ -225,7 +242,11 @@ pub(crate) fn decode_u16<'a>(bytes: &'a[u8], value: &mut u16) -> Mqtt5Result<&'a
 
 pub(crate) fn decode_optional_u16<'a>(bytes: &'a[u8], value: &mut Option<u16>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 2 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = Some(u16::from_le_bytes(bytes[..2].try_into().unwrap()));
@@ -235,7 +256,11 @@ pub(crate) fn decode_optional_u16<'a>(bytes: &'a[u8], value: &mut Option<u16>) -
 
 pub(crate) fn decode_optional_u32<'a>(bytes: &'a[u8], value: &mut Option<u32>) -> Mqtt5Result<&'a[u8], ()> {
     if bytes.len() < 4 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
+    }
+
+    if value.is_some() {
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     *value = Some(u32::from_le_bytes(bytes[..4].try_into().unwrap()));
@@ -255,7 +280,7 @@ macro_rules! define_ack_packet_decode_properties_function {
                 match property_key {
                     PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
                     PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
-                    _ => { return Err(Mqtt5Error::ProtocolError); }
+                    _ => { return Err(Mqtt5Error::MalformedPacket); }
                 }
             }
 
@@ -272,7 +297,7 @@ macro_rules! define_ack_packet_decode_function {
             let mut packet = $packet_type { ..Default::default() };
 
             if first_byte != ($packet_type_value << 4) {
-                return Err(Mqtt5Error::ProtocolError);
+                return Err(Mqtt5Error::MalformedPacket);
             }
 
             let mut mutable_body = packet_body;
@@ -291,7 +316,7 @@ macro_rules! define_ack_packet_decode_function {
             let mut properties_length = 0;
             mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
             if properties_length != mutable_body.len() {
-                return Err(Mqtt5Error::ProtocolError);
+                return Err(Mqtt5Error::MalformedPacket);
             }
 
             $decode_properties_function_name(mutable_body, &mut packet)?;

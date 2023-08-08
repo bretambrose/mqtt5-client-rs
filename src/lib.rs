@@ -23,6 +23,7 @@ pub enum Mqtt5Error<T> {
     VariableLengthIntegerMaximumExceeded,
     EncodeBufferTooSmall,
     DecoderInvalidVli,
+    MalformedPacket,
     ProtocolError,
 }
 

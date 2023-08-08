@@ -15,14 +15,14 @@ enum DecoderState {
     ReadPacketType,
     ReadTotalRemainingLength,
     ReadPacketBody,
-    ProtocolError
+    TerminalError
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum DecoderDirective {
     OutOfData,
     Continue,
-    ProtocolError
+    TerminalError
 }
 
 pub struct DecoderOptions {
@@ -58,7 +58,7 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -80,7 +80,7 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
             PROPERTY_KEY_RESPONSE_TOPIC => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut will.response_topic)?; }
             PROPERTY_KEY_CORRELATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut will.correlation_data)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut will.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -93,12 +93,12 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     let mut packet = ConnectPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_CONNECT << 4)  {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
     if mutable_body.len() < CONNECT_HEADER_PROTOCOL_LENGTH {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let protocol_bytes = &mutable_body[..CONNECT_HEADER_PROTOCOL_LENGTH];
@@ -106,7 +106,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
 
     match protocol_bytes {
         [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { }
-        _ => { return Err(Mqtt5Error::ProtocolError); }
+        _ => { return Err(Mqtt5Error::MalformedPacket); }
     }
 
     /*
@@ -125,7 +125,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     if !has_will {
         /* indirectly check bits of connect flags vs. spec */
         if will_retain || will_qos != QualityOfService::AtMostOnce {
-            return Err(Mqtt5Error::ProtocolError);
+            return Err(Mqtt5Error::MalformedPacket);
         }
     }
 
@@ -138,7 +138,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     mutable_body = decode_vli_into_mutable(mutable_body, &mut connect_property_length)?;
 
     if mutable_body.len() < connect_property_length {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let property_body = &mutable_body[..connect_property_length];
@@ -153,7 +153,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
         mutable_body = decode_vli_into_mutable(mutable_body, &mut will_property_length)?;
 
         if mutable_body.len() < will_property_length {
-            return Err(Mqtt5Error::ProtocolError);
+            return Err(Mqtt5Error::MalformedPacket);
         }
 
         let will_property_body = &mutable_body[..will_property_length];
@@ -182,7 +182,7 @@ fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     }
 
     if mutable_body.len() > 0 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     Ok(packet)
@@ -213,13 +213,7 @@ fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket)
             PROPERTY_KEY_SERVER_REFERENCE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.server_reference)?; }
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
-        }
-    }
-
-    if let Some(qos) = packet.maximum_qos {
-        if qos == QualityOfService::ExactlyOnce {
-            return Err(Mqtt5Error::ProtocolError);
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -230,12 +224,12 @@ fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     let mut packet = ConnackPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_CONNACK << 4) {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
     if mutable_body.len() == 0 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let flags : u8 = mutable_body[0];
@@ -244,7 +238,7 @@ fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     if flags == 1 {
         packet.session_present = true;
     } else if flags != 0 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_connect_reason_code)?;
@@ -252,7 +246,7 @@ fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Conn
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
     if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     decode_connack_properties(mutable_body, &mut packet)?;
@@ -285,7 +279,7 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
             }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_CONTENT_TYPE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.content_type)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -315,6 +309,9 @@ fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Publ
     }
 
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length > mutable_body.len() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     let properties_bytes = &mutable_body[..properties_length];
     let payload_bytes = &mutable_body[properties_length..];
@@ -350,7 +347,7 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
         match property_key {
             PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.subscription_identifier)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -361,7 +358,7 @@ fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Su
     let mut packet = SubscribePacket { ..Default::default() };
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -369,6 +366,9 @@ fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Su
 
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length > mutable_body.len() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     let properties_bytes = &mutable_body[..properties_length];
     let mut payload_bytes = &mutable_body[properties_length..];
@@ -413,7 +413,7 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
         match property_key {
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -424,7 +424,7 @@ fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Subac
     let mut packet = SubackPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_SUBACK << 4) {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -432,6 +432,9 @@ fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Subac
 
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length > mutable_body.len() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     let properties_bytes = &mutable_body[..properties_length];
     let payload_bytes = &mutable_body[properties_length..];
@@ -457,7 +460,7 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
 
         match property_key {
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -468,7 +471,7 @@ fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<
     let mut packet = UnsubscribePacket { ..Default::default() };
 
     if first_byte != UNSUBSCRIBE_FIRST_BYTE {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -476,6 +479,9 @@ fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<
 
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length > mutable_body.len() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     let properties_bytes = &mutable_body[..properties_length];
     let mut payload_bytes = &mutable_body[properties_length..];
@@ -502,7 +508,7 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
         match property_key {
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -513,7 +519,7 @@ fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Uns
     let mut packet = UnsubackPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -521,6 +527,9 @@ fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Uns
 
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+    if properties_length > mutable_body.len() {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     let properties_bytes = &mutable_body[..properties_length];
     let payload_bytes = &mutable_body[properties_length..];
@@ -541,11 +550,11 @@ const PINGREQ_FIRST_BYTE : u8 = PACKET_TYPE_PINGREQ << 4;
 
 fn decode_pingreq_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PingreqPacket, ()> {
     if packet_body.len() != 0 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     if first_byte != PINGREQ_FIRST_BYTE {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     return Ok(PingreqPacket{});
@@ -555,11 +564,11 @@ const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
 
 fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PingrespPacket, ()> {
     if packet_body.len() != 0 {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     if first_byte != PINGRESP_FIRST_BYTE {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     return Ok(PingrespPacket{});
@@ -577,7 +586,7 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_SERVER_REFERENCE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.server_reference)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -588,7 +597,7 @@ fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<D
     let mut packet = DisconnectPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -601,7 +610,7 @@ fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<D
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
     if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     decode_disconnect_properties(mutable_body, &mut packet)?;
@@ -621,7 +630,7 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::ProtocolError); }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
         }
     }
 
@@ -632,7 +641,7 @@ fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<AuthPac
     let mut packet = AuthPacket { ..Default::default() };
 
     if first_byte != (PACKET_TYPE_AUTH << 4) {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     let mut mutable_body = packet_body;
@@ -642,7 +651,7 @@ fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<AuthPac
     let mut properties_length : usize = 0;
     mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
     if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::ProtocolError);
+        return Err(Mqtt5Error::MalformedPacket);
     }
 
     decode_auth_properties(mutable_body, &mut packet)?;
@@ -679,7 +688,7 @@ fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<MqttPacket, 
         PACKET_TYPE_DISCONNECT => { decode_packet_by_type!(decode_disconnect_packet, Disconnect, first_byte, packet_body) }
         PACKET_TYPE_AUTH => { decode_packet_by_type!(decode_auth_packet, Auth, first_byte, packet_body) }
         _ => {
-            return Err(Mqtt5Error::Unimplemented(()));
+            return Err(Mqtt5Error::MalformedPacket);
         }
     }
 }
@@ -707,7 +716,7 @@ impl Decoder {
         self.first_byte = Some(bytes[0]);
         self.state = DecoderState::ReadTotalRemainingLength;
 
-        return  (DecoderDirective::Continue, &bytes[1..]);
+        return (DecoderDirective::Continue, &bytes[1..]);
     }
 
     fn process_read_total_remaining_length<'a>(&mut self, bytes: &'a[u8]) -> (DecoderDirective, &'a[u8]) {
@@ -725,7 +734,7 @@ impl Decoder {
             self.scratch.clear();
             return (DecoderDirective::Continue, remaining_bytes);
         } else if self.scratch.len() >= 4 {
-            return (DecoderDirective::ProtocolError, remaining_bytes);
+            return (DecoderDirective::TerminalError, remaining_bytes);
         } else if remaining_bytes.len() > 0 {
             return (DecoderDirective::Continue, remaining_bytes);
         } else {
@@ -751,14 +760,14 @@ impl Decoder {
 
         if let Ok(packet) = decode_packet(self.first_byte.unwrap(), packet_slice) {
             if self.config.packet_stream.send(packet).is_err() {
-                return (DecoderDirective::ProtocolError, &[]);
+                return (DecoderDirective::TerminalError, &[]);
             }
 
             self.reset_for_new_packet();
             return (DecoderDirective::Continue, &bytes[bytes_needed..]);
         }
 
-        return (DecoderDirective::ProtocolError, &[]);
+        return (DecoderDirective::TerminalError, &[]);
     }
 
     pub fn decode_bytes(&mut self, bytes: &[u8]) -> Mqtt5Result<(), ()> {
@@ -780,21 +789,21 @@ impl Decoder {
                 }
 
                 _ => {
-                    decode_result = DecoderDirective::ProtocolError;
+                    decode_result = DecoderDirective::TerminalError;
                 }
             }
         }
 
-        if decode_result == DecoderDirective::ProtocolError {
-            self.state = DecoderState::ProtocolError;
-            return Err(Mqtt5Error::ProtocolError);
+        if decode_result == DecoderDirective::TerminalError {
+            self.state = DecoderState::TerminalError;
+            return Err(Mqtt5Error::MalformedPacket);
         }
 
         Ok(())
     }
 
     fn reset_for_new_packet(&mut self) {
-        if self.state != DecoderState::ProtocolError {
+        if self.state != DecoderState::TerminalError {
             self.reset();
         }
     }
