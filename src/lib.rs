@@ -6,13 +6,9 @@
 extern crate core;
 
 pub mod client;
-mod client_impl;
-mod decoder;
-mod decoding_utils;
-mod encoder;
-mod encoding_utils;
+mod decode;
+mod encode;
 pub mod spec;
-mod spec_impl;
 
 pub use spec::auth::AuthPacket;
 pub use spec::connack::ConnackPacket;

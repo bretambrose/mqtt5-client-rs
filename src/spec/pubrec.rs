@@ -4,10 +4,10 @@
  */
 
 use crate::*;
-use crate::decoding_utils::*;
-use crate::encoding_utils::*;
+use crate::decode::utils::*;
+use crate::encode::utils::*;
 use crate::spec::*;
-use crate::spec_impl::*;
+use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
@@ -37,7 +37,7 @@ define_ack_packet_decode_function!(decode_pubrec_packet, PubrecPacket, PACKET_TY
 mod tests {
 
     use super::*;
-    use crate::decoder::testing::*;
+    use crate::decode::testing::*;
 
     #[test]
     fn pubrec_round_trip_encode_decode_default() {

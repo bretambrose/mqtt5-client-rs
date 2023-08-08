@@ -517,7 +517,7 @@ pub(crate) fn process_encoding_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decoding_utils::*;
+    use crate::decode::utils::*;
 
     macro_rules! assert_vli_encoding_equals {
         ($target: ident, $value: expr, $expected_result: expr) => {{

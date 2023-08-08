@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+mod implementation;
+
 extern crate tokio;
 
-use crate::client_impl::*;
+use crate::client::implementation::*;
 use crate::{Mqtt5Error, Mqtt5Result};
 use std::future::Future;
 use std::pin::Pin;

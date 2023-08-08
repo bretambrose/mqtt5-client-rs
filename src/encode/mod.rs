@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-use std::collections::VecDeque;
+pub(crate) mod utils;
 
-use crate::encoding_utils::*;
+use crate::encode::utils::*;
 use crate::spec::*;
 use crate::{Mqtt5Error, Mqtt5Result};
 
@@ -24,6 +24,8 @@ use crate::spec::suback::*;
 use crate::spec::subscribe::*;
 use crate::spec::unsuback::*;
 use crate::spec::unsubscribe::*;
+
+use std::collections::VecDeque;
 
 fn write_encoding_steps(mqtt_packet: &MqttPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
     match mqtt_packet {

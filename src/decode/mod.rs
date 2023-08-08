@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub(crate) mod utils;
+
 use crate::{Mqtt5Error, Mqtt5Result};
-use crate::decoding_utils::*;
+use crate::decode::utils::*;
+use crate::encode::*;
 use crate::spec::*;
-use crate::spec_impl::*;
+use crate::spec::utils::*;
 
 use crate::spec::auth::*;
 use crate::spec::connack::*;
@@ -218,7 +221,6 @@ impl Decoder {
 pub(crate) mod testing {
     use std::sync::mpsc::TryRecvError;
     use super::*;
-    use crate::encoder::*;
 
     pub(crate) fn do_single_encode_decode_test(packet : &MqttPacket, encode_size : usize, decode_size : usize, encode_repetitions : u32) -> bool {
 

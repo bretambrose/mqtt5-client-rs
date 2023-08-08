@@ -18,6 +18,7 @@ pub(crate) mod suback;
 pub(crate) mod subscribe;
 pub(crate) mod unsuback;
 pub(crate) mod unsubscribe;
+pub(crate) mod utils;
 
 use crate::spec::auth::*;
 use crate::spec::connack::*;

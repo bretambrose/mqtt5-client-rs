@@ -4,10 +4,10 @@
  */
 
 use crate::*;
-use crate::decoding_utils::*;
-use crate::encoding_utils::*;
+use crate::decode::utils::*;
+use crate::encode::utils::*;
 use crate::spec::*;
-use crate::spec_impl::*;
+use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
@@ -212,7 +212,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decoder::testing::*;
+    use crate::decode::testing::*;
 
 
     #[test]
