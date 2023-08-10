@@ -568,13 +568,19 @@ pub enum UnsubackReasonCode {
 pub enum AuthenticateReasonCode {
 
     /// Notification that the authentication exchange is both complete and considered successful.
+    ///
+    /// Only the server may send this code.
     #[default]
     Success = 0,
 
     /// A request that the recipient should continue the authentication exchange.
+    ///
+    /// Either the client or server may send this code.
     ContinueAuthentication = 24,
 
     /// The associated packet represents an attempt to reauthenticate an established connection.
+    ///
+    /// Only the client may send this code.
     ReAuthenticate = 25,
 }
 

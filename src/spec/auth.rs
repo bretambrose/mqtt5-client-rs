@@ -11,15 +11,35 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 AUTH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901217) packet.
 #[derive(Default, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct AuthPacket {
+
+    /// Specifies an endpoint's response to a previously-received AUTH packet as part of an authentication exchange.
+    ///
+    /// See [MQTT5 Authenticate Reason Code](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901220)
     pub reason_code: AuthenticateReasonCode,
 
+    /// Authentication method this packet corresponds to.  The authentication method must remain the
+    /// same for the entirety of an authentication exchange.
+    ///
+    /// See [MQTT5 Authentication Method](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901223)
     pub authentication_method: Option<String>,
+
+    /// Method-specific binary data included in this step of an authentication exchange.
+    ///
+    /// See [MQTT5 Authentication Data](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901224)
     pub authentication_data: Option<Vec<u8>>,
+
+    /// Additional diagnostic information or context.
+    ///
+    /// See [MQTT5 Reason String](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901225)
     pub reason_string: Option<String>,
 
+    /// Set of MQTT5 user properties included with the packet.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901226)
     pub user_properties: Option<Vec<UserProperty>>,
 }
 
@@ -30,6 +50,11 @@ fn compute_auth_packet_length_properties(packet: &AuthPacket) -> Mqtt5Result<(u3
     add_optional_string_property_length!(auth_property_section_length, packet.authentication_method);
     add_optional_bytes_property_length!(auth_property_section_length, packet.authentication_data);
     add_optional_string_property_length!(auth_property_section_length, packet.reason_string);
+
+    /* 2-byte auth packets are allowed by the spec when there are no properties and the reason code is success */
+    if auth_property_section_length == 0 && packet.reason_code == AuthenticateReasonCode::Success {
+        return Ok((0, 0));
+    }
 
     let mut total_remaining_length : usize = 1 + compute_variable_length_integer_encode_size(auth_property_section_length)?;
     total_remaining_length += auth_property_section_length;
@@ -65,6 +90,10 @@ pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDequ
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
     encode_integral_expression!(steps, Vli, total_remaining_length);
+
+    if total_remaining_length == 0 {
+        return Ok(());
+    }
 
     encode_enum!(steps, Uint8, u8, packet.reason_code);
     encode_integral_expression!(steps, Vli, auth_property_length);
@@ -105,6 +134,9 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
     }
 
     let mut mutable_body = packet_body;
+    if mutable_body.len() == 0 {
+        return Ok(packet);
+    }
 
     mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_authenticate_reason_code)?;
 
