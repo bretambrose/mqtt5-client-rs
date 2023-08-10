@@ -11,14 +11,27 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 PUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901121) packet
 #[derive(Default, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PubackPacket {
-    pub packet_id: u16,
 
+    // packet id is modeled but internal to the client
+    pub(crate) packet_id: u16,
+
+    /// Success indicator or failure reason for the associated PUBLISH packet.
+    ///
+    /// See [MQTT5 PUBACK Reason Code](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901124)
     pub reason_code: PubackReasonCode,
+
+    /// Additional diagnostic information about the result of the PUBLISH attempt.
+    ///
+    /// See [MQTT5 Reason String](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901127)
     pub reason_string: Option<String>,
 
+    /// Set of MQTT5 user properties included with the packet.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901128)
     pub user_properties: Option<Vec<UserProperty>>,
 }
 

@@ -11,13 +11,22 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 UNSUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901179) packet.
 #[derive(Default, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UnsubscribePacket {
-    pub packet_id: u16,
 
+    // packet id is modeled but internal to the client
+    pub(crate) packet_id: u16,
+
+    /// List of topic filters that the client wishes to unsubscribe from.
+    ///
+    /// See [MQTT5 Unsubscribe Payload](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901185)
     pub topic_filters: Vec<String>,
 
+    /// Set of MQTT5 user properties included with the packet.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901184)
     pub user_properties: Option<Vec<UserProperty>>,
 }
 

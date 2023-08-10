@@ -10,6 +10,7 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 PINGRESP](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901200) packet.
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PingrespPacket {}

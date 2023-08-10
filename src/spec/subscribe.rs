@@ -11,15 +11,28 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 SUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901161) packet.
 #[derive(Default, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SubscribePacket {
-    pub packet_id: u16,
 
+    // packet id is modeled but internal to the client
+    pub(crate) packet_id: u16,
+
+    /// List of topic filter subscriptions that the client wishes to listen to
+    ///
+    /// See [MQTT5 Subscribe Payload](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901168)
     pub subscriptions: Vec<Subscription>,
 
+    /// A positive integer to associate with all subscriptions in this request.  Publish packets that match
+    /// a subscription in this request should include this identifier in the resulting message.
+    ///
+    /// See [MQTT5 Subscription Identifier](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901166)
     pub subscription_identifier: Option<u32>,
 
+    /// Set of MQTT5 user properties included with the packet.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901167)
     pub user_properties: Option<Vec<UserProperty>>,
 }
 

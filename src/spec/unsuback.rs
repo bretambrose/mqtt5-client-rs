@@ -11,15 +11,28 @@ use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
+/// Data model of an [MQTT5 UNSUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901187) packet.
 #[derive(Default, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UnsubackPacket {
-    pub packet_id: u16,
 
+    // packet id is modeled but internal to the client
+    pub(crate) packet_id: u16,
+
+    /// Additional diagnostic information about the result of the UNSUBSCRIBE attempt.
+    ///
+    /// See [MQTT5 Reason String](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901192)
     pub reason_string: Option<String>,
 
+    /// Set of MQTT5 user properties included with the packet.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901193)
     pub user_properties: Option<Vec<UserProperty>>,
 
+    /// A list of reason codes indicating the result of unsubscribing from each individual topic filter entry in the
+    /// associated UNSUBSCRIBE packet.
+    ///
+    /// See [MQTT5 Unsuback Payload](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901194)
     pub reason_codes: Vec<UnsubackReasonCode>,
 }
 
