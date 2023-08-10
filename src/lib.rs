@@ -10,6 +10,24 @@ mod decode;
 mod encode;
 pub mod spec;
 
+/* Re-export all spec types at the root level */
+
+pub use spec::QualityOfService;
+pub use spec::PayloadFormatIndicator;
+pub use spec::RetainHandlingType;
+pub use spec::ConnectReasonCode;
+pub use spec::PubackReasonCode;
+pub use spec::PubrecReasonCode;
+pub use spec::PubrelReasonCode;
+pub use spec::PubcompReasonCode;
+pub use spec::DisconnectReasonCode;
+pub use spec::SubackReasonCode;
+pub use spec::UnsubackReasonCode;
+pub use spec::AuthenticateReasonCode;
+
+pub use spec::UserProperty;
+pub use spec::Subscription;
+
 pub use spec::auth::AuthPacket;
 pub use spec::connack::ConnackPacket;
 pub use spec::connect::ConnectPacket;
