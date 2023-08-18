@@ -12,12 +12,13 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 PUBLISH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100) packet
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PublishPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Packet Id of the publish.  Setting this value on an outbound publish has no effect on the
+    /// actual packet id used by the client.
+    pub packet_id: u16,
 
     /// Sent publishes - The topic this message should be published to.
     ///
@@ -33,8 +34,8 @@ pub struct PublishPacket {
     /// See [MQTT5 QoS](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901103)
     pub qos: QualityOfService,
 
-    // modeled but internal
-    pub(crate) duplicate: bool,
+    /// ??
+    pub duplicate: bool,
 
     /// True if this is a retained message, false otherwise.
     ///
@@ -106,7 +107,7 @@ pub struct PublishPacket {
 
 
 #[rustfmt::skip]
-fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32)> {
     let mut publish_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     add_optional_u8_property_length!(publish_property_section_length, packet.payload_format);
@@ -215,7 +216,7 @@ fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(packet));
@@ -258,7 +259,7 @@ pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut V
 }
 
 
-fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket) -> Mqtt5Result<(), ()> {
+fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -290,8 +291,8 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
     Ok(())
 }
 
-pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PublishPacket, ()> {
-    let mut packet = PublishPacket { ..Default::default() };
+pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<PublishPacket>> {
+    let mut packet = Box::new(PublishPacket { ..Default::default() });
 
     if (first_byte & PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG) != 0 {
         packet.duplicate = true;
@@ -337,9 +338,9 @@ mod tests {
 
     #[test]
     fn publish_round_trip_encode_decode_default() {
-        let packet = PublishPacket {
+        let packet = Box::new(PublishPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Publish(packet)));
     }
@@ -347,18 +348,18 @@ mod tests {
     #[test]
     fn publish_round_trip_encode_decode_basic() {
 
-        let packet = PublishPacket {
+        let packet = Box::new(PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             payload: Some("a payload".as_bytes().to_vec()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Publish(packet)));
     }
 
-    fn create_publish_with_all_fields() -> PublishPacket {
-        return PublishPacket {
+    fn create_publish_with_all_fields() -> Box<PublishPacket> {
+        return Box::new(PublishPacket {
             packet_id: 47,
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
@@ -377,7 +378,7 @@ mod tests {
                 UserProperty{name: "name2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "name3".to_string(), value: "value3".to_string()},
             ))
-        };
+        });
     }
 
     #[test]

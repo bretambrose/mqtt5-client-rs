@@ -69,7 +69,7 @@ macro_rules! decode_packet_by_type {
     };
 }
 
-fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<MqttPacket, ()> {
+fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<MqttPacket> {
     let packet_type = first_byte >> 4;
 
     match packet_type {
@@ -171,7 +171,7 @@ impl Decoder {
         return (DecoderDirective::TerminalError, &[]);
     }
 
-    pub fn decode_bytes(&mut self, bytes: &[u8]) -> Mqtt5Result<(), ()> {
+    pub fn decode_bytes(&mut self, bytes: &[u8]) -> Mqtt5Result<()> {
         let mut current_slice = bytes;
 
         let mut decode_result = DecoderDirective::Continue;

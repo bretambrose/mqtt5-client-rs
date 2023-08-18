@@ -592,7 +592,7 @@ pub enum AuthenticateReasonCode {
 ///
 /// User properties are required to be a utf-8 string pair, as specified by the
 /// [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901013).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct UserProperty {
     pub name: String,
@@ -602,7 +602,7 @@ pub struct UserProperty {
 /// Specifies a single subscription within a Subscribe operation
 ///
 /// See [MQTT5 Subscription Options](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901169)
-#[derive(Default, Debug)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Subscription {
 
@@ -633,22 +633,22 @@ pub struct Subscription {
 }
 
 /// Algebraic union of all MQTT5 packet types.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) enum MqttPacket {
-    Connect(ConnectPacket),
-    Connack(ConnackPacket),
-    Publish(PublishPacket),
-    Puback(PubackPacket),
-    Pubrec(PubrecPacket),
-    Pubrel(PubrelPacket),
-    Pubcomp(PubcompPacket),
-    Subscribe(SubscribePacket),
-    Suback(SubackPacket),
-    Unsubscribe(UnsubscribePacket),
-    Unsuback(UnsubackPacket),
-    Pingreq(PingreqPacket),
-    Pingresp(PingrespPacket),
-    Disconnect(DisconnectPacket),
-    Auth(AuthPacket),
+    Connect(Box<ConnectPacket>),
+    Connack(Box<ConnackPacket>),
+    Publish(Box<PublishPacket>),
+    Puback(Box<PubackPacket>),
+    Pubrec(Box<PubrecPacket>),
+    Pubrel(Box<PubrelPacket>),
+    Pubcomp(Box<PubcompPacket>),
+    Subscribe(Box<SubscribePacket>),
+    Suback(Box<SubackPacket>),
+    Unsubscribe(Box<UnsubscribePacket>),
+    Unsuback(Box<UnsubackPacket>),
+    Pingreq(Box<PingreqPacket>),
+    Pingresp(Box<PingrespPacket>),
+    Disconnect(Box<DisconnectPacket>),
+    Auth(Box<AuthPacket>),
 }

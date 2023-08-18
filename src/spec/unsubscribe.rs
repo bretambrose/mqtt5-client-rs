@@ -12,12 +12,13 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 UNSUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901179) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct UnsubscribePacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Packet Id of the unsubscribe.  Setting this value on an outbound unsubscribe has no effect on the
+    /// actual packet id used by the client.
+    pub packet_id: u16,
 
     /// List of topic filters that the client wishes to unsubscribe from.
     ///
@@ -31,7 +32,7 @@ pub struct UnsubscribePacket {
 }
 
 #[rustfmt::skip]
-fn compute_unsubscribe_packet_length_properties(packet: &UnsubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_unsubscribe_packet_length_properties(packet: &UnsubscribePacket) -> Mqtt5Result<(u32, u32)> {
     let unsubscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     let mut total_remaining_length : usize = 2 + compute_variable_length_integer_encode_size(unsubscribe_property_section_length)?;
@@ -64,7 +65,7 @@ fn get_unsubscribe_packet_topic_filter(packet: &MqttPacket, index: usize) -> &st
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, unsubscribe_property_length) = compute_unsubscribe_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, UNSUBSCRIBE_FIRST_BYTE);
@@ -82,7 +83,7 @@ pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, steps
     Ok(())
 }
 
-fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut UnsubscribePacket) -> Mqtt5Result<(), ()> {
+fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut UnsubscribePacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -98,8 +99,8 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
     Ok(())
 }
 
-pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<UnsubscribePacket, ()> {
-    let mut packet = UnsubscribePacket { ..Default::default() };
+pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<UnsubscribePacket>> {
+    let mut packet = Box::new(UnsubscribePacket { ..Default::default() });
 
     if first_byte != UNSUBSCRIBE_FIRST_BYTE {
         return Err(Mqtt5Error::MalformedPacket);
@@ -137,27 +138,27 @@ mod tests {
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_default() {
-        let packet = UnsubscribePacket {
+        let packet = Box::new(UnsubscribePacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_basic() {
-        let packet = UnsubscribePacket {
+        let packet = Box::new(UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![ "hello/world".to_string() ],
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_all_properties() {
-        let packet = UnsubscribePacket {
+        let packet = Box::new(UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![
                 "hello/world".to_string(),
@@ -167,7 +168,7 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Clickergames".to_string(), value: "arelame".to_string()},
             )),
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }

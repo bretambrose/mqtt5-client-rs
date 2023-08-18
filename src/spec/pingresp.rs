@@ -11,12 +11,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 PINGRESP](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901200) packet.
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PingrespPacket {}
 
 #[rustfmt::skip]
-pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGRESP << 4);
     encode_integral_expression!(steps, Uint8, 0);
 
@@ -25,7 +25,7 @@ pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, steps: &mut VecD
 
 const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
 
-pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<PingrespPacket, ()> {
+pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<PingrespPacket>> {
     if packet_body.len() != 0 {
         return Err(Mqtt5Error::MalformedPacket);
     }
@@ -34,7 +34,7 @@ pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    return Ok(PingrespPacket{});
+    return Ok(Box::new(PingrespPacket{}));
 }
 
 #[cfg(test)]
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn pingresp_round_trip_encode_decode() {
-        let packet = PingrespPacket {};
+        let packet = Box::new(PingrespPacket {});
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
     }
 }

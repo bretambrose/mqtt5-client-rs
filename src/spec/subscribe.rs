@@ -12,12 +12,13 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 SUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901161) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct SubscribePacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Packet Id of the subscribe.  Setting this value on an outbound subscribe has no effect on the
+    /// actual packet id used by the client.
+    pub packet_id: u16,
 
     /// List of topic filter subscriptions that the client wishes to listen to
     ///
@@ -38,7 +39,7 @@ pub struct SubscribePacket {
 
 
 #[rustfmt::skip]
-fn compute_subscribe_packet_length_properties(packet: &SubscribePacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_subscribe_packet_length_properties(packet: &SubscribePacket) -> Mqtt5Result<(u32, u32)> {
     let mut subscribe_property_section_length = compute_user_properties_length(&packet.user_properties);
     add_optional_u32_property_length!(subscribe_property_section_length, packet.subscription_identifier);
 
@@ -88,7 +89,7 @@ fn compute_subscription_options_byte(subscription: &Subscription) -> u8 {
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, subscribe_property_length) = compute_subscribe_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, SUBSCRIBE_FIRST_BYTE);
@@ -108,7 +109,7 @@ pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, steps: &m
     Ok(())
 }
 
-fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePacket) -> Mqtt5Result<(), ()> {
+fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -125,8 +126,8 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
     Ok(())
 }
 
-pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<SubscribePacket, ()> {
-    let mut packet = SubscribePacket { ..Default::default() };
+pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<SubscribePacket>> {
+    let mut packet = Box::new(SubscribePacket { ..Default::default() });
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
         return Err(Mqtt5Error::MalformedPacket);
@@ -182,27 +183,27 @@ mod tests {
 
     #[test]
     fn subscribe_round_trip_encode_decode_default() {
-        let packet = SubscribePacket {
+        let packet = Box::new(SubscribePacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
     #[test]
     fn subscribe_round_trip_encode_decode_basic() {
-        let packet = SubscribePacket {
+        let packet = Box::new(SubscribePacket {
             packet_id : 123,
             subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
     #[test]
     fn subscribe_round_trip_encode_decode_all_properties() {
-        let packet = SubscribePacket {
+        let packet = Box::new(SubscribePacket {
             packet_id : 123,
             subscriptions : vec![
                 Subscription {
@@ -224,7 +225,7 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Worms".to_string(), value: "inmyhead".to_string()},
             )),
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }

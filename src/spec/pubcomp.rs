@@ -12,12 +12,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 PUBCOMP](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901151) packet
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PubcompPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Id of the QoS 2 publish this packet corresponds to
+    pub packet_id: u16,
 
     /// Success indicator or failure reason for the final step of a QoS 2 PUBLISH delivery.
     ///
@@ -54,9 +54,9 @@ mod tests {
 
     #[test]
     fn pubcomp_round_trip_encode_decode_default() {
-        let packet = PubcompPacket {
+        let packet = Box::new(PubcompPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
@@ -64,11 +64,11 @@ mod tests {
     #[test]
     fn pubcomp_round_trip_encode_decode_success_no_props() {
 
-        let packet = PubcompPacket {
+        let packet = Box::new(PubcompPacket {
             packet_id: 132,
             reason_code: PubcompReasonCode::Success,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
@@ -76,11 +76,11 @@ mod tests {
     #[test]
     fn pubcomp_round_trip_encode_decode_failure_no_props() {
 
-        let packet = PubcompPacket {
+        let packet = Box::new(PubcompPacket {
             packet_id: 4095,
             reason_code: PubcompReasonCode::PacketIdentifierNotFound,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn pubcomp_round_trip_encode_decode_success_with_props() {
 
-        let packet = PubcompPacket {
+        let packet = Box::new(PubcompPacket {
             packet_id: 1253,
             reason_code: PubcompReasonCode::Success,
             reason_string: Some("We did it!  High five.".to_string()),
@@ -97,7 +97,7 @@ mod tests {
                 UserProperty{name: "pubcomp2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "pubcomp2".to_string(), value: "value3".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn pubcomp_round_trip_encode_decode_failure_with_props() {
 
-        let packet = PubcompPacket {
+        let packet = Box::new(PubcompPacket {
             packet_id: 1500,
             reason_code: PubcompReasonCode::PacketIdentifierNotFound,
             reason_string: Some("I tried so hard, and got so far, but in the end, we totally face-planted".to_string()),
@@ -113,7 +113,7 @@ mod tests {
                 UserProperty{name: "uf".to_string(), value: "dah".to_string()},
                 UserProperty{name: "velkomen".to_string(), value: "stanwood".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }

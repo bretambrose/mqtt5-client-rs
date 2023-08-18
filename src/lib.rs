@@ -5,10 +5,12 @@
 
 extern crate core;
 
+mod alias;
 pub mod client;
 mod decode;
 mod encode;
 pub mod spec;
+mod validate;
 
 /* Re-export all spec types at the root level */
 
@@ -44,17 +46,21 @@ pub use spec::subscribe::SubscribePacket;
 pub use spec::unsuback::UnsubackPacket;
 pub use spec::unsubscribe::UnsubscribePacket;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Mqtt5Error<T> {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Mqtt5Error {
     Unknown,
-    Unimplemented(T),
+    Unimplemented,
     OperationChannelReceiveError,
-    OperationChannelSendError(T),
+    OperationChannelSendError,
     VariableLengthIntegerMaximumExceeded,
     EncodeBufferTooSmall,
     DecoderInvalidVli,
     MalformedPacket,
     ProtocolError,
+    InboundTopicAliasNotAllowed,
+    OutboundTopicAliasNotAllowed,
+    UserPropertyValidation,
+    AuthPacketValidation,
 }
 
-pub type Mqtt5Result<T, E> = Result<T, Mqtt5Error<E>>;
+pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;

@@ -6,14 +6,15 @@
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::utils::*;
+use crate::validate::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 AUTH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901217) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct AuthPacket {
 
     /// Specifies an endpoint's response to a previously-received AUTH packet as part of an authentication exchange.
@@ -44,7 +45,7 @@ pub struct AuthPacket {
 }
 
 #[rustfmt::skip]
-fn compute_auth_packet_length_properties(packet: &AuthPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_auth_packet_length_properties(packet: &AuthPacket) -> Mqtt5Result<(u32, u32)> {
     let mut auth_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     add_optional_string_property_length!(auth_property_section_length, packet.authentication_method);
@@ -85,7 +86,7 @@ fn get_auth_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProp
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
@@ -107,7 +108,7 @@ pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDequ
 }
 
 
-fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mqtt5Result<(), ()> {
+fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -126,8 +127,8 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
     Ok(())
 }
 
-pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<AuthPacket, ()> {
-    let mut packet = AuthPacket { ..Default::default() };
+pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<AuthPacket>> {
+    let mut packet = Box::new(AuthPacket { ..Default::default() });
 
     if first_byte != (PACKET_TYPE_AUTH << 4) {
         return Err(Mqtt5Error::MalformedPacket);
@@ -151,6 +152,54 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
     Ok(packet)
 }
 
+pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()> {
+
+    // validate packet size against the theoretical maximum since this could be used
+    // before the connack establishes a different bound
+    let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
+    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
+        return Err(Mqtt5Error::AuthPacketValidation);
+    }
+
+    if let Some(method) = &packet.authentication_method {
+        if method.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+            return Err(Mqtt5Error::AuthPacketValidation);
+        }
+    }
+
+    if let Some(data) = &packet.authentication_data {
+        if data.len() > MAXIMUM_BINARY_PROPERTY_LENGTH {
+            return Err(Mqtt5Error::AuthPacketValidation);
+        }
+    }
+
+    if let Some(reason) = &packet.reason_string {
+        if reason.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+            return Err(Mqtt5Error::AuthPacketValidation);
+        }
+    }
+
+    if let Some(properties) = &packet.user_properties {
+        if let Err(_) = validate_user_properties(&properties) {
+            return Err(Mqtt5Error::AuthPacketValidation);
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_auth_packet_context_specific(packet: &AuthPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    // validate packet size against the negotiated maximum
+    let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
+    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::AuthPacketValidation);
+    }
+
+    Ok(())
+}
+
+
 #[cfg(test)]
 mod tests {
 
@@ -159,26 +208,25 @@ mod tests {
 
     #[test]
     fn auth_round_trip_encode_decode_default() {
-        let packet = AuthPacket {
+        let packet = Box::new(AuthPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
     }
 
     #[test]
     fn auth_round_trip_encode_decode_required() {
-        let packet = AuthPacket {
+        let packet = Box::new(AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
     }
 
-    #[test]
-    fn auth_round_trip_encode_decode_all_properties() {
-        let packet = AuthPacket {
+    fn create_all_properties_auth_packet() -> Box<AuthPacket> {
+        Box::new(AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             authentication_method : Some("UnbreakableAuthExchange".to_string()),
             authentication_data : Some("Noonewillguessthis".as_bytes().to_vec()),
@@ -187,8 +235,70 @@ mod tests {
                 UserProperty{name: "Roblox".to_string(), value: "Wheredidmymoneygo".to_string()},
                 UserProperty{name: "Beeswarmsimulator".to_string(), value: "Lootbox".to_string()},
             )),
-        };
+        })
+    }
+
+    #[test]
+    fn auth_round_trip_encode_decode_all_properties() {
+        let packet = create_all_properties_auth_packet();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn auth_validate_success_all_properties() {
+        let packet = create_all_properties_auth_packet();
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Ok(()));
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_auth_packet_context_specific(&packet, &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn auth_validate_failure_authentication_method_length() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.authentication_method = Some("a".repeat(65537));
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_authentication_data_length() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.authentication_data = Some(vec![0; 128 * 1024]);
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_reason_string_length() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.reason_string = Some("a".repeat(199000));
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_user_properties() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_context_packet_size() {
+        let mut packet = create_all_properties_auth_packet();
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_packet_size_to_server = 50;
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_auth_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::AuthPacketValidation));
     }
 }

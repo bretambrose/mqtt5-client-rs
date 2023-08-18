@@ -8,13 +8,14 @@ mod implementation;
 extern crate tokio;
 
 use crate::client::implementation::*;
-use crate::{Mqtt5Error, Mqtt5Result};
+use crate::{Mqtt5Error, Mqtt5Result, QualityOfService};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::runtime;
 use tokio::sync::oneshot;
 
 use crate::spec::puback::PubackPacket;
+use crate::spec::pubrec::PubrecPacket;
 use crate::spec::pubcomp::PubcompPacket;
 use crate::spec::publish::PublishPacket;
 use crate::spec::suback::SubackPacket;
@@ -22,46 +23,93 @@ use crate::spec::subscribe::SubscribePacket;
 use crate::spec::unsuback::UnsubackPacket;
 use crate::spec::unsubscribe::UnsubscribePacket;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PublishOptions {
-    pub publish: PublishPacket,
 }
 
 #[derive(Debug)]
-pub enum SuccessfulPublish {
-    Qos0Success(PublishPacket),
-    Qos1Success(PubackPacket, PublishPacket),
-    Qos2Success(PubcompPacket, PublishPacket),
+pub enum Qos2Response {
+    Pubrec(PubrecPacket),
+    Pubcomp(PubcompPacket),
 }
 
-pub type PublishResult = Mqtt5Result<SuccessfulPublish, PublishOptions>;
+#[derive(Debug)]
+pub enum PublishResponse {
+    Qos0,
+    Qos1(PubackPacket),
+    Qos2(Qos2Response),
+}
+
+pub type PublishResult = Mqtt5Result<PublishResponse>;
 
 pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SubscribeOptions {
-    pub subscribe: SubscribePacket,
 }
 
-pub type SubscribeResult = Mqtt5Result<SubackPacket, SubscribeOptions>;
+pub type SubscribeResult = Mqtt5Result<SubackPacket>;
 
 pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct UnsubscribeOptions {
-    pub unsubscribe: UnsubscribePacket,
 }
 
-pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket, UnsubscribeOptions>;
+pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;
 
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
-impl<T> From<oneshot::error::RecvError> for Mqtt5Error<T> {
+#[derive(Default)]
+pub struct NegotiatedSettings {
+
+    /// The maximum QoS allowed between the server and client.
+    pub maximum_qos : QualityOfService,
+
+    /// The amount of time in seconds the server will retain the session after a disconnect.
+    pub session_expiry_interval : u32,
+
+    /// The number of QoS 1 and QoS2 publications the server is willing to process concurrently.
+    pub receive_maximum_from_server : u16,
+
+    /// The maximum packet size the server is willing to accept.
+    pub maximum_packet_size_to_server : u32,
+
+    /// The highest value that the server will accept as a Topic Alias sent by the client.
+    pub topic_alias_maximum_to_server : u16,
+
+    /// The highest value that the client will accept as a Topic Alias sent by the server.
+    pub topic_alias_maximum_to_client : u16,
+
+    /// The amount of time in seconds before the server will disconnect the client for inactivity.
+    pub server_keep_alive : u16,
+
+    /// Whether or not the server supports retained messages.
+    pub retain_available : bool,
+
+    /// Whether or not the server supports wildcard subscriptions.
+    pub wildcard_subscriptions_available : bool,
+
+    /// Whether or not the server supports subscription identifiers.
+    pub subscription_identifiers_available : bool,
+
+    /// Whether or not the server supports shared subscriptions.
+    pub shared_subscriptions_available : bool,
+
+    /// Whether or not the client has rejoined an existing session.
+    pub rejoined_session : bool,
+
+    /// Client id in use for the current connection
+    pub client_id : String
+}
+
+impl From<oneshot::error::RecvError> for Mqtt5Error {
     fn from(_: oneshot::error::RecvError) -> Self {
-        Mqtt5Error::<T>::OperationChannelReceiveError
+        Mqtt5Error::OperationChannelReceiveError
     }
 }
 
+#[derive(Default)]
 pub struct Mqtt5ClientOptions {}
 
 pub struct Mqtt5Client {
@@ -77,27 +125,27 @@ impl Mqtt5Client {
         Mqtt5Client { operation_sender }
     }
 
-    pub fn start(&self) -> Mqtt5Result<(), ()> {
+    pub fn start(&self) -> Mqtt5Result<()> {
         client_lifecycle_operation_body!(Start, self)
     }
 
-    pub fn stop(&self) -> Mqtt5Result<(), ()> {
+    pub fn stop(&self) -> Mqtt5Result<()> {
         client_lifecycle_operation_body!(Stop, self)
     }
 
-    pub fn close(&self) -> Mqtt5Result<(), ()> {
+    pub fn close(&self) -> Mqtt5Result<()> {
         client_lifecycle_operation_body!(Shutdown, self)
     }
 
-    pub fn publish(&self, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
-        client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, options)
+    pub fn publish(&self, packet: &PublishPacket, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
+        client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, packet, options)
     }
 
-    pub fn subscribe(&self, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, options)
+    pub fn subscribe(&self, packet: &SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
+        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, options)
     }
 
-    pub fn unsubscribe(&self, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, options)
+    pub fn unsubscribe(&self, packet: &UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
+        client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, options)
     }
 }

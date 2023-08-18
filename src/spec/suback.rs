@@ -12,12 +12,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 SUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901171) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct SubackPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Id of the unsubscribe this packet is acknowledging
+    pub packet_id: u16,
 
     /// Additional diagnostic information about the result of the SUBSCRIBE attempt.
     ///
@@ -37,7 +37,7 @@ pub struct SubackPacket {
 }
 
 #[rustfmt::skip]
-fn compute_suback_packet_length_properties(packet: &SubackPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_suback_packet_length_properties(packet: &SubackPacket) -> Mqtt5Result<(u32, u32)> {
     let mut suback_property_section_length = compute_user_properties_length(&packet.user_properties);
     add_optional_string_property_length!(suback_property_section_length, packet.reason_string);
 
@@ -64,7 +64,7 @@ fn get_suback_packet_user_property(packet: &MqttPacket, index: usize) -> &UserPr
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);
@@ -85,7 +85,7 @@ pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, steps: &mut Vec
 }
 
 
-fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<(), ()> {
+fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -102,8 +102,8 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
     Ok(())
 }
 
-pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<SubackPacket, ()> {
-    let mut packet = SubackPacket { ..Default::default() };
+pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<SubackPacket>> {
+    let mut packet = Box::new(SubackPacket { ..Default::default() });
 
     if first_byte != (PACKET_TYPE_SUBACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
@@ -141,16 +141,16 @@ mod tests {
 
     #[test]
     fn suback_round_trip_encode_decode_default() {
-        let packet = SubackPacket {
+        let packet = Box::new(SubackPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
 
     #[test]
     fn suback_round_trip_encode_decode_required() {
-        let packet = SubackPacket {
+        let packet = Box::new(SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1,
@@ -158,14 +158,14 @@ mod tests {
                 SubackReasonCode::SubscriptionIdentifiersNotSupported,
             ],
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
 
     #[test]
     fn suback_round_trip_encode_decode_all() {
-        let packet = SubackPacket {
+        let packet = Box::new(SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos2,
@@ -177,7 +177,7 @@ mod tests {
                 UserProperty{name: "This".to_string(), value: "wasfast".to_string()},
                 UserProperty{name: "Onepacket".to_string(), value: "left".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
