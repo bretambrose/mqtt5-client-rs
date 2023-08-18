@@ -12,8 +12,8 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 DISCONNECT](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901205) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct DisconnectPacket {
 
     /// Value indicating the reason that the sender is closing the connection
@@ -47,7 +47,7 @@ pub struct DisconnectPacket {
 }
 
 #[rustfmt::skip]
-fn compute_disconnect_packet_length_properties(packet: &DisconnectPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_disconnect_packet_length_properties(packet: &DisconnectPacket) -> Mqtt5Result<(u32, u32)> {
     let mut disconnect_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     add_optional_u32_property_length!(disconnect_property_section_length, packet.session_expiry_interval_seconds);
@@ -83,7 +83,7 @@ fn get_disconnect_packet_user_property(packet: &MqttPacket, index: usize) -> &Us
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, disconnect_property_length) = compute_disconnect_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_DISCONNECT << 4);
@@ -105,7 +105,7 @@ pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, steps: 
     Ok(())
 }
 
-fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectPacket) -> Mqtt5Result<(), ()> {
+fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -124,8 +124,8 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
     Ok(())
 }
 
-pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<DisconnectPacket, ()> {
-    let mut packet = DisconnectPacket { ..Default::default() };
+pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<DisconnectPacket>> {
+    let mut packet = Box::new(DisconnectPacket { ..Default::default() });
 
     if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
         return Err(Mqtt5Error::MalformedPacket);
@@ -157,36 +157,36 @@ mod tests {
 
     #[test]
     fn disconnect_round_trip_encode_decode_default() {
-        let packet = DisconnectPacket {
+        let packet = Box::new(DisconnectPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
     #[test]
     fn disconnect_round_trip_encode_decode_normal_reason_code() {
-        let packet = DisconnectPacket {
+        let packet = Box::new(DisconnectPacket {
             reason_code : DisconnectReasonCode::NormalDisconnection,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
     #[test]
     fn disconnect_round_trip_encode_decode_abnormal_reason_code() {
-        let packet = DisconnectPacket {
+        let packet = Box::new(DisconnectPacket {
             reason_code : DisconnectReasonCode::ConnectionRateExceeded,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
     #[test]
     fn disconnect_round_trip_encode_decode_all_properties() {
-        let packet = DisconnectPacket {
+        let packet = Box::new(DisconnectPacket {
             reason_code : DisconnectReasonCode::ConnectionRateExceeded,
             reason_string : Some("I don't like you".to_string()),
             server_reference : Some("far.far.away.com".to_string()),
@@ -195,7 +195,7 @@ mod tests {
                 UserProperty{name: "Super".to_string(), value: "Meatboy".to_string()},
                 UserProperty{name: "Minsc".to_string(), value: "Boo".to_string()},
             )),
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }

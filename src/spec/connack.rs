@@ -12,8 +12,8 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 CONNACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901074) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct ConnackPacket {
 
     /// True if the client rejoined an existing session on the server, false otherwise.
@@ -130,7 +130,7 @@ pub struct ConnackPacket {
 }
 
 #[rustfmt::skip]
-fn compute_connack_packet_length_properties(packet: &ConnackPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_connack_packet_length_properties(packet: &ConnackPacket) -> Mqtt5Result<(u32, u32)> {
 
     let mut connack_property_section_length = compute_user_properties_length(&packet.user_properties);
 
@@ -194,7 +194,7 @@ fn get_connack_packet_user_property(packet: &MqttPacket, index: usize) -> &UserP
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
@@ -233,7 +233,7 @@ pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, steps: &mut V
 }
 
 
-fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket) -> Mqtt5Result<(), ()> {
+fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -265,8 +265,8 @@ fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket)
     Ok(())
 }
 
-pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnackPacket, ()> {
-    let mut packet = ConnackPacket { ..Default::default() };
+pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<ConnackPacket>> {
+    let mut packet = Box::new(ConnackPacket { ..Default::default() });
 
     if first_byte != (PACKET_TYPE_CONNACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
@@ -307,27 +307,27 @@ mod tests {
 
     #[test]
     fn connack_round_trip_encode_decode_default() {
-        let packet = ConnackPacket {
+        let packet = Box::new(ConnackPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }
 
     #[test]
     fn connack_round_trip_encode_decode_required() {
-        let packet = ConnackPacket {
+        let packet = Box::new(ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Banned,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }
 
     #[test]
     fn connack_round_trip_encode_decode_all() {
-        let packet = ConnackPacket {
+        let packet = Box::new(ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::NotAuthorized,
 
@@ -352,7 +352,7 @@ mod tests {
             authentication_method: Some("Sekrit".to_string()),
             authentication_data: Some("TopSekrit".as_bytes().to_vec()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }

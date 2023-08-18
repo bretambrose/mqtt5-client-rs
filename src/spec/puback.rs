@@ -12,12 +12,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 PUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901121) packet
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PubackPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Id of the QoS 1 publish this packet is acknowledging
+    pub packet_id: u16,
 
     /// Success indicator or failure reason for the associated PUBLISH packet.
     ///
@@ -54,9 +54,9 @@ mod tests {
 
     #[test]
     fn puback_round_trip_encode_decode_default() {
-        let packet = PubackPacket {
+        let packet = Box::new(PubackPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -64,11 +64,11 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_success_no_props() {
 
-        let packet = PubackPacket {
+        let packet = Box::new(PubackPacket {
             packet_id: 123,
             reason_code: PubackReasonCode::Success,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -76,11 +76,11 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_failure_no_props() {
 
-        let packet = PubackPacket {
+        let packet = Box::new(PubackPacket {
             packet_id: 16384,
             reason_code: PubackReasonCode::NotAuthorized,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_success_with_props() {
 
-        let packet = PubackPacket {
+        let packet = Box::new(PubackPacket {
             packet_id: 1025,
             reason_code: PubackReasonCode::Success,
             reason_string: Some("This was the best publish I've ever seen.  Take a bow.".to_string()),
@@ -97,7 +97,7 @@ mod tests {
                 UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "puback2".to_string(), value: "value3".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_failure_with_props() {
 
-        let packet = PubackPacket {
+        let packet = Box::new(PubackPacket {
             packet_id: 1025,
             reason_code: PubackReasonCode::ImplementationSpecificError,
             reason_string: Some("Wow!  What a terrible publish.  You should be ashamed.".to_string()),
@@ -113,7 +113,7 @@ mod tests {
                 UserProperty{name: "puback1".to_string(), value: "value1".to_string()},
                 UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }

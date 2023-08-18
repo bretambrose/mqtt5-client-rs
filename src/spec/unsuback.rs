@@ -12,12 +12,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 UNSUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901187) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct UnsubackPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Id of the unsubscribe this packet is acknowledging
+    pub packet_id: u16,
 
     /// Additional diagnostic information about the result of the UNSUBSCRIBE attempt.
     ///
@@ -37,7 +37,7 @@ pub struct UnsubackPacket {
 }
 
 #[rustfmt::skip]
-fn compute_unsuback_packet_length_properties(packet: &UnsubackPacket) -> Mqtt5Result<(u32, u32), ()> {
+fn compute_unsuback_packet_length_properties(packet: &UnsubackPacket) -> Mqtt5Result<(u32, u32)> {
     let mut unsuback_property_section_length = compute_user_properties_length(&packet.user_properties);
     add_optional_string_property_length!(unsuback_property_section_length, packet.reason_string);
 
@@ -64,7 +64,7 @@ fn get_unsuback_packet_user_property(packet: &MqttPacket, index: usize) -> &User
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_unsuback_encoding_steps(packet: &UnsubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_unsuback_encoding_steps(packet: &UnsubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, unsuback_property_length) = compute_unsuback_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_UNSUBACK << 4);
@@ -84,7 +84,7 @@ pub(crate) fn write_unsuback_encoding_steps(packet: &UnsubackPacket, steps: &mut
     Ok(())
 }
 
-fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacket) -> Mqtt5Result<(), ()> {
+fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -101,8 +101,8 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
     Ok(())
 }
 
-pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<UnsubackPacket, ()> {
-    let mut packet = UnsubackPacket { ..Default::default() };
+pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<UnsubackPacket>> {
+    let mut packet = Box::new(UnsubackPacket { ..Default::default() });
 
     if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
@@ -140,16 +140,16 @@ mod tests {
 
     #[test]
     fn unsuback_round_trip_encode_decode_default() {
-        let packet = UnsubackPacket {
+        let packet = Box::new(UnsubackPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 
     #[test]
     fn unsuback_round_trip_encode_decode_required() {
-        let packet = UnsubackPacket {
+        let packet = Box::new(UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::ImplementationSpecificError,
@@ -157,14 +157,14 @@ mod tests {
                 UnsubackReasonCode::TopicNameInvalid
             ],
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 
     #[test]
     fn unsuback_round_trip_encode_decode_all() {
-        let packet = UnsubackPacket {
+        let packet = Box::new(UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::NotAuthorized,
@@ -176,7 +176,7 @@ mod tests {
                 UserProperty{name: "Time".to_string(), value: "togohome".to_string()},
                 UserProperty{name: "Ouch".to_string(), value: "backhurts".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }

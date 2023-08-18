@@ -27,7 +27,7 @@ use crate::spec::unsubscribe::*;
 
 use std::collections::VecDeque;
 
-fn write_encoding_steps(mqtt_packet: &MqttPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+fn write_encoding_steps(mqtt_packet: &MqttPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     match mqtt_packet {
         MqttPacket::Connect(packet) => {
             write_connect_encoding_steps(packet, steps)
@@ -94,7 +94,7 @@ impl Encoder {
         }
     }
 
-    pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<(), ()> {
+    pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<()> {
         self.steps.clear();
 
         write_encoding_steps(packet, &mut self.steps)
@@ -104,7 +104,7 @@ impl Encoder {
         &mut self,
         packet: &MqttPacket,
         dest: &mut Vec<u8>,
-    ) -> Mqtt5Result<EncodeResult, ()> {
+    ) -> Mqtt5Result<EncodeResult> {
         let capacity = dest.capacity();
         if capacity < 4 {
             return Err(Mqtt5Error::EncodeBufferTooSmall);

@@ -12,12 +12,12 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 PUBREC](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901131) packet
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PubrecPacket {
 
-    // packet id is modeled but internal to the client
-    pub(crate) packet_id: u16,
+    /// Id of the QoS 2 publish this packet corresponds to
+    pub packet_id: u16,
 
     /// Success indicator or failure reason for the initial step of the QoS 2 PUBLISH delivery process.
     ///
@@ -54,9 +54,9 @@ mod tests {
 
     #[test]
     fn pubrec_round_trip_encode_decode_default() {
-        let packet = PubrecPacket {
+        let packet = Box::new(PubrecPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
@@ -64,11 +64,11 @@ mod tests {
     #[test]
     fn pubrec_round_trip_encode_decode_success_no_props() {
 
-        let packet = PubrecPacket {
+        let packet = Box::new(PubrecPacket {
             packet_id: 1234,
             reason_code: PubrecReasonCode::Success,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
@@ -76,11 +76,11 @@ mod tests {
     #[test]
     fn pubrec_round_trip_encode_decode_failure_no_props() {
 
-        let packet = PubrecPacket {
+        let packet = Box::new(PubrecPacket {
             packet_id: 8191,
             reason_code: PubrecReasonCode::PacketIdentifierInUse,
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn pubrec_round_trip_encode_decode_success_with_props() {
 
-        let packet = PubrecPacket {
+        let packet = Box::new(PubrecPacket {
             packet_id: 10253,
             reason_code: PubrecReasonCode::Success,
             reason_string: Some("Whoa, qos2.  Brave and inspired.".to_string()),
@@ -97,7 +97,7 @@ mod tests {
                 UserProperty{name: "pubrec2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "pubrec2".to_string(), value: "value3".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn pubrec_round_trip_encode_decode_failure_with_props() {
 
-        let packet = PubrecPacket {
+        let packet = Box::new(PubrecPacket {
             packet_id: 125,
             reason_code: PubrecReasonCode::UnspecifiedError,
             reason_string: Some("Qos2?  Get that nonsense outta here.".to_string()),
@@ -113,7 +113,7 @@ mod tests {
                 UserProperty{name: "pubwreck1".to_string(), value: "krabbypatty".to_string()},
                 UserProperty{name: "pubwreck2".to_string(), value: "spongebob".to_string()},
             ))
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }

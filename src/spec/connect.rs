@@ -12,8 +12,8 @@ use crate::spec::utils::*;
 use std::collections::VecDeque;
 
 /// Data model of an [MQTT5 CONNECT](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901033) packet.
-#[derive(Default, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct ConnectPacket {
 
     /// The maximum time interval, in seconds, that is permitted to elapse between the point at which the client
@@ -122,7 +122,6 @@ pub struct ConnectPacket {
     /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901054)
     pub user_properties: Option<Vec<UserProperty>>,
 }
-
 
 fn get_connect_packet_client_id(packet: &MqttPacket) -> &str {
     get_optional_packet_field!(packet, MqttPacket::Connect, client_id)
@@ -255,7 +254,7 @@ fn compute_connect_flags(packet: &ConnectPacket) -> u8 {
 }
 
 #[rustfmt::skip]
-fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Result<(u32, u32, u32), ()> {
+fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Result<(u32, u32, u32)> {
     let mut connect_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     add_optional_u32_property_length!(connect_property_section_length, packet.session_expiry_interval_seconds);
@@ -315,7 +314,7 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<(), ()> {
+pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, connect_property_length, will_property_length) = compute_connect_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, 1u8 << 4);
@@ -362,7 +361,7 @@ pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, steps: &mut V
     Ok(())
 }
 
-fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket) -> Mqtt5Result<(), ()> {
+fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -386,7 +385,7 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
     Ok(())
 }
 
-fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, connect : &mut ConnectPacket) -> Mqtt5Result<(), ()> {
+fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, connect : &mut ConnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
     while mutable_property_bytes.len() > 0 {
@@ -410,8 +409,8 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
 
 const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
 
-pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<ConnectPacket, ()> {
-    let mut packet = ConnectPacket { ..Default::default() };
+pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<ConnectPacket>> {
+    let mut packet = Box::new(ConnectPacket { ..Default::default() } );
 
     if first_byte != (PACKET_TYPE_CONNECT << 4)  {
         return Err(Mqtt5Error::MalformedPacket);
@@ -517,28 +516,28 @@ mod tests {
 
     #[test]
     fn connect_round_trip_encode_decode_default() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_basic() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             keep_alive_interval_seconds : 1200,
             clean_start : true,
             client_id : Some("MyClient".to_string()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_no_flags_all_optional_properties() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("MyClient2".to_string()),
@@ -555,34 +554,34 @@ mod tests {
                 UserProperty{name: "Iamabanana".to_string(), value: "Hamizilla".to_string()},
             )),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_username_only() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             username : Some("SpaceUnicorn".to_string()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_password_only() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             password : Some("Marshmallow Lasers".as_bytes().to_vec()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_all_non_will_properties() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("NotAHaxxor".to_string()),
@@ -601,26 +600,26 @@ mod tests {
             username: Some("Gluten-free armada".to_string()),
             password: Some("PancakeRobot".as_bytes().to_vec()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_default_will() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             will : Some(PublishPacket {
                 ..Default::default()
             }),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_simple_will() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             will : Some(PublishPacket {
                 topic : "in/rememberance".to_string(),
                 qos: QualityOfService::ExactlyOnce,
@@ -628,14 +627,14 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_all_will_fields() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             will_delay_interval_seconds : Some(60),
             will : Some(PublishPacket {
                 topic : "in/rememberance/of/mrkrabs".to_string(),
@@ -653,14 +652,14 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_everything() {
-        let packet = ConnectPacket {
+        let packet = Box::new(ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("NotAHaxxor".to_string()),
@@ -695,7 +694,7 @@ mod tests {
             username: Some("Gluten-free armada".to_string()),
             password: Some("PancakeRobot".as_bytes().to_vec()),
             ..Default::default()
-        };
+        });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
