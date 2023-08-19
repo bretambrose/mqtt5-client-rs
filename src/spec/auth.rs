@@ -203,9 +203,8 @@ pub(crate) fn validate_auth_packet_context_specific(packet: &AuthPacket, context
 
 #[cfg(test)]
 mod tests {
-
-    use super::*;
     use crate::decode::testing::*;
+    use super::*;
 
     #[test]
     fn auth_round_trip_encode_decode_default() {
@@ -244,6 +243,16 @@ mod tests {
         let packet = create_all_properties_auth_packet();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
+    }
+
+    #[test]
+    fn auth_decode_failure_bad_fixed_header() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Auth(packet), 1);
     }
 
     use crate::validate::testing::*;

@@ -45,11 +45,11 @@ enum DecoderDirective {
     TerminalError
 }
 
-pub struct DecoderOptions {
-    packet_stream: std::sync::mpsc::Sender<MqttPacket>
+pub(crate) struct DecoderOptions {
+    pub packet_stream: std::sync::mpsc::Sender<MqttPacket>
 }
 
-pub struct Decoder {
+pub(crate) struct Decoder {
     config: DecoderOptions,
 
     state: DecoderState,
@@ -312,5 +312,58 @@ pub(crate) mod testing {
         }
 
         return true;
+    }
+
+    fn encode_packet_for_test(packet: &MqttPacket) -> Vec<u8> {
+        let mut encoder = Encoder::new();
+
+        let mut encoded_buffer = Vec::with_capacity( 128 * 1024);
+
+        let mut outbound_resolver : Box<dyn OutboundAliasResolver> = Box::new(NullOutboundAliasResolver::new());
+        let mut encoding_context = EncodingContext {
+            outbound_alias_resolver : &mut outbound_resolver
+        };
+
+        assert!(!encoder.reset(&packet, &mut encoding_context).is_err());
+
+        let encode_result = encoder.encode(packet, &mut encoded_buffer);
+        assert_eq!(encode_result, Ok(EncodeResult::Complete));
+
+        encoded_buffer
+    }
+
+    pub(crate) fn do_fixed_header_flag_decode_failure_test(packet: &MqttPacket, flags_mask: u8) {
+        let mut good_encoded_bytes = encode_packet_for_test(packet);
+
+        // for clarity, verify that the packet is decodable as is
+        let (packet_sender, packet_receiver) = std::sync::mpsc::channel();
+
+        let options = DecoderOptions {
+            packet_stream : packet_sender
+        };
+
+        let mut decoder = Decoder::new(options);
+        decoder.reset_for_new_connection();
+
+        let decode_result = decoder.decode_bytes(good_encoded_bytes.as_slice());
+        assert_eq!(decode_result, Ok(()));
+
+        let receive_result = packet_receiver.try_recv().unwrap();
+        assert_eq!(*packet, receive_result);
+
+        // make sure we're actually flipping some bits
+        assert_ne!(flags_mask & good_encoded_bytes[0], flags_mask);
+
+        // mess with the fixed header flags
+        good_encoded_bytes[0] |= flags_mask;
+
+        // verify that the packet now fails to decode
+        decoder.reset_for_new_connection();
+
+        let decode_result = decoder.decode_bytes(good_encoded_bytes.as_slice());
+        assert_eq!(decode_result, Err(Mqtt5Error::MalformedPacket));
+
+        let receive_result = packet_receiver.try_recv();
+        assert!(receive_result.is_err());
     }
 }
