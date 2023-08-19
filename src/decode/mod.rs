@@ -5,7 +5,8 @@
 
 pub(crate) mod utils;
 
-use crate::{Mqtt5Error, Mqtt5Result};
+use crate::*;
+use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::spec::*;
@@ -229,9 +230,14 @@ pub(crate) mod testing {
         let mut full_encoded_stream = Vec::with_capacity( 128 * 1024);
         let mut encode_buffer = Vec::with_capacity(encode_size);
 
+        let mut outbound_resolver : Box<dyn OutboundAliasResolver> = Box::new(ManualOutboundAliasResolver::new(65535));
+        let mut encoding_context = EncodingContext {
+            outbound_alias_resolver : &mut outbound_resolver
+        };
+
         /* encode 5 copies of the packet */
         for _ in 0..encode_repetitions {
-            assert!(!encoder.reset(&packet).is_err());
+            assert!(!encoder.reset(&packet, &mut encoding_context).is_err());
 
             let mut cumulative_result : EncodeResult = EncodeResult::Full;
             while cumulative_result == EncodeResult::Full {
@@ -269,6 +275,8 @@ pub(crate) mod testing {
 
         let mut matching_packets : u32 = 0;
 
+        let mut inbound_alias_resolver = InboundAliasResolver::new(65535);
+
         loop {
             let receive_result = packet_receiver.try_recv();
             if let Err(error) = receive_result {
@@ -276,8 +284,14 @@ pub(crate) mod testing {
                 break;
             }
 
-            let received_packet = receive_result.unwrap();
+            let mut received_packet = receive_result.unwrap();
             matching_packets += 1;
+
+            if let MqttPacket::Publish(publish) = &mut received_packet {
+                if let Err(_) = inbound_alias_resolver.resolve_topic_alias(&publish.topic_alias, &mut publish.topic) {
+                    return false;
+                }
+            }
 
             assert_eq!(*packet, received_packet);
         }

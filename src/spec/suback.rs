@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
@@ -64,7 +65,7 @@ fn get_suback_packet_user_property(packet: &MqttPacket, index: usize) -> &UserPr
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);

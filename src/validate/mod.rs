@@ -17,11 +17,10 @@ pub(crate) struct ValidationContext<'a> {
     // Maximum packet size, maximum qos, incoming topic alias, retained, wildcard, sub ids, shared subs
     pub negotiated_settings : &'a NegotiatedSettings,
 
-    // outbound manual topic alias
-    pub outbound_alias_resolver: &'a dyn OutboundAliasResolver,
-
-    // inbound manual topic alias
-    pub inbound_alias_resolver: &'a dyn InboundAliasResolver,
+    // inbound manual topic alias validation
+    // We don't bother with outbound alias validation because the outbound alias resolution
+    // contract is to just send the topic if an oubtound mapping is invalid.
+    pub inbound_alias_resolver: &'a InboundAliasResolver,
 
     // session_expiry_interval for disconnect constraints
     pub client_config: &'a Mqtt5ClientOptions
@@ -76,24 +75,19 @@ pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &Va
 
 #[cfg(test)]
 pub(crate) mod testing {
-    use std::rc::Rc;
     use super::*;
-    use crate::client::*;
-    use crate::alias::*;
     use crate::encode::utils::MAXIMUM_VARIABLE_LENGTH_INTEGER;
 
-    pub(crate) struct PinnedValidationContext<'a> {
+    pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
-        outbound_resolver : Box<dyn OutboundAliasResolver + 'a>,
-        inbound_resolver : Box<dyn InboundAliasResolver + 'a>,
+        inbound_resolver : InboundAliasResolver,
         config : Mqtt5ClientOptions,
     }
 
-    pub(crate) fn create_pinned_validation_context<'a>() -> PinnedValidationContext<'a> {
+    pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
         let mut pinned_context = PinnedValidationContext {
             settings : NegotiatedSettings {..Default::default() },
-            outbound_resolver : Box::new( NullOutboundAliasResolver::new()),
-            inbound_resolver : Box::new( NullInboundAliasResolver::new() ),
+            inbound_resolver : InboundAliasResolver::new(0),
             config : Mqtt5ClientOptions{ ..Default::default() },
         };
 
@@ -102,10 +96,9 @@ pub(crate) mod testing {
         pinned_context
     }
 
-    pub(crate) fn create_validation_context_from_pinned<'a>(pinned: &'a PinnedValidationContext<'a>) -> ValidationContext<'a> {
+    pub(crate) fn create_validation_context_from_pinned(pinned: &PinnedValidationContext) -> ValidationContext {
         ValidationContext {
             negotiated_settings : &pinned.settings,
-            outbound_alias_resolver : &pinned.outbound_resolver,
             inbound_alias_resolver : &pinned.inbound_resolver,
             client_config : &pinned.config,
         }

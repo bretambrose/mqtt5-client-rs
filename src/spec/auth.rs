@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::validate::*;
 use crate::spec::*;
@@ -86,7 +87,7 @@ fn get_auth_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProp
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
@@ -293,7 +294,7 @@ mod tests {
 
     #[test]
     fn auth_validate_failure_context_packet_size() {
-        let mut packet = create_all_properties_auth_packet();
+        let packet = create_all_properties_auth_packet();
 
         let mut test_validation_context = create_pinned_validation_context();
         test_validation_context.settings.maximum_packet_size_to_server = 50;

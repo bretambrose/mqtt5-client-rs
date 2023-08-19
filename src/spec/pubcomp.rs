@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;

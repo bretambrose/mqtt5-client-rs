@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
@@ -314,7 +315,7 @@ fn compute_connect_packet_length_properties(packet: &ConnectPacket) -> Mqtt5Resu
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, connect_property_length, will_property_length) = compute_connect_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, 1u8 << 4);

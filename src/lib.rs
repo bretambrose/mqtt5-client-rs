@@ -58,7 +58,9 @@ pub enum Mqtt5Error {
     MalformedPacket,
     ProtocolError,
     InboundTopicAliasNotAllowed,
+    InboundTopicAliasNotValid,
     OutboundTopicAliasNotAllowed,
+    OutboundTopicAliasInvalid,
     UserPropertyValidation,
     AuthPacketValidation,
 }

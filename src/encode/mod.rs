@@ -5,6 +5,7 @@
 
 pub(crate) mod utils;
 
+use crate::alias::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::{Mqtt5Error, Mqtt5Result};
@@ -27,52 +28,56 @@ use crate::spec::unsubscribe::*;
 
 use std::collections::VecDeque;
 
-fn write_encoding_steps(mqtt_packet: &MqttPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) struct EncodingContext<'a> {
+    pub outbound_alias_resolver: &'a mut dyn OutboundAliasResolver,
+}
+
+fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     match mqtt_packet {
         MqttPacket::Connect(packet) => {
-            write_connect_encoding_steps(packet, steps)
+            write_connect_encoding_steps(packet, context, steps)
         }
         MqttPacket::Connack(packet) => {
-            write_connack_encoding_steps(packet, steps)
+            write_connack_encoding_steps(packet, context, steps)
         }
         MqttPacket::Publish(packet) => {
-            write_publish_encoding_steps(packet, steps)
+            write_publish_encoding_steps(packet, context, steps)
         }
         MqttPacket::Puback(packet) => {
-            write_puback_encoding_steps(packet, steps)
+            write_puback_encoding_steps(packet, context, steps)
         }
         MqttPacket::Pubrec(packet) => {
-            write_pubrec_encoding_steps(packet, steps)
+            write_pubrec_encoding_steps(packet, context, steps)
         }
         MqttPacket::Pubrel(packet) => {
-            write_pubrel_encoding_steps(packet, steps)
+            write_pubrel_encoding_steps(packet, context, steps)
         }
         MqttPacket::Pubcomp(packet) => {
-            write_pubcomp_encoding_steps(packet, steps)
+            write_pubcomp_encoding_steps(packet, context, steps)
         }
         MqttPacket::Subscribe(packet) => {
-            write_subscribe_encoding_steps(packet, steps)
+            write_subscribe_encoding_steps(packet, context, steps)
         }
         MqttPacket::Suback(packet) => {
-            write_suback_encoding_steps(packet, steps)
+            write_suback_encoding_steps(packet, context, steps)
         }
         MqttPacket::Unsubscribe(packet) => {
-            write_unsubscribe_encoding_steps(packet, steps)
+            write_unsubscribe_encoding_steps(packet, context, steps)
         }
         MqttPacket::Unsuback(packet) => {
-            write_unsuback_encoding_steps(packet, steps)
+            write_unsuback_encoding_steps(packet, context, steps)
         }
         MqttPacket::Pingreq(packet) => {
-            write_pingreq_encoding_steps(packet, steps)
+            write_pingreq_encoding_steps(packet, context, steps)
         }
         MqttPacket::Pingresp(packet) => {
-            write_pingresp_encoding_steps(packet, steps)
+            write_pingresp_encoding_steps(packet, context, steps)
         }
         MqttPacket::Disconnect(packet) => {
-            write_disconnect_encoding_steps(packet, steps)
+            write_disconnect_encoding_steps(packet, context, steps)
         }
         MqttPacket::Auth(packet) => {
-            write_auth_encoding_steps(packet, steps)
+            write_auth_encoding_steps(packet, context, steps)
         }
     }
 }
@@ -94,10 +99,10 @@ impl Encoder {
         }
     }
 
-    pub fn reset(&mut self, packet: &MqttPacket) -> Mqtt5Result<()> {
+    pub fn reset(&mut self, packet: &MqttPacket, context: &mut EncodingContext) -> Mqtt5Result<()> {
         self.steps.clear();
 
-        write_encoding_steps(packet, &mut self.steps)
+        write_encoding_steps(packet, context, &mut self.steps)
     }
 
     pub fn encode(

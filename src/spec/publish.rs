@@ -5,11 +5,13 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
 use std::collections::VecDeque;
+use crate::alias::OutboundAliasResolution;
 
 /// Data model of an [MQTT5 PUBLISH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100) packet
 #[derive(Clone, Debug, Default)]
@@ -107,12 +109,12 @@ pub struct PublishPacket {
 
 
 #[rustfmt::skip]
-fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Result<(u32, u32)> {
+fn compute_publish_packet_length_properties(packet: &PublishPacket, alias_resolution: &OutboundAliasResolution) -> Mqtt5Result<(u32, u32)> {
     let mut publish_property_section_length = compute_user_properties_length(&packet.user_properties);
 
     add_optional_u8_property_length!(publish_property_section_length, packet.payload_format);
     add_optional_u32_property_length!(publish_property_section_length, packet.message_expiry_interval_seconds);
-    add_optional_u16_property_length!(publish_property_section_length, packet.topic_alias);
+    add_optional_u16_property_length!(publish_property_section_length, alias_resolution.alias);
     add_optional_string_property_length!(publish_property_section_length, packet.content_type);
     add_optional_string_property_length!(publish_property_section_length, packet.response_topic);
     add_optional_bytes_property_length!(publish_property_section_length, packet.correlation_data);
@@ -138,7 +140,10 @@ fn compute_publish_packet_length_properties(packet: &PublishPacket) -> Mqtt5Resu
     let mut total_remaining_length = compute_variable_length_integer_encode_size(publish_property_section_length)?;
 
     /* Topic name */
-    total_remaining_length += 2 + packet.topic.len();
+    total_remaining_length += 2;
+    if alias_resolution.send_topic {
+        total_remaining_length += packet.topic.len();
+    }
 
     /* Optional (qos1+) packet id */
     if packet.qos != QualityOfService::AtMostOnce {
@@ -216,20 +221,22 @@ fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
-    let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet)?;
+pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, context: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+    let resolution = context.outbound_alias_resolver.resolve_topic_alias(&packet.topic_alias, &packet.topic);
+
+    let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet, &resolution)?;
 
     encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(packet));
     encode_integral_expression!(steps, Vli, total_remaining_length);
 
-    /*
-     * Variable Header
-     * UTF-8 Encoded Topic Name
-     * 2 byte Packet Identifier
-     * 1-4 byte Property Length as Variable Byte Integer
-     * n bytes Properties
-     */
-    encode_length_prefixed_string!(steps, get_publish_packet_topic, packet.topic);
+    if resolution.send_topic {
+        // Add the topic since the outbound alias resolution did not use an existing binding
+        encode_length_prefixed_string!(steps, get_publish_packet_topic, packet.topic);
+    } else {
+        // empty topic since an existing alias binding was used.
+        encode_integral_expression!(steps, Uint16, 0);
+    }
+
     if packet.qos != QualityOfService::AtMostOnce {
         encode_integral_expression!(steps, Uint16, packet.packet_id);
     }
@@ -237,7 +244,7 @@ pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, steps: &mut V
 
     encode_optional_enum_property!(steps, Uint8, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR, u8, packet.payload_format);
     encode_optional_property!(steps, Uint32, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL, packet.message_expiry_interval_seconds);
-    encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS, packet.topic_alias);
+    encode_optional_property!(steps, Uint16, PROPERTY_KEY_TOPIC_ALIAS, resolution.alias);
     encode_optional_string_property!(steps, get_publish_packet_response_topic, PROPERTY_KEY_RESPONSE_TOPIC, packet.response_topic);
     encode_optional_bytes_property!(steps, get_publish_packet_correlation_data, PROPERTY_KEY_CORRELATION_DATA, packet.correlation_data);
 

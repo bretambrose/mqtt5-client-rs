@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
@@ -89,7 +90,7 @@ fn compute_subscription_options_byte(subscription: &Subscription) -> u8 {
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, subscribe_property_length) = compute_subscribe_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, SUBSCRIBE_FIRST_BYTE);

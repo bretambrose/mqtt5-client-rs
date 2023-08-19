@@ -5,6 +5,7 @@
 
 use crate::*;
 use crate::decode::utils::*;
+use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
@@ -194,7 +195,7 @@ fn get_connack_packet_user_property(packet: &MqttPacket, index: usize) -> &UserP
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
