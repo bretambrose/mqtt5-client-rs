@@ -118,4 +118,15 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
+
+    #[test]
+    fn puback_decode_failure_bad_fixed_header() {
+        let packet = Box::new(PubackPacket {
+            packet_id: 16384,
+            reason_code: PubackReasonCode::NotAuthorized,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Puback(packet), 7);
+    }
 }

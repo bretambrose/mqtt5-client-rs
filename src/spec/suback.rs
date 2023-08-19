@@ -182,4 +182,19 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
+
+    #[test]
+    fn suback_decode_failure_bad_fixed_header() {
+        let packet = Box::new(SubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                SubackReasonCode::GrantedQos1,
+                SubackReasonCode::QuotaExceeded,
+                SubackReasonCode::SubscriptionIdentifiersNotSupported,
+            ],
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Suback(packet), 15);
+    }
 }

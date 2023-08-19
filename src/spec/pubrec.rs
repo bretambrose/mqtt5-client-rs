@@ -118,4 +118,15 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
+
+    #[test]
+    fn pubrec_decode_failure_bad_fixed_header() {
+        let packet = Box::new(PubrecPacket {
+            packet_id: 8191,
+            reason_code: PubrecReasonCode::PacketIdentifierInUse,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Pubrec(packet), 12);
+    }
 }

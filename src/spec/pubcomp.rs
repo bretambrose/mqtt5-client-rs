@@ -118,4 +118,15 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
+
+    #[test]
+    fn pubcomp_decode_failure_bad_fixed_header() {
+        let packet = Box::new(PubcompPacket {
+            packet_id: 4095,
+            reason_code: PubcompReasonCode::PacketIdentifierNotFound,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Pubcomp(packet), 10);
+    }
 }

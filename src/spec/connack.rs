@@ -305,7 +305,6 @@ mod tests {
     use super::*;
     use crate::decode::testing::*;
 
-
     #[test]
     fn connack_round_trip_encode_decode_default() {
         let packet = Box::new(ConnackPacket {
@@ -356,5 +355,16 @@ mod tests {
         });
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
+    }
+
+    #[test]
+    fn connack_decode_failure_bad_fixed_header() {
+        let packet = Box::new(ConnackPacket {
+            session_present : true,
+            reason_code : ConnectReasonCode::Banned,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Connack(packet), 5);
     }
 }

@@ -173,4 +173,15 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
+
+    #[test]
+    fn unsubscribe_decode_failure_bad_fixed_header() {
+        let packet = Box::new(UnsubscribePacket {
+            packet_id : 123,
+            topic_filters : vec![ "hello/world".to_string() ],
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsubscribe(packet), 14);
+    }
 }

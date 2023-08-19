@@ -181,4 +181,19 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
+
+    #[test]
+    fn unsuback_decode_failure_bad_fixed_header() {
+        let packet = Box::new(UnsubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                UnsubackReasonCode::ImplementationSpecificError,
+                UnsubackReasonCode::Success,
+                UnsubackReasonCode::TopicNameInvalid
+            ],
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsuback(packet), 9);
+    }
 }

@@ -699,4 +699,19 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
+
+    #[test]
+    fn connect_decode_failure_bad_fixed_header() {
+        let packet = Box::new(ConnectPacket {
+            will : Some(PublishPacket {
+                topic : "in/rememberance".to_string(),
+                qos: QualityOfService::ExactlyOnce,
+                payload: Some("I'llbealright".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Connect(packet), 6);
+    }
 }

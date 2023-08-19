@@ -49,4 +49,11 @@ mod tests {
         let packet = Box::new(PingrespPacket {});
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
     }
+
+    #[test]
+    fn pingresp_decode_failure_bad_fixed_header() {
+        let packet = Box::new(PingrespPacket {});
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Pingresp(packet), 2);
+    }
 }

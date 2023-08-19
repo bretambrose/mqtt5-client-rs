@@ -200,4 +200,14 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
+
+    #[test]
+    fn disconnect_decode_failure_bad_fixed_header() {
+        let packet = Box::new(DisconnectPacket {
+            reason_code : DisconnectReasonCode::ConnectionRateExceeded,
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Disconnect(packet), 12);
+    }
 }

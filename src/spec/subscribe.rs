@@ -230,4 +230,15 @@ mod tests {
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
+
+    #[test]
+    fn subscribe_decode_failure_bad_fixed_header() {
+        let packet = Box::new(SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
+            ..Default::default()
+        });
+
+        do_fixed_header_flag_decode_failure_test(&MqttPacket::Subscribe(packet), 7);
+    }
 }
