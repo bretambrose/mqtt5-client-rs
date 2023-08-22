@@ -26,6 +26,13 @@ pub struct AuthPacket {
     /// Authentication method this packet corresponds to.  The authentication method must remain the
     /// same for the entirety of an authentication exchange.
     ///
+    /// The MQTT5 specification lists the authentication method property as required, from a
+    /// protocol perspective.  At the same time it specifies that it is valid to short-circuit the
+    /// packet encoding if the reason is Success and there are no properties.  This is a bit
+    /// self-contradictory, but we resolve it by modeling the authentication method as an optional
+    /// string (so supporting the short-circuited encode/decode) but -- despite the option type --
+    /// the packet fails validation if authentication_method is None.
+    ///
     /// See [MQTT5 Authentication Method](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901223)
     pub authentication_method: Option<String>,
 
@@ -166,6 +173,10 @@ pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()>
         if method.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
             return Err(Mqtt5Error::AuthPacketValidation);
         }
+    } else {
+        // while optional from an encode/decode perspective, method is required from a protocol
+        // perspective
+        return Err(Mqtt5Error::AuthPacketValidation);
     }
 
     if let Some(data) = &packet.authentication_data {
@@ -255,6 +266,113 @@ mod tests {
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Auth(packet), 1);
     }
 
+    #[test]
+    fn auth_decode_failure_bad_reason_code() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            ..Default::default()
+        });
+
+        let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // the reason code is at position 2
+            clone[2] = 1;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Auth(packet), corrupt_reason_code);
+    }
+
+    #[test]
+    fn auth_decode_failure_duplicate_authentication_method() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            authentication_method : Some("A".to_string()),
+            ..Default::default()
+        });
+
+        let duplicate_authentication_method = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // increase total remaining length by 4
+            clone[1] += 4;
+
+            // increase property section length by 4
+            clone[3] += 4;
+
+            // add the duplicate property
+            clone.push(PROPERTY_KEY_AUTHENTICATION_METHOD);
+            clone.push(1);
+            clone.push(0);
+            clone.push(66); // 'B'
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Auth(packet), duplicate_authentication_method);
+    }
+
+    #[test]
+    fn auth_decode_failure_duplicate_authentication_data() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            authentication_data : Some("A".as_bytes().to_vec()),
+            ..Default::default()
+        });
+
+        let duplicate_authentication_data = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // increase total remaining length by 4
+            clone[1] += 4;
+
+            // increase property section length by 4
+            clone[3] += 4;
+
+            // add the duplicate property
+            clone.push(PROPERTY_KEY_AUTHENTICATION_DATA);
+            clone.push(1);
+            clone.push(0);
+            clone.push(66); // 'B'
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Auth(packet), duplicate_authentication_data);
+    }
+
+    #[test]
+    fn auth_decode_failure_duplicate_reason_string() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            reason_string : Some("Derp".to_string()),
+            ..Default::default()
+        });
+
+        let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // increase total remaining length by 4
+            clone[1] += 5;
+
+            // increase property section length by 4
+            clone[3] += 5;
+
+            // add the duplicate property
+            clone.push(PROPERTY_KEY_REASON_STRING);
+            clone.push(2);
+            clone.push(0);
+            clone.push(72); // 'H'
+            clone.push(105); // 'i'
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Auth(packet), duplicate_reason_string);
+    }
+
     use crate::validate::testing::*;
 
     #[test]
@@ -273,6 +391,14 @@ mod tests {
     fn auth_validate_failure_authentication_method_length() {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_method = Some("a".repeat(65537));
+
+        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_authentication_method_missing() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.authentication_method = None;
 
         assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
     }
