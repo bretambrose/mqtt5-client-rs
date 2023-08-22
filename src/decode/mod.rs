@@ -314,7 +314,7 @@ pub(crate) mod testing {
         return true;
     }
 
-    fn encode_packet_for_test(packet: &MqttPacket) -> Vec<u8> {
+    pub(crate) fn encode_packet_for_test(packet: &MqttPacket) -> Vec<u8> {
         let mut encoder = Encoder::new();
 
         let mut encoded_buffer = Vec::with_capacity( 128 * 1024);
@@ -332,8 +332,13 @@ pub(crate) mod testing {
         encoded_buffer
     }
 
-    pub(crate) fn do_fixed_header_flag_decode_failure_test(packet: &MqttPacket, flags_mask: u8) {
-        let mut good_encoded_bytes = encode_packet_for_test(packet);
+    /*
+     * verifies that the packet encodes/decodes correctly, but applying the supplied mutator
+     * to the encoding leads to a decode failure.  Useful to verify specification requirements
+     * with respect to decode failures like reserved bits, headers, duplicate properties, etc...
+     */
+    pub(crate) fn do_mutated_decode_failure_test<F>(packet: &MqttPacket, mutator: F ) where F : Fn(&[u8]) -> Vec<u8> {
+        let good_encoded_bytes = encode_packet_for_test(packet);
 
         // for clarity, verify that the packet is decodable as is
         let (packet_sender, packet_receiver) = std::sync::mpsc::channel();
@@ -351,19 +356,27 @@ pub(crate) mod testing {
         let receive_result = packet_receiver.try_recv().unwrap();
         assert_eq!(*packet, receive_result);
 
-        // make sure we're actually flipping some bits
-        assert_ne!(flags_mask & good_encoded_bytes[0], flags_mask);
+        let bad_encoded_bytes = mutator(good_encoded_bytes.as_slice());
 
-        // mess with the fixed header flags
-        good_encoded_bytes[0] |= flags_mask;
+        assert_ne!(good_encoded_bytes.as_slice(), bad_encoded_bytes.as_slice());
 
         // verify that the packet now fails to decode
         decoder.reset_for_new_connection();
 
-        let decode_result = decoder.decode_bytes(good_encoded_bytes.as_slice());
+        let decode_result = decoder.decode_bytes(bad_encoded_bytes.as_slice());
         assert_eq!(decode_result, Err(Mqtt5Error::MalformedPacket));
 
         let receive_result = packet_receiver.try_recv();
         assert!(receive_result.is_err());
+    }
+
+    pub(crate) fn do_fixed_header_flag_decode_failure_test(packet: &MqttPacket, flags_mask: u8) {
+        let reserved_mutator = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+            clone[0] |= flags_mask;
+            clone
+        };
+
+        do_mutated_decode_failure_test(packet, reserved_mutator);
     }
 }

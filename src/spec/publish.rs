@@ -437,4 +437,44 @@ mod tests {
             assert!(do_single_encode_decode_test(&packet, 1024, *decode_size, 5));
         }
     }
+
+    #[test]
+    fn publish_decode_failure_duplicate_property() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            message_expiry_interval_seconds: Some(1),
+            ..Default::default()
+        });
+
+        let add_duplicate_property = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // manually modify the encoding to include a duplicate copy of the
+            // message_expiry_interval_seconds property
+
+            // first, add 5 to encoded total remaining length.  The packet is small enough that
+            // the VLI encoding won't need more bytes.
+            clone[1] += 5;
+
+            // next, add 5 to the property section length.  This is awkward because we have to skip
+            // the topic.
+            // Index = 2 + 2 + topic.len + 2(packet id) = 17
+            clone[17] += 5;
+
+            // finally, append the 5 bytes for the duplicate property to the end.  This is valid
+            // since we gave the publish no payload and so we're still in the property section at
+            // the very end of the buffer.
+            // We don't care about the actual value of the property, but just make it 1.
+            clone.push(PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL);
+            clone.push(2);
+            clone.push(0);
+            clone.push(0);
+            clone.push(0);
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), add_duplicate_property);
+    }
 }
