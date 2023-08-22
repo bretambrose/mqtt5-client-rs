@@ -6,6 +6,7 @@
 use crate::spec::*;
 use crate::*;
 use crate::spec::auth::*;
+use crate::spec::connack::*;
 use crate::client::*;
 use crate::alias::*;
 
@@ -54,6 +55,7 @@ pub(crate) fn validate_user_properties(properties: &Vec<UserProperty>) -> Mqtt5R
 pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_fixed(auth) }
+        MqttPacket::Connack(connack) => { validate_connack_packet_fixed(connack) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -67,6 +69,7 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
 pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &ValidationContext) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
+        MqttPacket::Connack(connack) => { validate_connack_packet_context_specific(connack, context) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }

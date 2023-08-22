@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_validate_failure_user_properties() {
+    fn auth_validate_failure_invalid_user_properties() {
         let mut packet = create_all_properties_auth_packet();
         packet.user_properties = Some(create_invalid_user_properties());
 

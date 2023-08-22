@@ -63,6 +63,7 @@ pub enum Mqtt5Error {
     OutboundTopicAliasInvalid,
     UserPropertyValidation,
     AuthPacketValidation,
+    ConnackPacketValidation,
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
