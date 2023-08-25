@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -46,6 +48,25 @@ define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, Pubr
 
 define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket);
 define_ack_packet_decode_function!(decode_pubrec_packet, PubrecPacket, PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
+
+pub(crate) fn validate_pubrec_packet_fixed(packet: &PubrecPacket) -> Mqtt5Result<()> {
+
+    validate_optional_string_length!(reason, &packet.reason_string, PubrecPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, PubrecPacketValidation);
+
+    Ok(())
+}
+
+pub(crate) fn validate_pubrec_packet_context_specific(packet: &PubrecPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    // validate packet size against the negotiated maximum
+    let (total_remaining_length, _) = compute_pubrec_packet_length_properties(packet)?;
+    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::PubrecPacketValidation);
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -103,10 +124,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
 
-    #[test]
-    fn pubrec_round_trip_encode_decode_failure_with_props() {
-
-        let packet = Box::new(PubrecPacket {
+    fn create_pubrec_with_all_properties() -> Box<PubrecPacket> {
+        Box::new(PubrecPacket {
             packet_id: 125,
             reason_code: PubrecReasonCode::UnspecifiedError,
             reason_string: Some("Qos2?  Get that nonsense outta here.".to_string()),
@@ -114,19 +133,109 @@ mod tests {
                 UserProperty{name: "pubwreck1".to_string(), value: "krabbypatty".to_string()},
                 UserProperty{name: "pubwreck2".to_string(), value: "spongebob".to_string()},
             ))
-        });
+        })
+    }
+
+    #[test]
+    fn pubrec_round_trip_encode_decode_failure_with_props() {
+
+        let packet = create_pubrec_with_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrec(packet)));
     }
 
     #[test]
     fn pubrec_decode_failure_bad_fixed_header() {
-        let packet = Box::new(PubrecPacket {
-            packet_id: 8191,
-            reason_code: PubrecReasonCode::PacketIdentifierInUse,
-            ..Default::default()
-        });
+        let packet = create_pubrec_with_all_properties();
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Pubrec(packet), 12);
+    }
+
+    #[test]
+    fn pubrec_decode_failure_bad_reason_code() {
+        let packet = create_pubrec_with_all_properties();
+
+        let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // for acks, the reason code is in byte 4
+            clone[4] = 3;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Pubrec(packet), corrupt_reason_code);
+    }
+
+    #[test]
+    fn pubrec_decode_failure_duplicate_reason_string() {
+        let packet = create_pubrec_with_all_properties();
+
+        let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // increase total remaining length
+            clone[1] += 5;
+
+            // increase property section length
+            clone[5] += 5;
+
+            // add the duplicate property
+            clone.push(PROPERTY_KEY_REASON_STRING);
+            clone.push(0);
+            clone.push(2);
+            clone.push(67);
+            clone.push(67);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Pubrec(packet), duplicate_reason_string);
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn pubrec_validate_success() {
+        let packet = create_pubrec_with_all_properties();
+
+        assert_eq!(validate_pubrec_packet_fixed(&packet), Ok(()));
+    }
+
+    #[test]
+    fn pubrec_validate_failure_reason_string_length() {
+        let mut packet = create_pubrec_with_all_properties();
+        packet.reason_string = Some("A".repeat(128 * 1024).to_string());
+
+        assert_eq!(validate_pubrec_packet_fixed(&packet), Err(Mqtt5Error::PubrecPacketValidation));
+    }
+
+    #[test]
+    fn pubrec_validate_failure_invalid_user_properties() {
+        let mut packet = create_pubrec_with_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_pubrec_packet_fixed(&packet), Err(Mqtt5Error::PubrecPacketValidation));
+    }
+
+    #[test]
+    fn pubrec_validate_success_context_specific() {
+        let packet = create_pubrec_with_all_properties();
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_pubrec_packet_context_specific(&packet, &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn pubrec_validate_failure_context_packet_size() {
+        let packet = create_pubrec_with_all_properties();
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_packet_size_to_server = 10;
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_pubrec_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::PubrecPacketValidation));
     }
 }

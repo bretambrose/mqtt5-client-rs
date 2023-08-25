@@ -167,13 +167,6 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
 
 pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqtt5Result<()> {
 
-    // validate packet size against the theoretical maximum since this could be used
-    // before the connack establishes a different bound
-    let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
-    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
-        return Err(Mqtt5Error::DisconnectPacketValidation);
-    }
-
     validate_optional_string_length!(reason_string, &packet.reason_string, DisconnectPacketValidation);
     validate_user_properties!(properties, &packet.user_properties, DisconnectPacketValidation);
     validate_optional_string_length!(server_reference, &packet.server_reference, DisconnectPacketValidation);
@@ -191,7 +184,7 @@ pub(crate) fn validate_disconnect_packet_context_specific(packet: &DisconnectPac
 
     /* protocol error for the server to send us a session expiry interval property */
     if !context.is_outbound {
-        if let Some(session_expiry_interval) = packet.session_expiry_interval_seconds {
+        if packet.session_expiry_interval_seconds.is_some() {
             return Err(Mqtt5Error::DisconnectPacketValidation);
         }
     } else {
@@ -380,6 +373,13 @@ mod tests {
     use crate::validate::testing::*;
 
     #[test]
+    fn disconnect_validate_success() {
+        let packet = create_disconnect_packet_all_properties();
+
+        assert_eq!(validate_disconnect_packet_fixed(&packet), Ok(()));
+    }
+
+    #[test]
     fn disconnect_validate_failure_reason_string_length() {
         let mut packet = create_disconnect_packet_all_properties();
         packet.reason_string = Some("A".repeat(128 * 1024).to_string());
@@ -404,6 +404,17 @@ mod tests {
     }
 
     #[test]
+    fn disconnect_validate_success_context_specific() {
+        let mut packet = create_disconnect_packet_all_properties();
+        packet.session_expiry_interval_seconds = None;
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Ok(()));
+    }
+
+    #[test]
     fn disconnect_validate_failure_context_packet_size() {
         let packet = create_disconnect_packet_all_properties();
 
@@ -418,7 +429,7 @@ mod tests {
     fn disconnect_validate_failure_context_session_expiry_interval_set_by_server() {
         let packet = create_disconnect_packet_all_properties();
 
-        let mut test_validation_context = create_pinned_validation_context();
+        let test_validation_context = create_pinned_validation_context();
         let mut validation_context = create_validation_context_from_pinned(&test_validation_context);
         validation_context.is_outbound = false;
 

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-use crate::spec::*;
 use crate::*;
+use crate::spec::*;
 
 pub const PACKET_TYPE_CONNECT: u8 = 1;
 pub const PACKET_TYPE_CONNACK: u8 = 2;
@@ -243,3 +243,4 @@ pub(crate) fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<Retai
         _ => { Err(Mqtt5Error::MalformedPacket) }
     }
 }
+

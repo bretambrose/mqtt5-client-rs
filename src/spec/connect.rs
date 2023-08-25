@@ -545,8 +545,8 @@ pub(crate) fn validate_connect_packet_fixed(packet: &ConnectPacket) -> Mqtt5Resu
     Ok(())
 }
 
-pub(crate) fn validate_connect_packet_context_specific(packet: &ConnectPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-    // there is no context yet
+pub(crate) fn validate_connect_packet_context_specific(_: &ConnectPacket, _: &ValidationContext) -> Mqtt5Result<()> {
+    // there is no context yet, nothing to do for connect
 
     Ok(())
 }
@@ -1326,7 +1326,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_content_type_length() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().content_type = Some("NotJson".repeat(10000));
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_response_topic_length() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().response_topic = Some("NotJson".repeat(10000));
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
@@ -1344,7 +1344,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_correlation_data_length() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().correlation_data = Some(vec![0; 80 * 1024]);
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_invalid_user_properties() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().user_properties = Some(create_invalid_user_properties());
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
@@ -1362,7 +1362,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_topic_length() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().topic = "Terrible".repeat(10000);
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
@@ -1371,7 +1371,7 @@ mod tests {
     #[test]
     fn connect_validate_failure_will_payload_length() {
         let mut packet = create_connect_packet_all_properties();
-        let mut will = packet.will.as_mut();
+        let will = packet.will.as_mut();
         will.unwrap().payload = Some(vec![0; 80 * 1024]);
 
         assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));

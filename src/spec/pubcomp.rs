@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -46,6 +48,25 @@ define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, Pu
 
 define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket);
 define_ack_packet_decode_function!(decode_pubcomp_packet, PubcompPacket, PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
+
+pub(crate) fn validate_pubcomp_packet_fixed(packet: &PubcompPacket) -> Mqtt5Result<()> {
+
+    validate_optional_string_length!(reason, &packet.reason_string, PubcompPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, PubcompPacketValidation);
+
+    Ok(())
+}
+
+pub(crate) fn validate_pubcomp_packet_context_specific(packet: &PubcompPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    // validate packet size against the negotiated maximum
+    let (total_remaining_length, _) = compute_pubcomp_packet_length_properties(packet)?;
+    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::PubcompPacketValidation);
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -103,10 +124,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
 
-    #[test]
-    fn pubcomp_round_trip_encode_decode_failure_with_props() {
-
-        let packet = Box::new(PubcompPacket {
+    fn create_pubcomp_with_all_properties() -> Box<PubcompPacket> {
+        Box::new(PubcompPacket {
             packet_id: 1500,
             reason_code: PubcompReasonCode::PacketIdentifierNotFound,
             reason_string: Some("I tried so hard, and got so far, but in the end, we totally face-planted".to_string()),
@@ -114,19 +133,109 @@ mod tests {
                 UserProperty{name: "uf".to_string(), value: "dah".to_string()},
                 UserProperty{name: "velkomen".to_string(), value: "stanwood".to_string()},
             ))
-        });
+        })
+    }
+
+    #[test]
+    fn pubcomp_round_trip_encode_decode_failure_with_props() {
+
+        let packet = create_pubcomp_with_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubcomp(packet)));
     }
 
     #[test]
     fn pubcomp_decode_failure_bad_fixed_header() {
-        let packet = Box::new(PubcompPacket {
-            packet_id: 4095,
-            reason_code: PubcompReasonCode::PacketIdentifierNotFound,
-            ..Default::default()
-        });
+        let packet = create_pubcomp_with_all_properties();
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Pubcomp(packet), 10);
+    }
+
+    #[test]
+    fn pubcomp_decode_failure_bad_reason_code() {
+        let packet = create_pubcomp_with_all_properties();
+
+        let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // for acks, the reason code is in byte 4
+            clone[4] = 232;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Pubcomp(packet), corrupt_reason_code);
+    }
+
+    #[test]
+    fn pubcomp_decode_failure_duplicate_reason_string() {
+        let packet = create_pubcomp_with_all_properties();
+
+        let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // increase total remaining length
+            clone[1] += 5;
+
+            // increase property section length
+            clone[5] += 5;
+
+            // add the duplicate property
+            clone.push(PROPERTY_KEY_REASON_STRING);
+            clone.push(0);
+            clone.push(2);
+            clone.push(67);
+            clone.push(67);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Pubcomp(packet), duplicate_reason_string);
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn pubcomp_validate_success() {
+        let packet = create_pubcomp_with_all_properties();
+
+        assert_eq!(validate_pubcomp_packet_fixed(&packet), Ok(()));
+    }
+
+    #[test]
+    fn pubcomp_validate_failure_reason_string_length() {
+        let mut packet = create_pubcomp_with_all_properties();
+        packet.reason_string = Some("A".repeat(128 * 1024).to_string());
+
+        assert_eq!(validate_pubcomp_packet_fixed(&packet), Err(Mqtt5Error::PubcompPacketValidation));
+    }
+
+    #[test]
+    fn pubcomp_validate_failure_invalid_user_properties() {
+        let mut packet = create_pubcomp_with_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_pubcomp_packet_fixed(&packet), Err(Mqtt5Error::PubcompPacketValidation));
+    }
+
+    #[test]
+    fn pubcomp_validate_success_context_specific() {
+        let packet = create_pubcomp_with_all_properties();
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_pubcomp_packet_context_specific(&packet, &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn pubcomp_validate_failure_context_packet_size() {
+        let packet = create_pubcomp_with_all_properties();
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_packet_size_to_server = 10;
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_pubcomp_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::PubcompPacketValidation));
     }
 }

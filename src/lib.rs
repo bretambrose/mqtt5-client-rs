@@ -66,6 +66,10 @@ pub enum Mqtt5Error {
     ConnackPacketValidation,
     ConnectPacketValidation,
     DisconnectPacketValidation,
+    PubackPacketValidation,
+    PubcompPacketValidation,
+    PubrecPacketValidation,
+    PubrelPacketValidation
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;

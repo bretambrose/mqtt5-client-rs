@@ -56,4 +56,23 @@ mod tests {
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Pingreq(packet), 1);
     }
+
+    #[test]
+    fn pingreq_decode_failure_bad_length() {
+        let packet = Box::new(PingreqPacket {});
+
+        let extend_length = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // for this packet, the reason code is in byte 2
+            clone[1] = 2;
+            clone.push(5);
+            clone.push(6);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Pingreq(packet), extend_length);
+    }
+
 }

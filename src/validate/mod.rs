@@ -10,6 +10,11 @@ use crate::*;
 use crate::spec::auth::*;
 use crate::spec::connack::*;
 use crate::spec::connect::*;
+use crate::spec::disconnect::*;
+use crate::spec::puback::*;
+use crate::spec::pubcomp::*;
+use crate::spec::pubrec::*;
+use crate::spec::pubrel::*;
 use crate::client::*;
 use crate::alias::*;
 
@@ -63,6 +68,13 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
         MqttPacket::Auth(auth) => { validate_auth_packet_fixed(auth) }
         MqttPacket::Connack(connack) => { validate_connack_packet_fixed(connack) }
         MqttPacket::Connect(connect) => { validate_connect_packet_fixed(connect) }
+        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_fixed(disconnect) }
+        MqttPacket::Pingreq(_) => { Ok(()) }
+        MqttPacket::Pingresp(_) => { Ok(()) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_fixed(puback) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_fixed(pubcomp) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_fixed(pubrec) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_fixed(pubrel) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -78,6 +90,13 @@ pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &Va
         MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
         MqttPacket::Connack(connack) => { validate_connack_packet_context_specific(connack, context) }
         MqttPacket::Connect(connect) => { validate_connect_packet_context_specific(connect, context) }
+        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_context_specific(disconnect, context) }
+        MqttPacket::Pingreq(_) => { Ok(()) }
+        MqttPacket::Pingresp(_) => { Ok(()) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_context_specific(puback, context) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_context_specific(pubcomp, context) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_context_specific(pubrec, context) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_context_specific(pubrel, context) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
