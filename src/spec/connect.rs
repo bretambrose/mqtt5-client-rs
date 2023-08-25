@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -430,13 +432,13 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         _ => { return Err(Mqtt5Error::MalformedPacket); }
     }
 
-    /*
-    if protocol_bytes == CONNECT_HEADER_PROTOCOL_BYTES.as_slice() {
-        return Err(Mqtt5Error::ProtocolError);
-    }*/
-
     let mut connect_flags : u8 = 0;
     mutable_body = decode_u8(mutable_body, &mut connect_flags)?;
+
+    // if the reserved bit is set, that's fatal
+    if (connect_flags & 0x01) != 0 {
+        return Err(Mqtt5Error::MalformedPacket);
+    }
 
     packet.clean_start = (connect_flags & CONNECT_PACKET_CLEAN_START_FLAG_MASK) != 0;
     let has_will = (connect_flags & CONNECT_PACKET_HAS_WILL_FLAG_MASK) != 0;
@@ -507,6 +509,46 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
     }
 
     Ok(packet)
+}
+
+pub(crate) fn validate_connect_packet_fixed(packet: &ConnectPacket) -> Mqtt5Result<()> {
+
+    // validate packet size against the theoretical maximum only
+    let (total_remaining_length, _, _) = compute_connect_packet_length_properties(packet)?;
+    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
+        return Err(Mqtt5Error::ConnectPacketValidation);
+    }
+
+    validate_optional_string_length!(client_id, &packet.client_id, ConnectPacketValidation);
+    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnectPacketValidation);
+    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size_bytes, ConnectPacketValidation);
+
+    if packet.authentication_data.is_some() && packet.authentication_method.is_none() {
+        return Err(Mqtt5Error::ConnectPacketValidation);
+    }
+
+    validate_optional_string_length!(authentication_method, &packet.authentication_method, ConnectPacketValidation);
+    validate_optional_binary_length!(authentication_data, &packet.authentication_data, ConnectPacketValidation);
+    validate_optional_string_length!(username, &packet.username, ConnectPacketValidation);
+    validate_optional_binary_length!(password, &packet.password, ConnectPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, ConnectPacketValidation);
+
+    if let Some(will) = &packet.will {
+        validate_optional_string_length!(content_type, &will.content_type, ConnectPacketValidation);
+        validate_optional_string_length!(response_topic, &will.response_topic, ConnectPacketValidation);
+        validate_optional_binary_length!(correlation_data, &will.correlation_data, ConnectPacketValidation);
+        validate_user_properties!(will_properties, &will.user_properties, ConnectPacketValidation);
+        validate_string_length!(will.topic, ConnectPacketValidation);
+        validate_optional_binary_length!(will_payload, &will.payload, ConnectPacketValidation);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_connect_packet_context_specific(packet: &ConnectPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+    // there is no context yet
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -658,9 +700,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
-    #[test]
-    fn connect_round_trip_encode_decode_everything() {
-        let packet = Box::new(ConnectPacket {
+    fn create_connect_packet_all_properties() -> Box<ConnectPacket> {
+        Box::new(ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("NotAHaxxor".to_string()),
@@ -693,9 +734,23 @@ mod tests {
                 ..Default::default()
             }),
             username: Some("Gluten-free armada".to_string()),
-            password: Some("PancakeRobot".as_bytes().to_vec()),
+            password: Some("PancakeRobot X".as_bytes().to_vec()),
             ..Default::default()
-        });
+        })
+    }
+
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH : usize = 259;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX : usize = 90;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX : usize = 13;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_REQUEST_RESPONSE_INFORMATION_VALUE_INDEX : usize = 31;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_REQUEST_PROBLEM_INFORMATION_VALUE_INDEX : usize = 33;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX : usize = 102;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PAYLOAD_FORMAT_INDICATOR_VALUE_INDEX : usize = 109;
+    const CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX : usize = 177;
+
+    #[test]
+    fn connect_round_trip_encode_decode_everything() {
+        let packet  = create_connect_packet_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
@@ -713,5 +768,612 @@ mod tests {
         });
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Connect(packet), 6);
+    }
+
+    #[test]
+    fn connect_decode_failure_bad_protocol_name() {
+        let packet = create_connect_packet_all_properties();
+
+        let lets_do_http = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[5] = 72;
+            clone[6] = 84;
+            clone[7] = 84;
+            clone[8] = 80;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), lets_do_http);
+    }
+
+    #[test]
+    fn connect_decode_failure_bad_protocol_version() {
+        let packet = create_connect_packet_all_properties();
+
+        let lets_do_mqtt3 = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[9] = 3;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), lets_do_mqtt3);
+    }
+
+    #[test]
+    fn connect_decode_failure_bad_reserved_flags() {
+        let packet = create_connect_packet_all_properties();
+
+        let lets_do_mqtt3 = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[10] |= 0x01; // set the reserved bit of the connect flags
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), lets_do_mqtt3);
+    }
+
+    #[test]
+    fn connect_decode_failure_bad_will_qos() {
+        let packet = create_connect_packet_all_properties();
+
+        let corrupt_will_qos = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[10] |= 0x18; // will qos "3"
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), corrupt_will_qos);
+    }
+
+    #[test]
+    fn connect_decode_failure_session_expiry_interval_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_session_expiry_interval = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_SESSION_EXPIRY_INTERVAL);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_session_expiry_interval);
+    }
+
+    #[test]
+    fn connect_decode_failure_receive_maximum_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_receive_maximum = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 3;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 3;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_RECEIVE_MAXIMUM);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_receive_maximum);
+    }
+
+    #[test]
+    fn connect_decode_failure_maximum_packet_size_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_maximum_packet_size = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 2);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 3);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 4);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_MAXIMUM_PACKET_SIZE);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_maximum_packet_size);
+    }
+
+    #[test]
+    fn connect_decode_failure_topic_alias_maximum_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_topic_alias_maximum = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 3;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 3;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_TOPIC_ALIAS_MAXIMUM);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_topic_alias_maximum);
+    }
+
+    #[test]
+    fn connect_decode_failure_request_response_information_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_request_response_information = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 2;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 2;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_REQUEST_RESPONSE_INFORMATION);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_request_response_information);
+    }
+
+    #[test]
+    fn connect_decode_failure_request_response_information_invalid() {
+        let packet = create_connect_packet_all_properties();
+
+        let invalidate_request_response_information = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_REQUEST_RESPONSE_INFORMATION_VALUE_INDEX] = 2;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), invalidate_request_response_information);
+    }
+
+    #[test]
+    fn connect_decode_failure_request_problem_information_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_request_problem_information = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 2;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 2;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_REQUEST_PROBLEM_INFORMATION);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_request_problem_information);
+    }
+
+    #[test]
+    fn connect_decode_failure_request_problem_information_invalid() {
+        let packet = create_connect_packet_all_properties();
+
+        let invalidate_request_problem_information = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_REQUEST_PROBLEM_INFORMATION_VALUE_INDEX] = 2;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), invalidate_request_problem_information);
+    }
+
+    #[test]
+    fn connect_decode_failure_authentication_method_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_authentication_method = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 65);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 65);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 2);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_AUTHENTICATION_METHOD);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_authentication_method);
+    }
+
+    #[test]
+    fn connect_decode_failure_authentication_data_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_authentication_data = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 4;
+
+            // bump connect property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_CONNECT_PROPERTY_LENGTH_INDEX] += 4;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 255);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_CLIENT_ID_INDEX, PROPERTY_KEY_AUTHENTICATION_DATA);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_authentication_data);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_delay_interval_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_delay_interval = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_WILL_DELAY_INTERVAL);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_delay_interval);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_payload_format_indicator_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_payload_format_indicator = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 2;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 2;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_payload_format_indicator);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_message_expiry_interval_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_message_expiry_interval = |bytes: &[u8]| -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 1);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 2);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 3);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 4);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_message_expiry_interval);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_content_type_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_content_type = |bytes: &[u8]| -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 5;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 65);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 66);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 2);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_CONTENT_TYPE);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_content_type);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_response_topic_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_response_topic = |bytes: &[u8]| -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 6;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 6;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 65);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 47);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 66);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 3);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_RESPONSE_TOPIC);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_response_topic);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_correlation_data_duplicate() {
+        let packet = create_connect_packet_all_properties();
+
+        let duplicate_will_correlation_data = |bytes: &[u8]| -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            // bump total remaining length
+            clone[1] += 6;
+
+            // bump will property length
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PROPERTY_LENGTH_INDEX] += 6;
+
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 4);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 3);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 2);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 3);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, 0);
+            clone.insert(CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_TOPIC_INDEX, PROPERTY_KEY_CORRELATION_DATA);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), duplicate_will_correlation_data);
+    }
+
+    #[test]
+    fn connect_decode_failure_will_payload_format_indicator_invalid() {
+        let packet = create_connect_packet_all_properties();
+
+        let invalidate_will_payload_format_indicator = | bytes: &[u8] | -> Vec<u8> {
+            assert_eq!(bytes.len(), CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH); // it's critical this packet stays stable
+            let mut clone = bytes.to_vec();
+
+            clone[CONNECT_PACKET_ALL_PROPERTIES_TEST_WILL_PAYLOAD_FORMAT_INDICATOR_VALUE_INDEX] = 254;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Connect(packet), invalidate_will_payload_format_indicator);
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn connect_validate_success_all_properties() {
+        let packet = create_connect_packet_all_properties();
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Ok(()));
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_connect_packet_context_specific(&packet, &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn connect_validate_failure_client_id_length() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.client_id = Some("noooooo".repeat(10000));
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_receive_maximum_zero() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.receive_maximum = Some(0);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_maximum_packet_size_zero() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.maximum_packet_size_bytes = Some(0);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_auth_data_no_auth_method() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.authentication_method = None;
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_authentication_method_length() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.authentication_method = Some("hello".repeat(20000));
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_authentication_data_length() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.authentication_data = Some(vec![0; 70 * 1024]);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_username_length() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.username = Some("ladeeda".repeat(20000));
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_password_length() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.password = Some(vec![0; 80 * 1024]);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_invalid_user_properties() {
+        let mut packet = create_connect_packet_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_content_type_length() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().content_type = Some("NotJson".repeat(10000));
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_response_topic_length() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().response_topic = Some("NotJson".repeat(10000));
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_correlation_data_length() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().correlation_data = Some(vec![0; 80 * 1024]);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_invalid_user_properties() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_topic_length() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().topic = "Terrible".repeat(10000);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
+    }
+
+    #[test]
+    fn connect_validate_failure_will_payload_length() {
+        let mut packet = create_connect_packet_all_properties();
+        let mut will = packet.will.as_mut();
+        will.unwrap().payload = Some(vec![0; 80 * 1024]);
+
+        assert_eq!(validate_connect_packet_fixed(&packet), Err(Mqtt5Error::ConnectPacketValidation));
     }
 }

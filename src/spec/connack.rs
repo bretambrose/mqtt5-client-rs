@@ -10,6 +10,7 @@ use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -314,11 +315,7 @@ pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Resu
         return Err(Mqtt5Error::ConnackPacketValidation);
     }
 
-    if let Some(receive_maximum) = packet.receive_maximum {
-        if receive_maximum == 0 {
-            return Err(Mqtt5Error::ConnackPacketValidation);
-        }
-    }
+    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnackPacketValidation);
 
     if let Some(maximum_qos) = packet.maximum_qos {
         if maximum_qos == QualityOfService::ExactlyOnce {
@@ -326,17 +323,8 @@ pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Resu
         }
     }
 
-    if let Some(maximum_packet_size) = packet.maximum_packet_size {
-        if maximum_packet_size == 0 {
-            return Err(Mqtt5Error::ConnackPacketValidation);
-        }
-    }
-
-    if let Some(properties) = &packet.user_properties {
-        if let Err(_) = validate_user_properties(&properties) {
-            return Err(Mqtt5Error::ConnackPacketValidation);
-        }
-    }
+    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, ConnackPacketValidation);
 
     Ok(())
 }

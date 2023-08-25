@@ -7,9 +7,10 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
-use crate::validate::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -169,33 +170,16 @@ pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()>
         return Err(Mqtt5Error::AuthPacketValidation);
     }
 
-    if let Some(method) = &packet.authentication_method {
-        if method.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-            return Err(Mqtt5Error::AuthPacketValidation);
-        }
-    } else {
+    if packet.authentication_method.is_none() {
         // while optional from an encode/decode perspective, method is required from a protocol
         // perspective
         return Err(Mqtt5Error::AuthPacketValidation);
     }
 
-    if let Some(data) = &packet.authentication_data {
-        if data.len() > MAXIMUM_BINARY_PROPERTY_LENGTH {
-            return Err(Mqtt5Error::AuthPacketValidation);
-        }
-    }
-
-    if let Some(reason) = &packet.reason_string {
-        if reason.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-            return Err(Mqtt5Error::AuthPacketValidation);
-        }
-    }
-
-    if let Some(properties) = &packet.user_properties {
-        if let Err(_) = validate_user_properties(&properties) {
-            return Err(Mqtt5Error::AuthPacketValidation);
-        }
-    }
+    validate_optional_string_length!(authentication_method, &packet.authentication_method, AuthPacketValidation);
+    validate_optional_binary_length!(authentication_data, &packet.authentication_data, AuthPacketValidation);
+    validate_optional_string_length!(reason_string, &packet.reason_string, AuthPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, AuthPacketValidation);
 
     Ok(())
 }

@@ -14,6 +14,7 @@ use std::pin::Pin;
 use tokio::runtime;
 use tokio::sync::oneshot;
 
+use crate::spec::connect::ConnectPacket;
 use crate::spec::puback::PubackPacket;
 use crate::spec::pubrec::PubrecPacket;
 use crate::spec::pubcomp::PubcompPacket;
@@ -110,7 +111,9 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
 }
 
 #[derive(Default)]
-pub struct Mqtt5ClientOptions {}
+pub struct Mqtt5ClientOptions {
+    pub connect : Option<Box<ConnectPacket>>
+}
 
 pub struct Mqtt5Client {
     operation_sender: tokio::sync::mpsc::Sender<OperationOptions>,

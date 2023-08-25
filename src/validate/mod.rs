@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub(crate) mod utils;
+
 use crate::spec::*;
 use crate::*;
 use crate::spec::auth::*;
 use crate::spec::connack::*;
+use crate::spec::connect::*;
 use crate::client::*;
 use crate::alias::*;
 
@@ -24,7 +27,10 @@ pub(crate) struct ValidationContext<'a> {
     pub inbound_alias_resolver: &'a InboundAliasResolver,
 
     // session_expiry_interval for disconnect constraints
-    pub client_config: &'a Mqtt5ClientOptions
+    pub client_config: &'a Mqtt5ClientOptions,
+
+    // true if this is destined for a broker, false if it is from a broker
+    pub is_outbound: bool
 }
 
 fn validate_user_property(property: &UserProperty) -> Mqtt5Result<()> {
@@ -56,6 +62,7 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_fixed(auth) }
         MqttPacket::Connack(connack) => { validate_connack_packet_fixed(connack) }
+        MqttPacket::Connect(connect) => { validate_connect_packet_fixed(connect) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -70,6 +77,7 @@ pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &Va
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
         MqttPacket::Connack(connack) => { validate_connack_packet_context_specific(connack, context) }
+        MqttPacket::Connect(connect) => { validate_connect_packet_context_specific(connect, context) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -84,7 +92,7 @@ pub(crate) mod testing {
     pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
         inbound_resolver : InboundAliasResolver,
-        config : Mqtt5ClientOptions,
+        pub config : Mqtt5ClientOptions,
     }
 
     pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
@@ -104,6 +112,7 @@ pub(crate) mod testing {
             negotiated_settings : &pinned.settings,
             inbound_alias_resolver : &pinned.inbound_resolver,
             client_config : &pinned.config,
+            is_outbound : true,
         }
     }
 
