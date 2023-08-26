@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 use crate::alias::OutboundAliasResolution;
@@ -141,7 +143,7 @@ fn compute_publish_packet_length_properties(packet: &PublishPacket, alias_resolu
 
     /* Topic name */
     total_remaining_length += 2;
-    if alias_resolution.send_topic {
+    if !alias_resolution.skip_topic {
         total_remaining_length += packet.topic.len();
     }
 
@@ -221,20 +223,21 @@ fn get_publish_packet_payload(packet: &MqttPacket) -> &[u8] {
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, context: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
-    let resolution = context.outbound_alias_resolver.resolve_topic_alias(&packet.topic_alias, &packet.topic);
+pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, context: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
 
-    let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet, &resolution)?;
+    let resolution = &context.outbound_alias_resolution;
+
+    let (total_remaining_length, publish_property_length) = compute_publish_packet_length_properties(packet, resolution)?;
 
     encode_integral_expression!(steps, Uint8, compute_publish_fixed_header_first_byte(packet));
     encode_integral_expression!(steps, Vli, total_remaining_length);
 
-    if resolution.send_topic {
-        // Add the topic since the outbound alias resolution did not use an existing binding
-        encode_length_prefixed_string!(steps, get_publish_packet_topic, packet.topic);
-    } else {
+    if resolution.skip_topic {
         // empty topic since an existing alias binding was used.
         encode_integral_expression!(steps, Uint16, 0);
+    } else {
+        // Add the topic since the outbound alias resolution did not use an existing binding
+        encode_length_prefixed_string!(steps, get_publish_packet_topic, packet.topic);
     }
 
     if packet.qos != QualityOfService::AtMostOnce {
@@ -336,6 +339,20 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
     Ok(packet)
 }
+
+pub(crate) fn validate_publish_packet_fixed(packet: &PublishPacket) -> Mqtt5Result<()> {
+
+    validate_optional_string_length!(content_type, &packet.content_type, PublishPacketValidation);
+    validate_user_properties!(properties, &packet.user_properties, PublishPacketValidation);
+
+    Ok(())
+}
+
+pub(crate) fn validate_publish_packet_context_specific(packet: &PublishPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -439,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_decode_failure_duplicate_property() {
+    fn publish_decode_failure_message_expiry_interval_duplicate() {
 
         let packet = Box::new(PublishPacket {
             topic: "hello/world".to_string(),
@@ -448,25 +465,18 @@ mod tests {
             ..Default::default()
         });
 
-        let add_duplicate_property = | bytes: &[u8] | -> Vec<u8> {
+        let duplicate_message_expiry_interval = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
 
-            // manually modify the encoding to include a duplicate copy of the
-            // message_expiry_interval_seconds property
-
-            // first, add 5 to encoded total remaining length.  The packet is small enough that
-            // the VLI encoding won't need more bytes.
             clone[1] += 5;
 
-            // next, add 5 to the property section length.  This is awkward because we have to skip
-            // the topic.
             // Index = 2 + 2 + topic.len + 2(packet id) = 17
             clone[17] += 5;
 
-            // finally, append the 5 bytes for the duplicate property to the end.  This is valid
+            // finally, append the bytes for the duplicate property to the end.  This is valid
             // since we gave the publish no payload and so we're still in the property section at
             // the very end of the buffer.
-            // We don't care about the actual value of the property, but just make it 1.
+            // We don't care about the actual value of the property.
             clone.push(PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL);
             clone.push(2);
             clone.push(0);
@@ -475,6 +485,212 @@ mod tests {
             clone
         };
 
-        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), add_duplicate_property);
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_message_expiry_interval);
     }
+
+    #[test]
+    fn publish_decode_failure_invalid_qos() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            ..Default::default()
+        });
+
+        let invalidate_qos = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[0] |= 6; // Qos "3"
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), invalidate_qos);
+    }
+
+    const PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX : usize = 17;
+
+    #[test]
+    fn publish_decode_failure_invalid_payload_format_indicator() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            payload_format : Some(PayloadFormatIndicator::Utf8),
+            ..Default::default()
+        });
+
+        let invalidate_pfi = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX + 2] = 2;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), invalidate_pfi);
+    }
+
+    #[test]
+    fn publish_decode_failure_duplicate_payload_format_indicator() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            payload_format : Some(PayloadFormatIndicator::Utf8),
+            ..Default::default()
+        });
+
+        let duplicate_pfi = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 2;
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX] += 2;
+
+            clone.push(PROPERTY_KEY_PAYLOAD_FORMAT_INDICATOR);
+            clone.push(0);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_pfi);
+    }
+
+    #[test]
+    fn publish_decode_failure_duplicate_message_expiry_interval() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            message_expiry_interval_seconds : Some(1),
+            ..Default::default()
+        });
+
+        let duplicate_message_expiry = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 5;
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.push(PROPERTY_KEY_MESSAGE_EXPIRY_INTERVAL);
+            clone.push(1);
+            clone.push(2);
+            clone.push(3);
+            clone.push(4);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_message_expiry);
+    }
+
+    #[test]
+    fn publish_decode_failure_duplicate_response_topic() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            response_topic : Some("a/b".to_string()),
+            ..Default::default()
+        });
+
+        let duplicate_response_string = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 5;
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.push(PROPERTY_KEY_RESPONSE_TOPIC);
+            clone.push(0);
+            clone.push(2);
+            clone.push(65);
+            clone.push(65);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_response_string);
+    }
+
+    #[test]
+    fn publish_decode_failure_duplicate_correlation_data() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            correlation_data : Some("a".as_bytes().to_vec()),
+            ..Default::default()
+        });
+
+        let duplicate_correlation_data = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 5;
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.push(PROPERTY_KEY_CORRELATION_DATA);
+            clone.push(0);
+            clone.push(2);
+            clone.push(1);
+            clone.push(5);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_correlation_data);
+    }
+
+    #[test]
+    fn publish_decode_failure_duplicate_content_type() {
+
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            content_type : Some("JSON".to_string()),
+            ..Default::default()
+        });
+
+        let duplicate_content_type = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 5;
+            clone[PUBLISH_PACKET_ALL_PROPERTIES_TEST_PROPERTY_LENGTH_INDEX] += 5;
+
+            clone.push(PROPERTY_KEY_CONTENT_TYPE);
+            clone.push(0);
+            clone.push(2);
+            clone.push(66);
+            clone.push(65);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_content_type);
+    }
+
+    /*
+    Validate static
+
+    qos_zero_and_dup
+    topic_length
+    invalid_topic
+    qos_zero_and_packet_id
+    topic_alias_zero
+    invalid_response_topic
+    invalid_user_properties
+    subscription_identifiers_outbound
+    response_topic_length
+    correlation_data_length
+    content_type_length
+
+     */
+
+    /*
+    Validate dynamic
+
+    size
+
+     */
+
+
 }

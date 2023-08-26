@@ -9,6 +9,7 @@ use crate::*;
 use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
+use crate::encode::utils::MAXIMUM_VARIABLE_LENGTH_INTEGER;
 use crate::spec::*;
 use crate::spec::utils::*;
 
@@ -43,6 +44,10 @@ enum DecoderDirective {
     OutOfData,
     Continue,
     TerminalError
+}
+
+pub(crate) struct DecodingContext {
+    maximum_packet_size : u32
 }
 
 pub(crate) struct DecoderOptions {
@@ -121,7 +126,7 @@ impl Decoder {
         return (DecoderDirective::Continue, &bytes[1..]);
     }
 
-    fn process_read_total_remaining_length<'a>(&mut self, bytes: &'a[u8]) -> (DecoderDirective, &'a[u8]) {
+    fn process_read_total_remaining_length<'a>(&mut self, bytes: &'a[u8], context: &DecodingContext) -> (DecoderDirective, &'a[u8]) {
         if bytes.len() == 0 {
             return (DecoderDirective::OutOfData, bytes);
         }
@@ -131,10 +136,20 @@ impl Decoder {
 
         let decode_vli_result = decode_vli(&self.scratch);
         if let Ok(DecodeVliResult::Value(remaining_length, _)) = decode_vli_result {
-            self.remaining_length = Some(remaining_length as usize);
-            self.state = DecoderState::ReadPacketBody;
-            self.scratch.clear();
-            return (DecoderDirective::Continue, remaining_bytes);
+            let mut maximum_size = context.maximum_packet_size;
+            if maximum_size == 0 {
+                maximum_size = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
+            }
+
+            let total_packet_size = remaining_length + 1 + self.scratch.len() as u32;
+            if total_packet_size <= maximum_size {
+                self.remaining_length = Some(remaining_length as usize);
+                self.state = DecoderState::ReadPacketBody;
+                self.scratch.clear();
+                return (DecoderDirective::Continue, remaining_bytes);
+            } else {
+                return (DecoderDirective::TerminalError, remaining_bytes);
+            }
         } else if self.scratch.len() >= 4 {
             return (DecoderDirective::TerminalError, remaining_bytes);
         } else if remaining_bytes.len() > 0 {
@@ -172,7 +187,7 @@ impl Decoder {
         return (DecoderDirective::TerminalError, &[]);
     }
 
-    pub fn decode_bytes(&mut self, bytes: &[u8]) -> Mqtt5Result<()> {
+    pub fn decode_bytes(&mut self, bytes: &[u8], context: &DecodingContext) -> Mqtt5Result<()> {
         let mut current_slice = bytes;
 
         let mut decode_result = DecoderDirective::Continue;
@@ -183,7 +198,7 @@ impl Decoder {
                 }
 
                 DecoderState::ReadTotalRemainingLength => {
-                    (decode_result, current_slice) = self.process_read_total_remaining_length(current_slice);
+                    (decode_result, current_slice) = self.process_read_total_remaining_length(current_slice, context);
                 }
 
                 DecoderState::ReadPacketBody => {
@@ -231,13 +246,18 @@ pub(crate) mod testing {
         let mut encode_buffer = Vec::with_capacity(encode_size);
 
         let mut outbound_resolver : Box<dyn OutboundAliasResolver> = Box::new(ManualOutboundAliasResolver::new(65535));
-        let mut encoding_context = EncodingContext {
-            outbound_alias_resolver : &mut outbound_resolver
-        };
 
         /* encode 5 copies of the packet */
         for _ in 0..encode_repetitions {
-            assert!(!encoder.reset(&packet, &mut encoding_context).is_err());
+            let mut encoding_context = EncodingContext {
+                ..Default::default()
+            };
+
+            if let MqttPacket::Publish(publish) = &packet {
+                encoding_context.outbound_alias_resolution = outbound_resolver.resolve_and_apply_topic_alias(&publish.topic_alias, &publish.topic);
+            }
+
+            assert!(!encoder.reset(&packet, &encoding_context).is_err());
 
             let mut cumulative_result : EncodeResult = EncodeResult::Full;
             while cumulative_result == EncodeResult::Full {
@@ -263,13 +283,14 @@ pub(crate) mod testing {
         let mut decoder = Decoder::new(options);
         decoder.reset_for_new_connection();
 
+        let decoding_context = DecodingContext { maximum_packet_size: MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 };
         let mut decode_stream_slice = full_encoded_stream.as_slice();
         while decode_stream_slice.len() > 0 {
             let fragment_size : usize = usize::min(decode_size, decode_stream_slice.len());
             let decode_slice = &decode_stream_slice[..fragment_size];
             decode_stream_slice = &decode_stream_slice[fragment_size..];
 
-            let decode_result = decoder.decode_bytes(decode_slice);
+            let decode_result = decoder.decode_bytes(decode_slice, &decoding_context);
             assert!(!decode_result.is_err());
         }
 
@@ -319,10 +340,7 @@ pub(crate) mod testing {
 
         let mut encoded_buffer = Vec::with_capacity( 128 * 1024);
 
-        let mut outbound_resolver : Box<dyn OutboundAliasResolver> = Box::new(NullOutboundAliasResolver::new());
-        let mut encoding_context = EncodingContext {
-            outbound_alias_resolver : &mut outbound_resolver
-        };
+        let mut encoding_context = EncodingContext { ..Default::default() };
 
         assert!(!encoder.reset(&packet, &mut encoding_context).is_err());
 
@@ -350,7 +368,8 @@ pub(crate) mod testing {
         let mut decoder = Decoder::new(options);
         decoder.reset_for_new_connection();
 
-        let decode_result = decoder.decode_bytes(good_encoded_bytes.as_slice());
+        let decoding_context = DecodingContext { maximum_packet_size: MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 };
+        let decode_result = decoder.decode_bytes(good_encoded_bytes.as_slice(), &decoding_context);
         assert_eq!(decode_result, Ok(()));
 
         let receive_result = packet_receiver.try_recv().unwrap();
@@ -363,7 +382,7 @@ pub(crate) mod testing {
         // verify that the packet now fails to decode
         decoder.reset_for_new_connection();
 
-        let decode_result = decoder.decode_bytes(bad_encoded_bytes.as_slice());
+        let decode_result = decoder.decode_bytes(bad_encoded_bytes.as_slice(), &decoding_context);
         assert_eq!(decode_result, Err(Mqtt5Error::MalformedPacket));
 
         let receive_result = packet_receiver.try_recv();

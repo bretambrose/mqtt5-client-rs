@@ -57,17 +57,6 @@ pub(crate) fn validate_puback_packet_fixed(packet: &PubackPacket) -> Mqtt5Result
     Ok(())
 }
 
-pub(crate) fn validate_puback_packet_context_specific(packet: &PubackPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-
-    // validate packet size against the negotiated maximum
-    let (total_remaining_length, _) = compute_puback_packet_length_properties(packet)?;
-    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
-        return Err(Mqtt5Error::PubackPacketValidation);
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -196,7 +185,7 @@ mod tests {
     fn puback_validate_success() {
         let packet = create_puback_with_all_properties();
 
-        assert_eq!(validate_puback_packet_fixed(&packet), Ok(()));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Puback(packet)), Ok(()));
     }
 
     #[test]
@@ -204,7 +193,7 @@ mod tests {
         let mut packet = create_puback_with_all_properties();
         packet.reason_string = Some("A".repeat(128 * 1024).to_string());
 
-        assert_eq!(validate_puback_packet_fixed(&packet), Err(Mqtt5Error::PubackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Puback(packet)), Err(Mqtt5Error::PubackPacketValidation));
     }
 
     #[test]
@@ -212,7 +201,7 @@ mod tests {
         let mut packet = create_puback_with_all_properties();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_puback_packet_fixed(&packet), Err(Mqtt5Error::PubackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Puback(packet)), Err(Mqtt5Error::PubackPacketValidation));
     }
 
     #[test]
@@ -222,17 +211,6 @@ mod tests {
         let test_validation_context = create_pinned_validation_context();
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_puback_packet_context_specific(&packet, &validation_context), Ok(()));
-    }
-
-    #[test]
-    fn puback_validate_failure_context_packet_size() {
-        let packet = create_puback_with_all_properties();
-
-        let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.settings.maximum_packet_size_to_server = 10;
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_puback_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::PubackPacketValidation));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Puback(packet), &validation_context), Ok(()));
     }
 }

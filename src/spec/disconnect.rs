@@ -90,7 +90,7 @@ fn get_disconnect_packet_user_property(packet: &MqttPacket, index: usize) -> &Us
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, disconnect_property_length) = compute_disconnect_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_DISCONNECT << 4);
@@ -175,12 +175,6 @@ pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqt
 }
 
 pub(crate) fn validate_disconnect_packet_context_specific(packet: &DisconnectPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-
-    // validate packet size against the negotiated maximum
-    let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
-    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
-        return Err(Mqtt5Error::DisconnectPacketValidation);
-    }
 
     /* protocol error for the server to send us a session expiry interval property */
     if !context.is_outbound {
@@ -376,7 +370,7 @@ mod tests {
     fn disconnect_validate_success() {
         let packet = create_disconnect_packet_all_properties();
 
-        assert_eq!(validate_disconnect_packet_fixed(&packet), Ok(()));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Ok(()));
     }
 
     #[test]
@@ -384,7 +378,7 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.reason_string = Some("A".repeat(128 * 1024).to_string());
 
-        assert_eq!(validate_disconnect_packet_fixed(&packet), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -392,7 +386,7 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_disconnect_packet_fixed(&packet), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -400,7 +394,7 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.server_reference = Some("Z".repeat(65 * 1024).to_string());
 
-        assert_eq!(validate_disconnect_packet_fixed(&packet), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -411,18 +405,7 @@ mod tests {
         let test_validation_context = create_pinned_validation_context();
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Ok(()));
-    }
-
-    #[test]
-    fn disconnect_validate_failure_context_packet_size() {
-        let packet = create_disconnect_packet_all_properties();
-
-        let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.settings.maximum_packet_size_to_server = 20;
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Ok(()));
     }
 
     #[test]
@@ -433,7 +416,7 @@ mod tests {
         let mut validation_context = create_validation_context_from_pinned(&test_validation_context);
         validation_context.is_outbound = false;
 
-        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -446,7 +429,7 @@ mod tests {
         }));
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -460,6 +443,6 @@ mod tests {
         }));
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_disconnect_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 }

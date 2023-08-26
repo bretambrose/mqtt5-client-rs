@@ -95,7 +95,7 @@ fn get_auth_packet_user_property(packet: &MqttPacket, index: usize) -> &UserProp
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_auth_encoding_steps(packet: &AuthPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, auth_property_length) = compute_auth_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_AUTH << 4);
@@ -183,18 +183,6 @@ pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()>
 
     Ok(())
 }
-
-pub(crate) fn validate_auth_packet_context_specific(packet: &AuthPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-
-    // validate packet size against the negotiated maximum
-    let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
-    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
-        return Err(Mqtt5Error::AuthPacketValidation);
-    }
-
-    Ok(())
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -368,7 +356,7 @@ mod tests {
         let test_validation_context = create_pinned_validation_context();
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_auth_packet_context_specific(&packet, &validation_context), Ok(()));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Auth(packet), &validation_context), Ok(()));
     }
 
     #[test]
@@ -376,7 +364,7 @@ mod tests {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_method = Some("a".repeat(65537));
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
@@ -384,7 +372,7 @@ mod tests {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_method = None;
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
@@ -392,7 +380,7 @@ mod tests {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_data = Some(vec![0; 128 * 1024]);
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
@@ -400,7 +388,7 @@ mod tests {
         let mut packet = create_all_properties_auth_packet();
         packet.reason_string = Some("a".repeat(199000));
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
@@ -408,17 +396,6 @@ mod tests {
         let mut packet = create_all_properties_auth_packet();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Err(Mqtt5Error::AuthPacketValidation));
-    }
-
-    #[test]
-    fn auth_validate_failure_context_packet_size() {
-        let packet = create_all_properties_auth_packet();
-
-        let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.settings.maximum_packet_size_to_server = 50;
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_auth_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 }

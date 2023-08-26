@@ -197,7 +197,7 @@ fn get_connack_packet_user_property(packet: &MqttPacket, index: usize) -> &UserP
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, connack_property_length) = compute_connack_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_CONNACK << 4);
@@ -325,16 +325,6 @@ pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Resu
 
     validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation);
     validate_user_properties!(properties, &packet.user_properties, ConnackPacketValidation);
-
-    Ok(())
-}
-
-pub(crate) fn validate_connack_packet_context_specific(packet: &ConnackPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-    // validate packet size against the negotiated maximum
-    let (total_remaining_length, _) = compute_connack_packet_length_properties(packet)?;
-    if total_remaining_length > context.negotiated_settings.maximum_packet_size_to_server {
-        return Err(Mqtt5Error::ConnackPacketValidation);
-    }
 
     Ok(())
 }
@@ -1045,7 +1035,7 @@ mod tests {
         let test_validation_context = create_pinned_validation_context();
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_connack_packet_context_specific(&packet, &validation_context), Ok(()));
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Connack(packet), &validation_context), Ok(()));
     }
 
     #[test]
@@ -1054,7 +1044,7 @@ mod tests {
         packet.session_present = true;
         packet.reason_code = ConnectReasonCode::BadUsernameOrPassword;
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Err(Mqtt5Error::ConnackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
     }
 
     #[test]
@@ -1062,7 +1052,7 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.receive_maximum = Some(0);
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Err(Mqtt5Error::ConnackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
     }
 
     #[test]
@@ -1070,7 +1060,7 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.maximum_qos = Some(QualityOfService::ExactlyOnce);
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Err(Mqtt5Error::ConnackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
     }
 
     #[test]
@@ -1078,7 +1068,7 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.maximum_packet_size = Some(0);
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Err(Mqtt5Error::ConnackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
     }
 
     #[test]
@@ -1086,17 +1076,6 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Err(Mqtt5Error::ConnackPacketValidation));
-    }
-
-    #[test]
-    fn connack_validate_failure_context_packet_size() {
-        let packet = create_all_properties_connack_packet();
-
-        let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.settings.maximum_packet_size_to_server = 30;
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_connack_packet_context_specific(&packet, &validation_context), Err(Mqtt5Error::ConnackPacketValidation));
+        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
     }
 }

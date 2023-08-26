@@ -28,11 +28,12 @@ use crate::spec::unsubscribe::*;
 
 use std::collections::VecDeque;
 
-pub(crate) struct EncodingContext<'a> {
-    pub outbound_alias_resolver: &'a mut dyn OutboundAliasResolver,
+#[derive(Default)]
+pub(crate) struct EncodingContext {
+    pub outbound_alias_resolution: OutboundAliasResolution,
 }
 
-fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     match mqtt_packet {
         MqttPacket::Connect(packet) => {
             write_connect_encoding_steps(packet, context, steps)
@@ -99,7 +100,7 @@ impl Encoder {
         }
     }
 
-    pub fn reset(&mut self, packet: &MqttPacket, context: &mut EncodingContext) -> Mqtt5Result<()> {
+    pub fn reset(&mut self, packet: &MqttPacket, context: &EncodingContext) -> Mqtt5Result<()> {
         self.steps.clear();
 
         write_encoding_steps(packet, context, &mut self.steps)

@@ -21,6 +21,17 @@ use crate::alias::*;
 pub(crate) const MAXIMUM_STRING_PROPERTY_LENGTH : usize = 65535;
 pub(crate) const MAXIMUM_BINARY_PROPERTY_LENGTH : usize = 65535;
 
+/*
+Dynamic validation flags/notes:
+
+Inbound utf-8 restrictions
+Outbound utf-8 restrictions
+Inbound payload format
+
+Outbound alias issues are dropped for the full topic
+
+ */
+
 pub(crate) struct ValidationContext<'a> {
 
     // Maximum packet size, maximum qos, incoming topic alias, retained, wildcard, sub ids, shared subs
@@ -87,16 +98,16 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
 /// For example, validates against the negotiated maximum packet size, topic alias, etc...
 pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &ValidationContext) -> Mqtt5Result<()> {
     match packet {
-        MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
-        MqttPacket::Connack(connack) => { validate_connack_packet_context_specific(connack, context) }
-        MqttPacket::Connect(connect) => { validate_connect_packet_context_specific(connect, context) }
+        MqttPacket::Auth(auth) => { Ok(()) }
+        MqttPacket::Connack(connack) => { Ok(()) }
+        MqttPacket::Connect(connect) => { Ok(()) }
         MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_context_specific(disconnect, context) }
         MqttPacket::Pingreq(_) => { Ok(()) }
         MqttPacket::Pingresp(_) => { Ok(()) }
-        MqttPacket::Puback(puback) => { validate_puback_packet_context_specific(puback, context) }
-        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_context_specific(pubcomp, context) }
-        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_context_specific(pubrec, context) }
-        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_context_specific(pubrel, context) }
+        MqttPacket::Puback(puback) => { Ok(()) }
+        MqttPacket::Pubcomp(pubcomp) => { Ok(()) }
+        MqttPacket::Pubrec(pubrec) => { Ok(()) }
+        MqttPacket::Pubrel(pubrel) => { Ok(()) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }

@@ -11,9 +11,10 @@ use std::num::NonZeroUsize;
 use std::collections::HashMap;
 use crate::*;
 
+#[derive(Default)]
 #[cfg_attr(test, derive(Debug, Eq, PartialEq))]
 pub struct OutboundAliasResolution {
-    pub send_topic : bool,
+    pub skip_topic : bool,
 
     pub alias : Option<u16>,
 }
@@ -23,7 +24,9 @@ pub trait OutboundAliasResolver {
 
     fn reset_for_new_connection(&mut self, max_aliases : u16);
 
-    fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution;
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution;
+
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution;
 }
 
 impl<T: OutboundAliasResolver + ?Sized> OutboundAliasResolver for Box<T> {
@@ -31,8 +34,12 @@ impl<T: OutboundAliasResolver + ?Sized> OutboundAliasResolver for Box<T> {
 
     fn reset_for_new_connection(&mut self, max_aliases : u16) { self.as_mut().reset_for_new_connection(max_aliases); }
 
-    fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
-        self.as_mut().resolve_topic_alias(alias, topic)
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        self.as_ref().resolve_topic_alias(alias, topic)
+    }
+
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        self.as_mut().resolve_and_apply_topic_alias(alias, topic)
     }
 }
 
@@ -51,11 +58,14 @@ impl OutboundAliasResolver for NullOutboundAliasResolver {
 
     fn reset_for_new_connection(&mut self, _ : u16) {}
 
-    fn resolve_topic_alias(&mut self, _: &Option<u16>, _: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
         OutboundAliasResolution {
-            send_topic: true,
-            alias : None
+            ..Default::default()
         }
+    }
+
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        self.resolve_topic_alias(alias, topic)
     }
 }
 
@@ -82,32 +92,39 @@ impl OutboundAliasResolver for ManualOutboundAliasResolver {
         self.current_aliases.clear();
     }
 
-    fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
         if let Some(alias_ref_value) = alias {
             let alias_value = *alias_ref_value;
             if let Some(existing_alias) = self.current_aliases.get(alias_ref_value) {
                 if *existing_alias == *topic {
                     return  OutboundAliasResolution {
-                        send_topic: false,
+                        skip_topic: true,
                         alias : Some(alias_value)
                     };
                 }
             }
 
             if alias_value > 0 && alias_value < self.maximum_alias_value {
-                self.current_aliases.insert(alias_value, topic.clone());
-
                 return OutboundAliasResolution{
-                    send_topic: true,
+                    skip_topic: false,
                     alias: Some(alias_value)
                 };
             }
         }
 
-        OutboundAliasResolution {
-            send_topic: true,
-            alias : None
+        OutboundAliasResolution { ..Default::default() }
+    }
+
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        let resolution = self.resolve_topic_alias(alias, topic);
+
+        if let Some(resolved_alias) = resolution.alias {
+            if !resolution.skip_topic {
+                self.current_aliases.insert(resolved_alias, topic.clone());
+            }
         }
+
+        resolution
     }
 }
 
@@ -134,33 +151,45 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
         self.cache.clear();
     }
 
-    fn resolve_topic_alias(&mut self, _: &Option<u16>, topic: &String) -> OutboundAliasResolution {
-        if let Some(cached_alias_value) = self.cache.get(topic) {
+    fn resolve_topic_alias(&self, _: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        if let Some(cached_alias_value) = self.cache.peek(topic) {
             let alias_value = *cached_alias_value;
 
-            self.cache.promote(topic);
-
             return OutboundAliasResolution{
-                send_topic: false,
+                skip_topic: true,
                 alias : Some(alias_value)
             };
         }
 
         let mut alias_value : u16 = (self.cache.len() + 1) as u16;
         if alias_value > self.maximum_alias_value {
-            if let Some((_, recycled_alias)) = self.cache.pop_lru() {
-                alias_value = recycled_alias;
+            if let Some((_, recycled_alias)) = self.cache.peek_lru() {
+                alias_value = *recycled_alias;
             } else {
                 panic!("Illegal state in LRU outbound topic alias resolver")
             }
         }
 
-        self.cache.push(topic.clone(), alias_value);
-
         return OutboundAliasResolution{
-            send_topic: true,
+            skip_topic: false,
             alias : Some(alias_value)
         };
+    }
+
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        let resolution = self.resolve_topic_alias(alias, topic);
+        let resolved_alias = resolution.alias.unwrap();
+
+        if resolution.skip_topic {
+            self.cache.promote(topic);
+        } else {
+            if self.cache.len() == self.maximum_alias_value as usize {
+                self.cache.pop_lru();
+            }
+            self.cache.push(topic.clone(), resolved_alias);
+        }
+
+        resolution
     }
 }
 
@@ -215,10 +244,10 @@ mod tests {
         let mut resolver = NullOutboundAliasResolver::new();
 
         assert_eq!(resolver.get_maximum_alias_value(), 0);
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
 
         resolver.reset_for_new_connection(10);
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
     }
 
     #[test]
@@ -226,16 +255,16 @@ mod tests {
         let mut resolver = ManualOutboundAliasResolver::new(20);
 
         assert_eq!(resolver.get_maximum_alias_value(), 20);
-        assert_eq!(resolver.resolve_topic_alias(&Some(0), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
-        assert_eq!(resolver.resolve_topic_alias(&Some(21), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
-        assert_eq!(resolver.resolve_topic_alias(&Some(65535), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(0), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(21), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(65535), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
 
         resolver.reset_for_new_connection(10);
 
         assert_eq!(resolver.get_maximum_alias_value(), 10);
-        assert_eq!(resolver.resolve_topic_alias(&Some(0), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
-        assert_eq!(resolver.resolve_topic_alias(&Some(11), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
-        assert_eq!(resolver.resolve_topic_alias(&Some(65535), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(0), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(11), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(65535), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
     }
 
     #[test]
@@ -243,15 +272,15 @@ mod tests {
         let mut resolver = ManualOutboundAliasResolver::new(20);
 
         assert_eq!(resolver.get_maximum_alias_value(), 20);
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
 
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
     }
 
     #[test]
@@ -259,15 +288,15 @@ mod tests {
         let mut resolver = ManualOutboundAliasResolver::new(20);
 
         assert_eq!(resolver.get_maximum_alias_value(), 20);
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
 
         resolver.reset_for_new_connection(10);
 
-        assert_eq!(resolver.resolve_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(1), &"some/topic".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&Some(2), &"some/topic/2".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
 
         assert_eq!(resolver.get_maximum_alias_value(), 10);
     }
@@ -283,8 +312,8 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
     }
 
     #[test]
@@ -292,9 +321,9 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
     }
 
     #[test]
@@ -302,10 +331,10 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
     }
 
     #[test]
@@ -313,14 +342,14 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
     }
 
     #[test]
@@ -328,12 +357,12 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{send_topic: false, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"c".to_string()), OutboundAliasResolution{skip_topic: true, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
     }
 
     #[test]
@@ -341,11 +370,11 @@ mod tests {
         let mut resolver = LruOutboundAliasResolver::new(2);
 
         assert_eq!(resolver.get_maximum_alias_value(), 2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
         resolver.reset_for_new_connection(2);
-        assert_eq!(resolver.resolve_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(1)});
-        assert_eq!(resolver.resolve_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{send_topic: true, alias: Some(2)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
     }
 
     #[test]

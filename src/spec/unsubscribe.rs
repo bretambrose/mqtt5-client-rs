@@ -66,7 +66,7 @@ fn get_unsubscribe_packet_topic_filter(packet: &MqttPacket, index: usize) -> &st
 }
 
 #[rustfmt::skip]
-pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, unsubscribe_property_length) = compute_unsubscribe_packet_length_properties(packet)?;
 
     encode_integral_expression!(steps, Uint8, UNSUBSCRIBE_FIRST_BYTE);

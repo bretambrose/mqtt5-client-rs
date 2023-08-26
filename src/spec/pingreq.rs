@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 pub struct PingreqPacket {}
 
 #[rustfmt::skip]
-pub(crate) fn write_pingreq_encoding_steps(_: &PingreqPacket, _: &mut EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+pub(crate) fn write_pingreq_encoding_steps(_: &PingreqPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     encode_integral_expression!(steps, Uint8, PACKET_TYPE_PINGREQ << 4);
     encode_integral_expression!(steps, Uint8, 0);
 
