@@ -1024,6 +1024,18 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Connack(packet), duplicate_authentication_data);
     }
 
+    #[test]
+    fn connack_decode_failure_packet_size() {
+        let packet = Box::new(ConnackPacket {
+            session_present : true,
+            reason_code : ConnectReasonCode::Success,
+            authentication_data : Some("privatekey".as_bytes().to_vec()),
+            ..Default::default()
+        });
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Connack(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]

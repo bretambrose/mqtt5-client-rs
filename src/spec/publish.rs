@@ -342,23 +342,63 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
 pub(crate) fn validate_publish_packet_fixed(packet: &PublishPacket) -> Mqtt5Result<()> {
 
-    validate_optional_string_length!(content_type, &packet.content_type, PublishPacketValidation);
+    if packet.qos == QualityOfService::AtMostOnce {
+        if packet.duplicate || packet.packet_id != 0 {
+            return Err(Mqtt5Error::PublishPacketValidation);
+        }
+    }
+
+    validate_string_length!(&packet.topic, PublishPacketValidation);
+
+    if !is_valid_topic(&packet.topic) {
+        return Err(Mqtt5Error::PublishPacketValidation);
+    }
+
+    if let Some(alias) = packet.topic_alias {
+        if alias == 0 {
+            return Err(Mqtt5Error::PublishPacketValidation);
+        }
+    }
+
+    if let Some(response_topic) = &packet.response_topic {
+        if !is_valid_topic(response_topic) {
+            return Err(Mqtt5Error::PublishPacketValidation);
+        }
+
+        validate_string_length!(response_topic, PublishPacketValidation);
+    }
+
     validate_user_properties!(properties, &packet.user_properties, PublishPacketValidation);
+    validate_optional_binary_length!(correlation_data, &packet.correlation_data, PublishPacketValidation);
+    validate_optional_string_length!(content_type, &packet.content_type, PublishPacketValidation);
 
     Ok(())
 }
 
 pub(crate) fn validate_publish_packet_context_specific(packet: &PublishPacket, context: &ValidationContext) -> Mqtt5Result<()> {
 
+    if context.is_outbound {
+        /* inbound size is checked on decode, outbound size is checked here */
+        let (total_remaining_length, _) = compute_publish_packet_length_properties(packet, &context.outbound_alias_resolution.unwrap_or(OutboundAliasResolution{..Default::default() }))?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::PublishPacketValidation);
+        }
+
+        if packet.subscription_identifiers.is_some() {
+            return Err(Mqtt5Error::PublishPacketValidation);
+        }
+    }
+
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::decode::testing::*;
+    use crate::validate::testing::create_invalid_user_properties;
 
     #[test]
     fn publish_round_trip_encode_decode_default() {
@@ -668,29 +708,161 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Publish(packet), duplicate_content_type);
     }
 
-    /*
-    Validate static
+    #[test]
+    fn publish_decode_failure_inbound_packet_size() {
+        let packet = Box::new(PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            payload: Some("A very nice payload.  Much wow.".as_bytes().to_vec()),
+            ..Default::default()
+        });
 
-    qos_zero_and_dup
-    topic_length
-    invalid_topic
-    qos_zero_and_packet_id
-    topic_alias_zero
-    invalid_response_topic
-    invalid_user_properties
-    subscription_identifiers_outbound
-    response_topic_length
-    correlation_data_length
-    content_type_length
+        do_inbound_size_decode_failure_test(&MqttPacket::Publish(packet));
+    }
 
-     */
+    #[test]
+    fn publish_validate_success() {
+        let packet = create_publish_with_all_fields();
 
-    /*
-    Validate dynamic
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Ok(()));
+    }
 
-    size
+    #[test]
+    fn publish_validate_failure_qos_zero_and_duplicate() {
+        let mut packet = create_publish_with_all_fields();
+        packet.qos = QualityOfService::AtMostOnce;
+        packet.duplicate = true;
 
-     */
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
 
+    #[test]
+    fn publish_validate_failure_qos_zero_and_packet_id() {
+        let mut packet = create_publish_with_all_fields();
+        packet.qos = QualityOfService::AtMostOnce;
+        packet.packet_id = 1;
 
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_topic_length() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic = "A".repeat(65536).to_string();
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_topic_invalid() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic = "A/+/B".to_string();
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_topic_alias_zero() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic_alias = Some(0);
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_response_topic_invalid() {
+        let mut packet = create_publish_with_all_fields();
+        packet.response_topic = Some("A/#/B".to_string());
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_response_topic_length() {
+        let mut packet = create_publish_with_all_fields();
+        packet.response_topic = Some("AB".repeat(33000).to_string());
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_user_properties_invalid() {
+        let mut packet = create_publish_with_all_fields();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_correlation_data_length() {
+        let mut packet = create_publish_with_all_fields();
+        packet.correlation_data = Some(vec![0; 80 * 1024]);
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_content_type_length() {
+        let mut packet = create_publish_with_all_fields();
+        packet.content_type = Some("CD".repeat(33000).to_string());
+
+        assert_eq!(validate_packet_fixed(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn publish_validate_context_specific_success() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic_alias = None;
+        packet.subscription_identifiers = None;
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Publish(packet), &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn publish_validate_context_specific_failure_outbound_size() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic_alias = None;
+        packet.subscription_identifiers = None;
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Publish(packet), Mqtt5Error::PublishPacketValidation);
+    }
+
+    #[test]
+    fn publish_validate_context_specific_failure_outbound_subscription_identifiers() {
+        let mut packet = create_publish_with_all_fields();
+        packet.topic_alias = None;
+
+        let test_validation_context = create_pinned_validation_context();
+        let mut validation_context = create_validation_context_from_pinned(&test_validation_context);
+        validation_context.is_outbound = true;
+
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Publish(packet), &validation_context), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_context_specific_failure_alias_over_max_size() {
+        let mut packet = create_publish_with_all_fields();
+        packet.subscription_identifiers = None;
+        packet.topic_alias = Some(1);
+
+        let mqtt_packet = MqttPacket::Publish(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_packet_size_to_server = 118;
+
+        let mut validation_context = create_validation_context_from_pinned(&test_validation_context);
+        validation_context.is_outbound = true;
+        validation_context.outbound_alias_resolution = Some(OutboundAliasResolution{ skip_topic: false, alias: None });
+
+        assert_eq!(validate_packet_context_specific(&mqtt_packet, &validation_context), Ok(()));
+
+        validation_context.outbound_alias_resolution = Some(OutboundAliasResolution{ skip_topic: false, alias: Some(1) });
+
+        assert_eq!(validate_packet_context_specific(&mqtt_packet, &validation_context), Err(Mqtt5Error::PublishPacketValidation));
+    }
 }

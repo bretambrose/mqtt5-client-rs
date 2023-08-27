@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -133,6 +135,28 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
     Ok(packet)
 }
 
+pub(crate) fn validate_unsuback_packet_fixed(packet: &UnsubackPacket) -> Mqtt5Result<()> {
+
+    validate_user_properties!(properties, &packet.user_properties, UnsubackPacketValidation);
+    validate_optional_string_length!(reason_string, &packet.reason_string, UnsubackPacketValidation);
+
+    Ok(())
+}
+
+pub(crate) fn validate_unsuback_packet_context_specific(packet: &UnsubackPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    if context.is_outbound {
+        /* inbound size is checked on decode, outbound size is checked here */
+        let (total_remaining_length, _) = compute_unsuback_packet_length_properties(packet)?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::UnsubackPacketValidation);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -163,9 +187,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 
-    #[test]
-    fn unsuback_round_trip_encode_decode_all() {
-        let packet = Box::new(UnsubackPacket {
+    fn create_unsuback_all_properties() -> Box<UnsubackPacket> {
+        Box::new(UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::NotAuthorized,
@@ -177,7 +200,12 @@ mod tests {
                 UserProperty{name: "Time".to_string(), value: "togohome".to_string()},
                 UserProperty{name: "Ouch".to_string(), value: "backhurts".to_string()},
             ))
-        });
+        })
+    }
+
+    #[test]
+    fn unsuback_round_trip_encode_decode_all() {
+        let packet = create_unsuback_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
@@ -195,5 +223,103 @@ mod tests {
         });
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsuback(packet), 9);
+    }
+
+    #[test]
+    fn unsuback_decode_failure_reason_code_invalid() {
+        let packet = Box::new(SubackPacket {
+            packet_id : 1023,
+            reason_codes : vec![
+                SubackReasonCode::GrantedQos1
+            ],
+            ..Default::default()
+        });
+
+        let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            // for acks, the reason code is in byte 4
+            clone[5] = 196;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Suback(packet), corrupt_reason_code);
+    }
+
+    const UNSUBACK_PACKET_TEST_PROPERTY_LENGTH_INDEX : usize = 4;
+    const UNSUBACK_PACKET_TEST_PAYLOAD_INDEX : usize = 12;
+
+    #[test]
+    fn unsuback_decode_failure_duplicate_reason_string() {
+
+        let packet = Box::new(UnsubackPacket {
+            packet_id : 1023,
+            reason_string: Some("derp".to_string()),
+            reason_codes : vec![
+                UnsubackReasonCode::UnspecifiedError
+            ],
+            ..Default::default()
+        });
+
+        let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[1] += 6;
+            clone[UNSUBACK_PACKET_TEST_PROPERTY_LENGTH_INDEX] += 6;
+
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, 67);
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, 67);
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, 67);
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, 3);
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, 0);
+            clone.insert(UNSUBACK_PACKET_TEST_PAYLOAD_INDEX, PROPERTY_KEY_REASON_STRING);
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Unsuback(packet), duplicate_reason_string);
+    }
+
+    #[test]
+    fn unsuback_validate_success() {
+        let packet = create_unsuback_all_properties();
+
+        assert_eq!(Ok(()), validate_packet_fixed(&MqttPacket::Unsuback(packet)));
+    }
+
+    #[test]
+    fn unsuback_validate_failure_reason_string_length() {
+        let mut packet = create_unsuback_all_properties();
+        packet.reason_string = Some("Derp".repeat(20000).to_string());
+
+        assert_eq!(Err(Mqtt5Error::UnsubackPacketValidation), validate_packet_fixed(&MqttPacket::Unsuback(packet)));
+    }
+
+    #[test]
+    fn unsuback_validate_failure_user_properties_invalid() {
+        let mut packet = create_unsuback_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(Err(Mqtt5Error::UnsubackPacketValidation), validate_packet_fixed(&MqttPacket::Unsuback(packet)));
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn unsuback_validate_context_specific_success() {
+        let packet = create_unsuback_all_properties();
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Unsuback(packet), &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn unsuback_validate_context_specific_failure_outbound_size() {
+        let packet = create_unsuback_all_properties();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Unsuback(packet), Mqtt5Error::UnsubackPacketValidation);
     }
 }

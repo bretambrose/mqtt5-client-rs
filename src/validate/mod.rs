@@ -13,8 +13,11 @@ use crate::spec::connect::*;
 use crate::spec::disconnect::*;
 use crate::spec::puback::*;
 use crate::spec::pubcomp::*;
+use crate::spec::publish::*;
 use crate::spec::pubrec::*;
 use crate::spec::pubrel::*;
+use crate::spec::suback::*;
+use crate::spec::unsuback::*;
 use crate::client::*;
 use crate::alias::*;
 
@@ -34,19 +37,16 @@ Outbound alias issues are dropped for the full topic
 
 pub(crate) struct ValidationContext<'a> {
 
-    // Maximum packet size, maximum qos, incoming topic alias, retained, wildcard, sub ids, shared subs
+    // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
     pub negotiated_settings : &'a NegotiatedSettings,
-
-    // inbound manual topic alias validation
-    // We don't bother with outbound alias validation because the outbound alias resolution
-    // contract is to just send the topic if an oubtound mapping is invalid.
-    pub inbound_alias_resolver: &'a InboundAliasResolver,
 
     // session_expiry_interval for disconnect constraints
     pub client_config: &'a Mqtt5ClientOptions,
 
     // true if this is destined for a broker, false if it is from a broker
-    pub is_outbound: bool
+    pub is_outbound: bool,
+
+    pub outbound_alias_resolution: Option<OutboundAliasResolution>
 }
 
 fn validate_user_property(property: &UserProperty) -> Mqtt5Result<()> {
@@ -84,8 +84,11 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
         MqttPacket::Pingresp(_) => { Ok(()) }
         MqttPacket::Puback(puback) => { validate_puback_packet_fixed(puback) }
         MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_fixed(pubcomp) }
+        MqttPacket::Publish(publish) => { validate_publish_packet_fixed(publish) }
         MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_fixed(pubrec) }
         MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_fixed(pubrel) }
+        MqttPacket::Suback(suback) => { validate_suback_packet_fixed(suback) }
+        MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_fixed(unsuback) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -98,16 +101,19 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
 /// For example, validates against the negotiated maximum packet size, topic alias, etc...
 pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &ValidationContext) -> Mqtt5Result<()> {
     match packet {
-        MqttPacket::Auth(auth) => { Ok(()) }
+        MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
         MqttPacket::Connack(connack) => { Ok(()) }
         MqttPacket::Connect(connect) => { Ok(()) }
         MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_context_specific(disconnect, context) }
         MqttPacket::Pingreq(_) => { Ok(()) }
         MqttPacket::Pingresp(_) => { Ok(()) }
-        MqttPacket::Puback(puback) => { Ok(()) }
-        MqttPacket::Pubcomp(pubcomp) => { Ok(()) }
-        MqttPacket::Pubrec(pubrec) => { Ok(()) }
-        MqttPacket::Pubrel(pubrel) => { Ok(()) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_context_specific(puback, context) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_context_specific(pubcomp, context) }
+        MqttPacket::Publish(publish) => { validate_publish_packet_context_specific(publish, context) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_context_specific(pubrec, context) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_context_specific(pubrel, context) }
+        MqttPacket::Suback(suback) => { validate_suback_packet_context_specific(suback, context) }
+        MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_context_specific(unsuback, context) }
         _ => {
             Err(Mqtt5Error::Unimplemented)
         }
@@ -121,14 +127,12 @@ pub(crate) mod testing {
 
     pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
-        inbound_resolver : InboundAliasResolver,
         pub config : Mqtt5ClientOptions,
     }
 
     pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
         let mut pinned_context = PinnedValidationContext {
             settings : NegotiatedSettings {..Default::default() },
-            inbound_resolver : InboundAliasResolver::new(0),
             config : Mqtt5ClientOptions{ ..Default::default() },
         };
 
@@ -140,9 +144,9 @@ pub(crate) mod testing {
     pub(crate) fn create_validation_context_from_pinned(pinned: &PinnedValidationContext) -> ValidationContext {
         ValidationContext {
             negotiated_settings : &pinned.settings,
-            inbound_alias_resolver : &pinned.inbound_resolver,
             client_config : &pinned.config,
             is_outbound : true,
+            outbound_alias_resolution : None,
         }
     }
 
@@ -153,4 +157,19 @@ pub(crate) mod testing {
         )
     }
 
+    use crate::decode::testing::*;
+
+    pub(crate) fn do_outbound_size_validate_failure_test(packet: &MqttPacket, error: Mqtt5Error) {
+        let encoded_bytes = encode_packet_for_test(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        let validation_context1 = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_context_specific(packet, &validation_context1), Ok(()));
+
+        test_validation_context.settings.maximum_packet_size_to_server = (encoded_bytes.len() - 1) as u32;
+        let validation_context2 = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_context_specific(packet, &validation_context2), Err(error));
+    }
 }

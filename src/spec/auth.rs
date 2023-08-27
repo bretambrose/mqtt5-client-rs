@@ -184,6 +184,20 @@ pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()>
     Ok(())
 }
 
+pub(crate) fn validate_auth_packet_context_specific(packet: &AuthPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    /* inbound size is checked on decode, outbound size is checked here */
+    if context.is_outbound {
+        let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::AuthPacketValidation);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::decode::testing::*;
@@ -345,6 +359,17 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Auth(packet), duplicate_reason_string);
     }
 
+    #[test]
+    fn auth_decode_failure_packet_size() {
+        let packet = Box::new(AuthPacket {
+            reason_code : AuthenticateReasonCode::ContinueAuthentication,
+            reason_string : Some("Derp".to_string()),
+            ..Default::default()
+        });
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Auth(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]
@@ -397,5 +422,12 @@ mod tests {
         packet.user_properties = Some(create_invalid_user_properties());
 
         assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_failure_context_specific_outbound_size() {
+        let packet = create_all_properties_auth_packet();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Auth(packet), Mqtt5Error::AuthPacketValidation);
     }
 }

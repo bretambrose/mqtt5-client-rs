@@ -57,6 +57,20 @@ pub(crate) fn validate_pubcomp_packet_fixed(packet: &PubcompPacket) -> Mqtt5Resu
     Ok(())
 }
 
+pub(crate) fn validate_pubcomp_packet_context_specific(packet: &PubcompPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    /* inbound size is checked on decode, outbound size is checked here */
+    if context.is_outbound {
+        let (total_remaining_length, _) = compute_pubcomp_packet_length_properties(packet)?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::PubcompPacketValidation);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -182,6 +196,13 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Pubcomp(packet), duplicate_reason_string);
     }
 
+    #[test]
+    fn pubcomp_decode_failure_packet_size() {
+        let packet = create_pubcomp_with_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Pubcomp(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]
@@ -215,5 +236,12 @@ mod tests {
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
         assert_eq!(validate_packet_context_specific(&MqttPacket::Pubcomp(packet), &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn pubcomp_validate_failure_context_specific_outbound_size() {
+        let packet = create_pubcomp_with_all_properties();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Pubcomp(packet), Mqtt5Error::PubcompPacketValidation);
     }
 }

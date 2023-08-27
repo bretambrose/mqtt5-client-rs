@@ -1231,6 +1231,13 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Connect(packet), invalidate_will_payload_format_indicator);
     }
 
+    #[test]
+    fn connect_decode_failure_packet_size() {
+        let packet = create_connect_packet_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Connect(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]

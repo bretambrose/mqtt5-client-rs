@@ -57,6 +57,24 @@ pub(crate) fn validate_puback_packet_fixed(packet: &PubackPacket) -> Mqtt5Result
     Ok(())
 }
 
+pub(crate) fn validate_puback_packet_context_specific(packet: &PubackPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+
+    /* inbound size is checked on decode, outbound size is checked here */
+    if context.is_outbound {
+        let (total_remaining_length, _) = compute_puback_packet_length_properties(packet)?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::PubackPacketValidation);
+        }
+    }
+
+    if packet.packet_id == 0 {
+        return Err(Mqtt5Error::PubackPacketValidation);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -182,6 +200,13 @@ mod tests {
     }
 
     #[test]
+    fn puback_decode_failure_packet_size() {
+        let packet = create_puback_with_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Puback(packet));
+    }
+
+    #[test]
     fn puback_validate_success() {
         let packet = create_puback_with_all_properties();
 
@@ -212,5 +237,23 @@ mod tests {
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
         assert_eq!(validate_packet_context_specific(&MqttPacket::Puback(packet), &validation_context), Ok(()));
+    }
+
+    #[test]
+    fn puback_validate_failure_context_specific_outbound_size() {
+        let packet = create_puback_with_all_properties();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Puback(packet), Mqtt5Error::PubackPacketValidation);
+    }
+
+    #[test]
+    fn puback_validate_failure_context_specific_packet_id_zero() {
+        let mut packet = create_puback_with_all_properties();
+        packet.packet_id = 0;
+
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_context_specific(&MqttPacket::Puback(packet), &validation_context), Err(Mqtt5Error::PubackPacketValidation));
     }
 }

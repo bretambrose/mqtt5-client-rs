@@ -176,6 +176,15 @@ pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqt
 
 pub(crate) fn validate_disconnect_packet_context_specific(packet: &DisconnectPacket, context: &ValidationContext) -> Mqtt5Result<()> {
 
+    /* inbound size is checked on decode, outbound size is checked here */
+    if context.is_outbound {
+        let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
+        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            return Err(Mqtt5Error::DisconnectPacketValidation);
+        }
+    }
+
     /* protocol error for the server to send us a session expiry interval property */
     if !context.is_outbound {
         if packet.session_expiry_interval_seconds.is_some() {
@@ -364,6 +373,13 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Disconnect(packet), duplicate_session_expiry_interval);
     }
 
+    #[test]
+    fn disconnect_decode_failure_packet_size() {
+        let packet = create_disconnect_packet_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Disconnect(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]
@@ -444,5 +460,16 @@ mod tests {
         let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
         assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+    }
+
+    #[test]
+    fn disconnect_validate_failure_context_specific_outbound_size() {
+        let packet = Box::new(DisconnectPacket {
+            reason_code: DisconnectReasonCode::MalformedPacket,
+            reason_string: Some("The rats in the walls".to_string()),
+            ..Default::default()
+        });
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Disconnect(packet), Mqtt5Error::DisconnectPacketValidation);
     }
 }

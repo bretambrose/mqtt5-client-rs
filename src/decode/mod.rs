@@ -389,6 +389,38 @@ pub(crate) mod testing {
         assert!(receive_result.is_err());
     }
 
+    pub(crate) fn do_inbound_size_decode_failure_test(packet: &MqttPacket) {
+        let encoded_bytes = encode_packet_for_test(packet);
+
+        // for clarity, verify that the packet is decodable as is
+        let (packet_sender, packet_receiver) = std::sync::mpsc::channel();
+
+        let options = DecoderOptions {
+            packet_stream : packet_sender
+        };
+
+        let mut decoder = Decoder::new(options);
+        decoder.reset_for_new_connection();
+
+        let mut decoding_context = DecodingContext { maximum_packet_size: MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 };
+        let decode_result = decoder.decode_bytes(encoded_bytes.as_slice(), &decoding_context);
+        assert_eq!(decode_result, Ok(()));
+
+        let receive_result = packet_receiver.try_recv().unwrap();
+        assert_eq!(*packet, receive_result);
+
+        decoding_context.maximum_packet_size = (encoded_bytes.len() - 1) as u32;
+
+        // verify that the packet now fails to decode
+        decoder.reset_for_new_connection();
+
+        let decode_result = decoder.decode_bytes(encoded_bytes.as_slice(), &decoding_context);
+        assert_eq!(decode_result, Err(Mqtt5Error::MalformedPacket));
+
+        let receive_result = packet_receiver.try_recv();
+        assert!(receive_result.is_err());
+    }
+
     pub(crate) fn do_fixed_header_flag_decode_failure_test(packet: &MqttPacket, flags_mask: u8) {
         let reserved_mutator = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();

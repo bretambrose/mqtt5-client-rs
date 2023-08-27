@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use std::collections::HashMap;
 use crate::*;
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 #[cfg_attr(test, derive(Debug, Eq, PartialEq))]
 pub struct OutboundAliasResolution {
     pub skip_topic : bool,
