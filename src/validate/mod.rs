@@ -102,8 +102,8 @@ pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
 pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &ValidationContext) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
-        MqttPacket::Connack(connack) => { Ok(()) }
-        MqttPacket::Connect(connect) => { Ok(()) }
+        MqttPacket::Connack(_) => { Ok(()) }
+        MqttPacket::Connect(_) => { Ok(()) }
         MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_context_specific(disconnect, context) }
         MqttPacket::Pingreq(_) => { Ok(()) }
         MqttPacket::Pingresp(_) => { Ok(()) }

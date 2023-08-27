@@ -7,8 +7,10 @@ mod implementation;
 
 extern crate tokio;
 
+use crate::*;
 use crate::client::implementation::*;
-use crate::{Mqtt5Error, Mqtt5Result, QualityOfService};
+use crate::spec::*;
+
 use std::future::Future;
 use std::pin::Pin;
 use tokio::runtime;
@@ -141,14 +143,14 @@ impl Mqtt5Client {
     }
 
     pub fn publish(&self, packet: &PublishPacket, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
-        client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, packet, options)
+        client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, packet, Publish, options)
     }
 
     pub fn subscribe(&self, packet: &SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, options)
+        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
     }
 
     pub fn unsubscribe(&self, packet: &UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, options)
+        client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, Unsubscribe, options)
     }
 }

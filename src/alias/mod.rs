@@ -58,7 +58,7 @@ impl OutboundAliasResolver for NullOutboundAliasResolver {
 
     fn reset_for_new_connection(&mut self, _ : u16) {}
 
-    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, _: &Option<u16>, _: &String) -> OutboundAliasResolution {
         OutboundAliasResolution {
             ..Default::default()
         }

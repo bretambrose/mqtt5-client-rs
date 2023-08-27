@@ -412,103 +412,107 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
 
 const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
 
-pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<ConnectPacket>> {
-    let mut packet = Box::new(ConnectPacket { ..Default::default() } );
-
+pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_CONNECT << 4)  {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    if mutable_body.len() < CONNECT_HEADER_PROTOCOL_LENGTH {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
+    let mut box_packet = Box::new(MqttPacket::Connect(ConnectPacket { ..Default::default() }));
 
-    let protocol_bytes = &mutable_body[..CONNECT_HEADER_PROTOCOL_LENGTH];
-    mutable_body = &mutable_body[CONNECT_HEADER_PROTOCOL_LENGTH..];
-
-    match protocol_bytes {
-        [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { }
-        _ => { return Err(Mqtt5Error::MalformedPacket); }
-    }
-
-    let mut connect_flags : u8 = 0;
-    mutable_body = decode_u8(mutable_body, &mut connect_flags)?;
-
-    // if the reserved bit is set, that's fatal
-    if (connect_flags & 0x01) != 0 {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    packet.clean_start = (connect_flags & CONNECT_PACKET_CLEAN_START_FLAG_MASK) != 0;
-    let has_will = (connect_flags & CONNECT_PACKET_HAS_WILL_FLAG_MASK) != 0;
-    let will_retain = (connect_flags & CONNECT_PACKET_WILL_RETAIN_FLAG_MASK) != 0;
-    let will_qos = convert_u8_to_quality_of_service((connect_flags >> CONNECT_PACKET_WILL_QOS_FLAG_SHIFT) & QOS_MASK)?;
-
-    if !has_will {
-        /* indirectly check bits of connect flags vs. spec */
-        if will_retain || will_qos != QualityOfService::AtMostOnce {
-            return Err(Mqtt5Error::MalformedPacket);
-        }
-    }
-
-    let has_username = (connect_flags & CONNECT_PACKET_HAS_USERNAME_FLAG_MASK) != 0;
-    let has_password = (connect_flags & CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK) != 0;
-
-    mutable_body = decode_u16(mutable_body, &mut packet.keep_alive_interval_seconds)?;
-
-    let mut connect_property_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut connect_property_length)?;
-
-    if mutable_body.len() < connect_property_length {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    let property_body = &mutable_body[..connect_property_length];
-    mutable_body = &mutable_body[connect_property_length..];
-
-    decode_connect_properties(property_body, &mut packet)?;
-
-    mutable_body = decode_length_prefixed_optional_string(mutable_body, &mut packet.client_id)?;
-
-    if has_will {
-        let mut will_property_length : usize = 0;
-        mutable_body = decode_vli_into_mutable(mutable_body, &mut will_property_length)?;
-
-        if mutable_body.len() < will_property_length {
+    if let MqttPacket::Connect(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        if mutable_body.len() < CONNECT_HEADER_PROTOCOL_LENGTH {
             return Err(Mqtt5Error::MalformedPacket);
         }
 
-        let will_property_body = &mutable_body[..will_property_length];
-        mutable_body = &mutable_body[will_property_length..];
+        let protocol_bytes = &mutable_body[..CONNECT_HEADER_PROTOCOL_LENGTH];
+        mutable_body = &mutable_body[CONNECT_HEADER_PROTOCOL_LENGTH..];
 
-        let mut will : PublishPacket = PublishPacket {
-            qos : will_qos,
-            retain : will_retain,
-            ..Default::default()
-        };
+        match protocol_bytes {
+            [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { }
+            _ => { return Err(Mqtt5Error::MalformedPacket); }
+        }
 
-        decode_will_properties(will_property_body, &mut will, &mut packet)?;
+        let mut connect_flags : u8 = 0;
+        mutable_body = decode_u8(mutable_body, &mut connect_flags)?;
 
-        mutable_body = decode_length_prefixed_string(mutable_body, &mut will.topic)?;
-        mutable_body = decode_length_prefixed_optional_bytes(mutable_body, &mut will.payload)?;
+        // if the reserved bit is set, that's fatal
+        if (connect_flags & 0x01) != 0 {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
 
-        packet.will = Some(will);
+        packet.clean_start = (connect_flags & CONNECT_PACKET_CLEAN_START_FLAG_MASK) != 0;
+        let has_will = (connect_flags & CONNECT_PACKET_HAS_WILL_FLAG_MASK) != 0;
+        let will_retain = (connect_flags & CONNECT_PACKET_WILL_RETAIN_FLAG_MASK) != 0;
+        let will_qos = convert_u8_to_quality_of_service((connect_flags >> CONNECT_PACKET_WILL_QOS_FLAG_SHIFT) & QOS_MASK)?;
+
+        if !has_will {
+            /* indirectly check bits of connect flags vs. spec */
+            if will_retain || will_qos != QualityOfService::AtMostOnce {
+                return Err(Mqtt5Error::MalformedPacket);
+            }
+        }
+
+        let has_username = (connect_flags & CONNECT_PACKET_HAS_USERNAME_FLAG_MASK) != 0;
+        let has_password = (connect_flags & CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK) != 0;
+
+        mutable_body = decode_u16(mutable_body, &mut packet.keep_alive_interval_seconds)?;
+
+        let mut connect_property_length : usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut connect_property_length)?;
+
+        if mutable_body.len() < connect_property_length {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let property_body = &mutable_body[..connect_property_length];
+        mutable_body = &mutable_body[connect_property_length..];
+
+        decode_connect_properties(property_body, packet)?;
+
+        mutable_body = decode_length_prefixed_optional_string(mutable_body, &mut packet.client_id)?;
+
+        if has_will {
+            let mut will_property_length : usize = 0;
+            mutable_body = decode_vli_into_mutable(mutable_body, &mut will_property_length)?;
+
+            if mutable_body.len() < will_property_length {
+                return Err(Mqtt5Error::MalformedPacket);
+            }
+
+            let will_property_body = &mutable_body[..will_property_length];
+            mutable_body = &mutable_body[will_property_length..];
+
+            let mut will : PublishPacket = PublishPacket {
+                qos : will_qos,
+                retain : will_retain,
+                ..Default::default()
+            };
+
+            decode_will_properties(will_property_body, &mut will, packet)?;
+
+            mutable_body = decode_length_prefixed_string(mutable_body, &mut will.topic)?;
+            mutable_body = decode_length_prefixed_optional_bytes(mutable_body, &mut will.payload)?;
+
+            packet.will = Some(will);
+        }
+
+        if has_username {
+            mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.username)?;
+        }
+
+        if has_password {
+            mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut packet.password)?;
+        }
+
+        if mutable_body.len() > 0 {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        return Ok(box_packet);
     }
 
-    if has_username {
-        mutable_body = decode_optional_length_prefixed_string(mutable_body, &mut packet.username)?;
-    }
-
-    if has_password {
-        mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut packet.password)?;
-    }
-
-    if mutable_body.len() > 0 {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_connect_packet_fixed(packet: &ConnectPacket) -> Mqtt5Result<()> {
@@ -553,28 +557,28 @@ mod tests {
 
     #[test]
     fn connect_round_trip_encode_decode_default() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_basic() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             keep_alive_interval_seconds : 1200,
             clean_start : true,
             client_id : Some("MyClient".to_string()),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_no_flags_all_optional_properties() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("MyClient2".to_string()),
@@ -591,34 +595,34 @@ mod tests {
                 UserProperty{name: "Iamabanana".to_string(), value: "Hamizilla".to_string()},
             )),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_username_only() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             username : Some("SpaceUnicorn".to_string()),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_password_only() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             password : Some("Marshmallow Lasers".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_all_non_will_properties() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("NotAHaxxor".to_string()),
@@ -637,26 +641,26 @@ mod tests {
             username: Some("Gluten-free armada".to_string()),
             password: Some("PancakeRobot".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_default_will() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             will : Some(PublishPacket {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_simple_will() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             will : Some(PublishPacket {
                 topic : "in/rememberance".to_string(),
                 qos: QualityOfService::ExactlyOnce,
@@ -664,14 +668,14 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
     #[test]
     fn connect_round_trip_encode_decode_all_will_fields() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             will_delay_interval_seconds : Some(60),
             will : Some(PublishPacket {
                 topic : "in/rememberance/of/mrkrabs".to_string(),
@@ -689,13 +693,13 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }
 
-    fn create_connect_packet_all_properties() -> Box<ConnectPacket> {
-        Box::new(ConnectPacket {
+    fn create_connect_packet_all_properties() -> ConnectPacket {
+        ConnectPacket {
             keep_alive_interval_seconds : 3600,
             clean_start : true,
             client_id : Some("NotAHaxxor".to_string()),
@@ -730,7 +734,7 @@ mod tests {
             username: Some("Gluten-free armada".to_string()),
             password: Some("PancakeRobot X".as_bytes().to_vec()),
             ..Default::default()
-        })
+        }
     }
 
     const CONNECT_PACKET_ALL_PROPERTIES_TEST_ENCODE_LENGTH : usize = 259;
@@ -751,7 +755,7 @@ mod tests {
 
     #[test]
     fn connect_decode_failure_bad_fixed_header() {
-        let packet = Box::new(ConnectPacket {
+        let packet = ConnectPacket {
             will : Some(PublishPacket {
                 topic : "in/rememberance".to_string(),
                 qos: QualityOfService::ExactlyOnce,
@@ -759,7 +763,7 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Connect(packet), 6);
     }

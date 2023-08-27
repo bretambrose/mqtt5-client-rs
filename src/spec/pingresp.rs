@@ -26,7 +26,7 @@ pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, _: &EncodingCont
 
 const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
 
-pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<PingrespPacket>> {
+pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if packet_body.len() != 0 {
         return Err(Mqtt5Error::MalformedPacket);
     }
@@ -35,7 +35,7 @@ pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    return Ok(Box::new(PingrespPacket{}));
+    return Ok(Box::new(MqttPacket::Pingresp(PingrespPacket{})));
 }
 
 #[cfg(test)]
@@ -46,20 +46,20 @@ mod tests {
 
     #[test]
     fn pingresp_round_trip_encode_decode() {
-        let packet = Box::new(PingrespPacket {});
+        let packet = PingrespPacket {};
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pingresp(packet)));
     }
 
     #[test]
     fn pingresp_decode_failure_bad_fixed_header() {
-        let packet = Box::new(PingrespPacket {});
+        let packet = PingrespPacket {};
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Pingresp(packet), 2);
     }
 
     #[test]
     fn pingresp_decode_failure_bad_length() {
-        let packet = Box::new(PingrespPacket {});
+        let packet = PingrespPacket {};
 
         let extend_length = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();

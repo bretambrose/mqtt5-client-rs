@@ -104,35 +104,40 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
     Ok(())
 }
 
-pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<UnsubackPacket>> {
-    let mut packet = Box::new(UnsubackPacket { ..Default::default() });
+pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+    let mut box_packet = Box::new(MqttPacket::Unsuback(UnsubackPacket { ..Default::default() }));
 
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length > mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
+    if let MqttPacket::Unsuback(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+        let mut properties_length: usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length > mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let properties_bytes = &mutable_body[..properties_length];
+        let payload_bytes = &mutable_body[properties_length..];
+
+        decode_unsuback_properties(properties_bytes, packet)?;
+
+        let reason_code_count = payload_bytes.len();
+        packet.reason_codes.reserve(reason_code_count);
+
+        for i in 0..reason_code_count {
+            packet.reason_codes.push(convert_u8_to_unsuback_reason_code(payload_bytes[i])?);
+        }
+
+        return Ok(box_packet);
     }
 
-    let properties_bytes = &mutable_body[..properties_length];
-    let payload_bytes = &mutable_body[properties_length..];
-
-    decode_unsuback_properties(properties_bytes, &mut packet)?;
-
-    let reason_code_count = payload_bytes.len();
-    packet.reason_codes.reserve(reason_code_count);
-
-    for i in 0..reason_code_count {
-        packet.reason_codes.push(convert_u8_to_unsuback_reason_code(payload_bytes[i])?);
-    }
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_unsuback_packet_fixed(packet: &UnsubackPacket) -> Mqtt5Result<()> {
@@ -165,16 +170,16 @@ mod tests {
 
     #[test]
     fn unsuback_round_trip_encode_decode_default() {
-        let packet = Box::new(UnsubackPacket {
+        let packet = UnsubackPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 
     #[test]
     fn unsuback_round_trip_encode_decode_required() {
-        let packet = Box::new(UnsubackPacket {
+        let packet = UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::ImplementationSpecificError,
@@ -182,13 +187,13 @@ mod tests {
                 UnsubackReasonCode::TopicNameInvalid
             ],
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 
-    fn create_unsuback_all_properties() -> Box<UnsubackPacket> {
-        Box::new(UnsubackPacket {
+    fn create_unsuback_all_properties() -> UnsubackPacket {
+        UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::NotAuthorized,
@@ -200,7 +205,7 @@ mod tests {
                 UserProperty{name: "Time".to_string(), value: "togohome".to_string()},
                 UserProperty{name: "Ouch".to_string(), value: "backhurts".to_string()},
             ))
-        })
+        }
     }
 
     #[test]
@@ -212,7 +217,7 @@ mod tests {
 
     #[test]
     fn unsuback_decode_failure_bad_fixed_header() {
-        let packet = Box::new(UnsubackPacket {
+        let packet = UnsubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 UnsubackReasonCode::ImplementationSpecificError,
@@ -220,20 +225,20 @@ mod tests {
                 UnsubackReasonCode::TopicNameInvalid
             ],
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsuback(packet), 9);
     }
 
     #[test]
     fn unsuback_decode_failure_reason_code_invalid() {
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1
             ],
             ..Default::default()
-        });
+        };
 
         let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -253,14 +258,14 @@ mod tests {
     #[test]
     fn unsuback_decode_failure_duplicate_reason_string() {
 
-        let packet = Box::new(UnsubackPacket {
+        let packet = UnsubackPacket {
             packet_id : 1023,
             reason_string: Some("derp".to_string()),
             reason_codes : vec![
                 UnsubackReasonCode::UnspecifiedError
             ],
             ..Default::default()
-        });
+        };
 
         let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();

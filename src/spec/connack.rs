@@ -268,38 +268,43 @@ fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket)
     Ok(())
 }
 
-pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<ConnackPacket>> {
-    let mut packet = Box::new(ConnackPacket { ..Default::default() });
+pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != (PACKET_TYPE_CONNACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    if mutable_body.len() == 0 {
-        return Err(Mqtt5Error::MalformedPacket);
+    let mut box_packet = Box::new(MqttPacket::Connack(ConnackPacket { ..Default::default() }));
+
+    if let MqttPacket::Connack(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        if mutable_body.len() == 0 {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let flags: u8 = mutable_body[0];
+        mutable_body = &mutable_body[1..];
+
+        if flags == 1 {
+            packet.session_present = true;
+        } else if flags != 0 {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_connect_reason_code)?;
+
+        let mut properties_length: usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length != mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        decode_connack_properties(mutable_body, packet)?;
+
+        return Ok(box_packet);
     }
 
-    let flags : u8 = mutable_body[0];
-    mutable_body = &mutable_body[1..];
-
-    if flags == 1 {
-        packet.session_present = true;
-    } else if flags != 0 {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_connect_reason_code)?;
-
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    decode_connack_properties(mutable_body, &mut packet)?;
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Result<()> {
@@ -336,26 +341,26 @@ mod tests {
 
     #[test]
     fn connack_round_trip_encode_decode_default() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }
 
     #[test]
     fn connack_round_trip_encode_decode_required() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Banned,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connack(packet)));
     }
 
-    fn create_all_properties_connack_packet() -> Box<ConnackPacket> {
-        let packet = Box::new(ConnackPacket {
+    fn create_all_properties_connack_packet() -> ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
 
@@ -380,7 +385,7 @@ mod tests {
             authentication_method: Some("Sekrit".to_string()),
             authentication_data: Some("TopSekrit".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         packet
     }
@@ -394,22 +399,22 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_bad_fixed_header() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Banned,
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Connack(packet), 5);
     }
 
     #[test]
     fn connack_decode_failure_bad_variable_header_flags() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Banned,
             ..Default::default()
-        });
+        };
 
         let corrupt_variable_header_flags = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -425,11 +430,11 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_bad_reason_code() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             ..Default::default()
-        });
+        };
 
         let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -445,12 +450,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_session_expiry_interval() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             session_expiry_interval : Some(3600),
             ..Default::default()
-        });
+        };
 
         let duplicate_session_expiry_interval = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -476,12 +481,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_receive_maximum() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             receive_maximum : Some(10),
             ..Default::default()
-        });
+        };
 
         let duplicate_receive_maximum = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -505,12 +510,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_maximum_qos() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             maximum_qos : Some(QualityOfService::AtLeastOnce),
             ..Default::default()
-        });
+        };
 
         let duplicate_maximum_qos = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -533,12 +538,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_invalid_maximum_qos() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             maximum_qos : Some(QualityOfService::AtLeastOnce),
             ..Default::default()
-        });
+        };
 
         let invalidate_maximum_qos = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -553,12 +558,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_retain_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             retain_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let duplicate_retain_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -581,12 +586,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_invalid_retain_available() {
-        let packet = Box::new(ConnackPacket {
-            session_present : true,
-            reason_code : ConnectReasonCode::Success,
-            retain_available : Some(true),
+        let packet = ConnackPacket {
+            session_present: true,
+            reason_code: ConnectReasonCode::Success,
+            retain_available: Some(true),
             ..Default::default()
-        });
+        };
 
         let invalidate_retain_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -601,12 +606,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_maximum_packet_size() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             maximum_packet_size : Some(128 * 1024),
             ..Default::default()
-        });
+        };
 
         let duplicate_maximum_packet_size = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -632,12 +637,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_assigned_client_identifier() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             assigned_client_identifier : Some("a".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_assigned_client_identifier = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -663,12 +668,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_topic_alias_maximum() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             topic_alias_maximum : Some(12),
             ..Default::default()
-        });
+        };
 
         let duplicate_topic_alias_maximum = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -692,12 +697,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_reason_string() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             reason_string : Some("What".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -723,12 +728,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_wildcard_subscription_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             wildcard_subscriptions_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let duplicate_wildcard_subscriptions_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -751,12 +756,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_invalid_wildcard_subscription_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             wildcard_subscriptions_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let invalidate_wildcard_subscriptions_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -771,12 +776,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_subscription_identifiers_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             subscription_identifiers_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let duplicate_subscription_identifiers_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -799,12 +804,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_invalid_subscription_identifiers_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             subscription_identifiers_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let invalidate_subscription_identifiers_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -819,12 +824,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_shared_subscription_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             shared_subscriptions_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let duplicate_shared_subscriptions_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -847,12 +852,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_invalid_shared_subscription_available() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             shared_subscriptions_available : Some(true),
             ..Default::default()
-        });
+        };
 
         let invalidate_shared_subscriptions_available = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -867,12 +872,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_server_keep_alive() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             server_keep_alive : Some(1200),
             ..Default::default()
-        });
+        };
 
         let duplicate_server_keep_alive = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -896,12 +901,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_response_information() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             response_information : Some("A/topic".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_response_information = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -927,12 +932,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_server_reference() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             server_reference : Some("fail.com".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_server_reference = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -960,12 +965,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_authentication_method() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             authentication_method : Some("rock-paper-scissors".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_authentication_method = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -993,12 +998,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_duplicate_authentication_data() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             authentication_data : Some("privatekey".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         let duplicate_authentication_data = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -1026,12 +1031,12 @@ mod tests {
 
     #[test]
     fn connack_decode_failure_packet_size() {
-        let packet = Box::new(ConnackPacket {
+        let packet = ConnackPacket {
             session_present : true,
             reason_code : ConnectReasonCode::Success,
             authentication_data : Some("privatekey".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         do_inbound_size_decode_failure_test(&MqttPacket::Connack(packet));
     }

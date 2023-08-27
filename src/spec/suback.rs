@@ -87,7 +87,6 @@ pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, _: &EncodingCon
     Ok(())
 }
 
-
 fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
@@ -105,35 +104,39 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
     Ok(())
 }
 
-pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<SubackPacket>> {
-    let mut packet = Box::new(SubackPacket { ..Default::default() });
-
+pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_SUBACK << 4) {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+    let mut box_packet = Box::new(MqttPacket::Suback(SubackPacket { ..Default::default() }));
 
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length > mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
+    if let MqttPacket::Suback(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+        let mut properties_length: usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length > mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let properties_bytes = &mutable_body[..properties_length];
+        let payload_bytes = &mutable_body[properties_length..];
+
+        decode_suback_properties(properties_bytes, packet)?;
+
+        let reason_code_count = payload_bytes.len();
+        packet.reason_codes.reserve(reason_code_count);
+
+        for i in 0..reason_code_count {
+            packet.reason_codes.push(convert_u8_to_suback_reason_code(payload_bytes[i])?);
+        }
+
+        return Ok(box_packet);
     }
 
-    let properties_bytes = &mutable_body[..properties_length];
-    let payload_bytes = &mutable_body[properties_length..];
-
-    decode_suback_properties(properties_bytes, &mut packet)?;
-
-    let reason_code_count = payload_bytes.len();
-    packet.reason_codes.reserve(reason_code_count);
-
-    for i in 0..reason_code_count {
-        packet.reason_codes.push(convert_u8_to_suback_reason_code(payload_bytes[i])?);
-    }
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_suback_packet_fixed(packet: &SubackPacket) -> Mqtt5Result<()> {
@@ -167,16 +170,16 @@ mod tests {
 
     #[test]
     fn suback_round_trip_encode_decode_default() {
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
 
     #[test]
     fn suback_round_trip_encode_decode_required() {
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1,
@@ -184,13 +187,13 @@ mod tests {
                 SubackReasonCode::SubscriptionIdentifiersNotSupported,
             ],
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Suback(packet)));
     }
 
-    fn create_suback_all_properties() -> Box<SubackPacket> {
-        Box::new(SubackPacket {
+    fn create_suback_all_properties() -> SubackPacket {
+        SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos2,
@@ -202,7 +205,7 @@ mod tests {
                 UserProperty{name: "This".to_string(), value: "wasfast".to_string()},
                 UserProperty{name: "Onepacket".to_string(), value: "left".to_string()},
             ))
-        })
+        }
     }
 
     #[test]
@@ -214,7 +217,7 @@ mod tests {
 
     #[test]
     fn suback_decode_failure_bad_fixed_header() {
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1,
@@ -222,20 +225,20 @@ mod tests {
                 SubackReasonCode::SubscriptionIdentifiersNotSupported,
             ],
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Suback(packet), 15);
     }
 
     #[test]
     fn suback_decode_failure_reason_code_invalid() {
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             packet_id : 1023,
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1
             ],
             ..Default::default()
-        });
+        };
 
         let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -255,14 +258,14 @@ mod tests {
     #[test]
     fn suback_decode_failure_duplicate_reason_string() {
 
-        let packet = Box::new(SubackPacket {
+        let packet = SubackPacket {
             packet_id : 1023,
             reason_string: Some("derp".to_string()),
             reason_codes : vec![
                 SubackReasonCode::GrantedQos1
             ],
             ..Default::default()
-        });
+        };
 
         let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();

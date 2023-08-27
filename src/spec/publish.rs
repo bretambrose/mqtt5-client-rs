@@ -4,6 +4,7 @@
  */
 
 use crate::*;
+use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
@@ -13,7 +14,6 @@ use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
-use crate::alias::OutboundAliasResolution;
 
 /// Data model of an [MQTT5 PUBLISH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100) packet
 #[derive(Clone, Debug, Default)]
@@ -301,43 +301,48 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
     Ok(())
 }
 
-pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<PublishPacket>> {
-    let mut packet = Box::new(PublishPacket { ..Default::default() });
+pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
-    if (first_byte & PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG) != 0 {
-        packet.duplicate = true;
+    let mut box_packet = Box::new(MqttPacket::Publish(PublishPacket { ..Default::default() }));
+
+    if let MqttPacket::Publish(packet) = box_packet.as_mut() {
+        if (first_byte & PUBLISH_PACKET_FIXED_HEADER_DUPLICATE_FLAG) != 0 {
+            packet.duplicate = true;
+        }
+
+        if (first_byte & PUBLISH_PACKET_FIXED_HEADER_RETAIN_FLAG) != 0 {
+            packet.retain = true;
+        }
+
+        packet.qos = convert_u8_to_quality_of_service((first_byte >> 1) & QOS_MASK)?;
+
+        let mut mutable_body = packet_body;
+        let mut properties_length : usize = 0;
+
+        mutable_body = decode_length_prefixed_string(mutable_body, &mut packet.topic)?;
+
+        if packet.qos != QualityOfService::AtMostOnce {
+            mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+        }
+
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length > mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let properties_bytes = &mutable_body[..properties_length];
+        let payload_bytes = &mutable_body[properties_length..];
+
+        decode_publish_properties(properties_bytes, packet)?;
+
+        if payload_bytes.len() > 0 {
+            packet.payload = Some(payload_bytes.to_vec());
+        }
+
+        return Ok(box_packet);
     }
 
-    if (first_byte & PUBLISH_PACKET_FIXED_HEADER_RETAIN_FLAG) != 0 {
-        packet.retain = true;
-    }
-
-    packet.qos = convert_u8_to_quality_of_service((first_byte >> 1) & QOS_MASK)?;
-
-    let mut mutable_body = packet_body;
-    let mut properties_length : usize = 0;
-
-    mutable_body = decode_length_prefixed_string(mutable_body, &mut packet.topic)?;
-
-    if packet.qos != QualityOfService::AtMostOnce {
-        mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
-    }
-
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length > mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    let properties_bytes = &mutable_body[..properties_length];
-    let payload_bytes = &mutable_body[properties_length..];
-
-    decode_publish_properties(properties_bytes, &mut packet)?;
-
-    if payload_bytes.len() > 0 {
-        packet.payload = Some(payload_bytes.to_vec());
-    }
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_publish_packet_fixed(packet: &PublishPacket) -> Mqtt5Result<()> {
@@ -402,9 +407,9 @@ mod tests {
 
     #[test]
     fn publish_round_trip_encode_decode_default() {
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Publish(packet)));
     }
@@ -412,18 +417,18 @@ mod tests {
     #[test]
     fn publish_round_trip_encode_decode_basic() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             payload: Some("a payload".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Publish(packet)));
     }
 
-    fn create_publish_with_all_fields() -> Box<PublishPacket> {
-        return Box::new(PublishPacket {
+    fn create_publish_with_all_fields() -> PublishPacket {
+        return PublishPacket {
             packet_id: 47,
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
@@ -442,7 +447,7 @@ mod tests {
                 UserProperty{name: "name2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "name3".to_string(), value: "value3".to_string()},
             ))
-        });
+        };
     }
 
     #[test]
@@ -498,12 +503,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_message_expiry_interval_duplicate() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             message_expiry_interval_seconds: Some(1),
             ..Default::default()
-        });
+        };
 
         let duplicate_message_expiry_interval = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -531,11 +536,11 @@ mod tests {
     #[test]
     fn publish_decode_failure_invalid_qos() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             ..Default::default()
-        });
+        };
 
         let invalidate_qos = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -553,12 +558,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_invalid_payload_format_indicator() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             payload_format : Some(PayloadFormatIndicator::Utf8),
             ..Default::default()
-        });
+        };
 
         let invalidate_pfi = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -574,12 +579,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_duplicate_payload_format_indicator() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             payload_format : Some(PayloadFormatIndicator::Utf8),
             ..Default::default()
-        });
+        };
 
         let duplicate_pfi = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -599,12 +604,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_duplicate_message_expiry_interval() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             message_expiry_interval_seconds : Some(1),
             ..Default::default()
-        });
+        };
 
         let duplicate_message_expiry = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -627,12 +632,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_duplicate_response_topic() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             response_topic : Some("a/b".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_response_string = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -655,12 +660,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_duplicate_correlation_data() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             correlation_data : Some("a".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         let duplicate_correlation_data = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -683,12 +688,12 @@ mod tests {
     #[test]
     fn publish_decode_failure_duplicate_content_type() {
 
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             content_type : Some("JSON".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_content_type = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -710,12 +715,12 @@ mod tests {
 
     #[test]
     fn publish_decode_failure_inbound_packet_size() {
-        let packet = Box::new(PublishPacket {
+        let packet = PublishPacket {
             topic: "hello/world".to_string(),
             qos: QualityOfService::AtLeastOnce,
             payload: Some("A very nice payload.  Much wow.".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         do_inbound_size_decode_failure_test(&MqttPacket::Publish(packet));
     }

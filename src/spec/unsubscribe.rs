@@ -100,35 +100,40 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
     Ok(())
 }
 
-pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<UnsubscribePacket>> {
-    let mut packet = Box::new(UnsubscribePacket { ..Default::default() });
+pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != UNSUBSCRIBE_FIRST_BYTE {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+    let mut box_packet = Box::new(MqttPacket::Unsubscribe(UnsubscribePacket { ..Default::default() }));
 
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length > mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
+    if let MqttPacket::Unsubscribe(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+
+        let mut properties_length: usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length > mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        let properties_bytes = &mutable_body[..properties_length];
+        let mut payload_bytes = &mutable_body[properties_length..];
+
+        decode_unsubscribe_properties(properties_bytes, packet)?;
+
+        while payload_bytes.len() > 0 {
+            let mut topic_filter = String::new();
+            payload_bytes = decode_length_prefixed_string(payload_bytes, &mut topic_filter)?;
+
+            packet.topic_filters.push(topic_filter);
+        }
+
+        return Ok(box_packet);
     }
 
-    let properties_bytes = &mutable_body[..properties_length];
-    let mut payload_bytes = &mutable_body[properties_length..];
-
-    decode_unsubscribe_properties(properties_bytes, &mut packet)?;
-
-    while payload_bytes.len() > 0 {
-        let mut topic_filter = String::new();
-        payload_bytes = decode_length_prefixed_string(payload_bytes, &mut topic_filter)?;
-
-        packet.topic_filters.push(topic_filter);
-    }
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 #[cfg(test)]
@@ -139,27 +144,27 @@ mod tests {
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_default() {
-        let packet = Box::new(UnsubscribePacket {
+        let packet = UnsubscribePacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_basic() {
-        let packet = Box::new(UnsubscribePacket {
+        let packet = UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![ "hello/world".to_string() ],
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
     #[test]
     fn unsubscribe_round_trip_encode_decode_all_properties() {
-        let packet = Box::new(UnsubscribePacket {
+        let packet = UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![
                 "hello/world".to_string(),
@@ -169,18 +174,18 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Clickergames".to_string(), value: "arelame".to_string()},
             )),
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
     #[test]
     fn unsubscribe_decode_failure_bad_fixed_header() {
-        let packet = Box::new(UnsubscribePacket {
+        let packet = UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![ "hello/world".to_string() ],
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsubscribe(packet), 14);
     }

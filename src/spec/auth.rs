@@ -136,29 +136,32 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
     Ok(())
 }
 
-pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<AuthPacket>> {
-    let mut packet = Box::new(AuthPacket { ..Default::default() });
-
+pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_AUTH << 4) {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    if mutable_body.len() == 0 {
-        return Ok(packet);
+    let mut box_packet = Box::new(MqttPacket::Auth(AuthPacket { ..Default::default() }));
+    if let MqttPacket::Auth(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        if mutable_body.len() == 0 {
+            return Ok(box_packet);
+        }
+
+        mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_authenticate_reason_code)?;
+
+        let mut properties_length : usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length != mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        decode_auth_properties(mutable_body, packet)?;
+
+        return Ok(box_packet);
     }
 
-    mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_authenticate_reason_code)?;
-
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    decode_auth_properties(mutable_body, &mut packet)?;
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()> {
@@ -205,25 +208,25 @@ mod tests {
 
     #[test]
     fn auth_round_trip_encode_decode_default() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
     }
 
     #[test]
     fn auth_round_trip_encode_decode_required() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Auth(packet)));
     }
 
-    fn create_all_properties_auth_packet() -> Box<AuthPacket> {
-        Box::new(AuthPacket {
+    fn create_all_properties_auth_packet() -> AuthPacket {
+        AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             authentication_method : Some("UnbreakableAuthExchange".to_string()),
             authentication_data : Some("Noonewillguessthis".as_bytes().to_vec()),
@@ -232,7 +235,7 @@ mod tests {
                 UserProperty{name: "Roblox".to_string(), value: "Wheredidmymoneygo".to_string()},
                 UserProperty{name: "Beeswarmsimulator".to_string(), value: "Lootbox".to_string()},
             )),
-        })
+        }
     }
 
     #[test]
@@ -244,20 +247,20 @@ mod tests {
 
     #[test]
     fn auth_decode_failure_bad_fixed_header() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Auth(packet), 1);
     }
 
     #[test]
     fn auth_decode_failure_bad_reason_code() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             ..Default::default()
-        });
+        };
 
         let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -273,11 +276,11 @@ mod tests {
 
     #[test]
     fn auth_decode_failure_duplicate_authentication_method() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             authentication_method : Some("A".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_authentication_method = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -302,11 +305,11 @@ mod tests {
 
     #[test]
     fn auth_decode_failure_duplicate_authentication_data() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             authentication_data : Some("A".as_bytes().to_vec()),
             ..Default::default()
-        });
+        };
 
         let duplicate_authentication_data = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -331,11 +334,11 @@ mod tests {
 
     #[test]
     fn auth_decode_failure_duplicate_reason_string() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             reason_string : Some("Derp".to_string()),
             ..Default::default()
-        });
+        };
 
         let duplicate_reason_string = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -361,11 +364,11 @@ mod tests {
 
     #[test]
     fn auth_decode_failure_packet_size() {
-        let packet = Box::new(AuthPacket {
+        let packet = AuthPacket {
             reason_code : AuthenticateReasonCode::ContinueAuthentication,
             reason_string : Some("Derp".to_string()),
             ..Default::default()
-        });
+        };
 
         do_inbound_size_decode_failure_test(&MqttPacket::Auth(packet));
     }

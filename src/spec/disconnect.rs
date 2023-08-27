@@ -137,32 +137,36 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
     Ok(())
 }
 
-pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<DisconnectPacket>> {
-    let mut packet = Box::new(DisconnectPacket { ..Default::default() });
-
+pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    if mutable_body.len() == 0 {
-        return Ok(packet);
+    let mut box_packet = Box::new(MqttPacket::Disconnect(DisconnectPacket { ..Default::default() }));
+
+    if let MqttPacket::Disconnect(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        if mutable_body.len() == 0 {
+            return Ok(box_packet);
+        }
+
+        mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_disconnect_reason_code)?;
+        if mutable_body.len() == 0 {
+            return Ok(box_packet);
+        }
+
+        let mut properties_length : usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length != mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
+        }
+
+        decode_disconnect_properties(mutable_body, packet)?;
+
+        return Ok(box_packet);
     }
 
-    mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_disconnect_reason_code)?;
-    if mutable_body.len() == 0 {
-        return Ok(packet);
-    }
-
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length != mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    decode_disconnect_properties(mutable_body, &mut packet)?;
-
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqtt5Result<()> {
@@ -217,35 +221,35 @@ mod tests {
 
     #[test]
     fn disconnect_round_trip_encode_decode_default() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
     #[test]
     fn disconnect_round_trip_encode_decode_normal_reason_code() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             reason_code : DisconnectReasonCode::NormalDisconnection,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
     #[test]
     fn disconnect_round_trip_encode_decode_abnormal_reason_code() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             reason_code : DisconnectReasonCode::ConnectionRateExceeded,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Disconnect(packet)));
     }
 
-    fn create_disconnect_packet_all_properties() -> Box<DisconnectPacket> {
-         Box::new(DisconnectPacket {
+    fn create_disconnect_packet_all_properties() -> DisconnectPacket {
+         DisconnectPacket {
             reason_code : DisconnectReasonCode::ConnectionRateExceeded,
             reason_string : Some("I don't like you".to_string()),
             server_reference : Some("far.far.away.com".to_string()),
@@ -254,7 +258,7 @@ mod tests {
                 UserProperty{name: "Super".to_string(), value: "Meatboy".to_string()},
                 UserProperty{name: "Minsc".to_string(), value: "Boo".to_string()},
             )),
-        })
+        }
     }
 
     #[test]
@@ -266,20 +270,20 @@ mod tests {
 
     #[test]
     fn disconnect_decode_failure_bad_fixed_header() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             reason_code : DisconnectReasonCode::ConnectionRateExceeded,
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Disconnect(packet), 12);
     }
 
     #[test]
     fn disconnect_decode_failure_bad_reason_code() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             reason_code : DisconnectReasonCode::DisconnectWithWillMessage,
             ..Default::default()
-        });
+        };
 
         let corrupt_reason_code = | bytes: &[u8] | -> Vec<u8> {
             let mut clone = bytes.to_vec();
@@ -464,11 +468,11 @@ mod tests {
 
     #[test]
     fn disconnect_validate_failure_context_specific_outbound_size() {
-        let packet = Box::new(DisconnectPacket {
+        let packet = DisconnectPacket {
             reason_code: DisconnectReasonCode::MalformedPacket,
             reason_string: Some("The rats in the walls".to_string()),
             ..Default::default()
-        });
+        };
 
         do_outbound_size_validate_failure_test(&MqttPacket::Disconnect(packet), Mqtt5Error::DisconnectPacketValidation);
     }

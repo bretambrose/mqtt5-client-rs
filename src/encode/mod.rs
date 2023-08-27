@@ -5,11 +5,10 @@
 
 pub(crate) mod utils;
 
+use crate::*;
 use crate::alias::*;
 use crate::encode::utils::*;
 use crate::spec::*;
-use crate::{Mqtt5Error, Mqtt5Result};
-
 use crate::spec::auth::*;
 use crate::spec::connack::*;
 use crate::spec::connect::*;

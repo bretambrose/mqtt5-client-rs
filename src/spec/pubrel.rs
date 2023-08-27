@@ -47,7 +47,7 @@ define_ack_packet_user_property_accessor!(get_pubrel_packet_user_property, Pubre
 define_ack_packet_encoding_impl!(write_pubrel_encoding_steps, PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
 
 define_ack_packet_decode_properties_function!(decode_pubrel_properties, PubrelPacket);
-define_ack_packet_decode_function!(decode_pubrel_packet, PubrelPacket, PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
+define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
 
 pub(crate) fn validate_pubrel_packet_fixed(packet: &PubrelPacket) -> Mqtt5Result<()> {
 
@@ -79,9 +79,9 @@ mod tests {
 
     #[test]
     fn pubrel_round_trip_encode_decode_default() {
-        let packet = Box::new(PubrelPacket {
+        let packet = PubrelPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
     }
@@ -89,11 +89,11 @@ mod tests {
     #[test]
     fn pubrel_round_trip_encode_decode_success_no_props() {
 
-        let packet = Box::new(PubrelPacket {
+        let packet = PubrelPacket {
             packet_id: 12,
             reason_code: PubrelReasonCode::Success,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
     }
@@ -101,11 +101,11 @@ mod tests {
     #[test]
     fn pubrel_round_trip_encode_decode_failure_no_props() {
 
-        let packet = Box::new(PubrelPacket {
+        let packet = PubrelPacket {
             packet_id: 8193,
             reason_code: PubrelReasonCode::PacketIdentifierNotFound,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
     }
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn pubrel_round_trip_encode_decode_success_with_props() {
 
-        let packet = Box::new(PubrelPacket {
+        let packet = PubrelPacket {
             packet_id: 10253,
             reason_code: PubrelReasonCode::Success,
             reason_string: Some("Qos2, I can do this.  Believe in me.".to_string()),
@@ -122,13 +122,13 @@ mod tests {
                 UserProperty{name: "pubrel2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "pubrel2".to_string(), value: "value3".to_string()},
             ))
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Pubrel(packet)));
     }
 
-    fn create_pubrel_with_all_properties() -> Box<PubrelPacket> {
-        Box::new(PubrelPacket {
+    fn create_pubrel_with_all_properties() -> PubrelPacket {
+        PubrelPacket {
             packet_id: 12500,
             reason_code: PubrelReasonCode::PacketIdentifierNotFound,
             reason_string: Some("Aw shucks, I forgot what I was doing.  Sorry!".to_string()),
@@ -136,7 +136,7 @@ mod tests {
                 UserProperty{name: "hello1".to_string(), value: "squidward".to_string()},
                 UserProperty{name: "patrick".to_string(), value: "star".to_string()},
             ))
-        })
+        }
     }
 
     #[test]

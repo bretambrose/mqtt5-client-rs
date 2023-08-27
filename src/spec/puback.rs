@@ -47,7 +47,7 @@ define_ack_packet_user_property_accessor!(get_puback_packet_user_property, Pubac
 define_ack_packet_encoding_impl!(write_puback_encoding_steps, PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
 
 define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket);
-define_ack_packet_decode_function!(decode_puback_packet, PubackPacket, PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
+define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
 
 pub(crate) fn validate_puback_packet_fixed(packet: &PubackPacket) -> Mqtt5Result<()> {
 
@@ -84,9 +84,9 @@ mod tests {
 
     #[test]
     fn puback_round_trip_encode_decode_default() {
-        let packet = Box::new(PubackPacket {
+        let packet = PubackPacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -94,11 +94,11 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_success_no_props() {
 
-        let packet = Box::new(PubackPacket {
+        let packet = PubackPacket {
             packet_id: 123,
             reason_code: PubackReasonCode::Success,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -106,11 +106,11 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_failure_no_props() {
 
-        let packet = Box::new(PubackPacket {
+        let packet = PubackPacket {
             packet_id: 16384,
             reason_code: PubackReasonCode::NotAuthorized,
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn puback_round_trip_encode_decode_success_with_props() {
 
-        let packet = Box::new(PubackPacket {
+        let packet = PubackPacket {
             packet_id: 1025,
             reason_code: PubackReasonCode::Success,
             reason_string: Some("This was the best publish I've ever seen.  Take a bow.".to_string()),
@@ -127,13 +127,13 @@ mod tests {
                 UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
                 UserProperty{name: "puback2".to_string(), value: "value3".to_string()},
             ))
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }
 
-    fn create_puback_with_all_properties() -> Box<PubackPacket> {
-         Box::new(PubackPacket {
+    fn create_puback_with_all_properties() -> PubackPacket {
+         PubackPacket {
             packet_id: 1025,
             reason_code: PubackReasonCode::ImplementationSpecificError,
             reason_string: Some("Wow!  What a terrible publish.  You should be ashamed.".to_string()),
@@ -141,7 +141,7 @@ mod tests {
                 UserProperty{name: "puback1".to_string(), value: "value1".to_string()},
                 UserProperty{name: "puback2".to_string(), value: "value2".to_string()},
             ))
-        })
+        }
     }
 
     #[test]

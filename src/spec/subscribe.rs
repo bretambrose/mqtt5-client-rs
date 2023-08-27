@@ -127,53 +127,57 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
     Ok(())
 }
 
-pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<SubscribePacket>> {
-    let mut packet = Box::new(SubscribePacket { ..Default::default() });
+pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let mut mutable_body = packet_body;
-    mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+    let mut box_packet = Box::new(MqttPacket::Subscribe(SubscribePacket { ..Default::default() }));
+    if let MqttPacket::Subscribe(packet) = box_packet.as_mut() {
+        let mut mutable_body = packet_body;
+        mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
 
-    let mut properties_length : usize = 0;
-    mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-    if properties_length > mutable_body.len() {
-        return Err(Mqtt5Error::MalformedPacket);
-    }
-
-    let properties_bytes = &mutable_body[..properties_length];
-    let mut payload_bytes = &mutable_body[properties_length..];
-
-    decode_subscribe_properties(properties_bytes, &mut packet)?;
-
-    while payload_bytes.len() > 0 {
-        let mut subscription = Subscription {
-            ..Default::default()
-        };
-
-        payload_bytes = decode_length_prefixed_string(payload_bytes, &mut subscription.topic_filter)?;
-
-        let mut subscription_options : u8 = 0;
-        payload_bytes = decode_u8(payload_bytes, &mut subscription_options)?;
-
-        subscription.qos = convert_u8_to_quality_of_service(subscription_options & 0x03)?;
-
-        if (subscription_options & SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK) != 0 {
-            subscription.no_local = true;
+        let mut properties_length: usize = 0;
+        mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+        if properties_length > mutable_body.len() {
+            return Err(Mqtt5Error::MalformedPacket);
         }
 
-        if (subscription_options & SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK) != 0 {
-            subscription.retain_as_published = true;
+        let properties_bytes = &mutable_body[..properties_length];
+        let mut payload_bytes = &mutable_body[properties_length..];
+
+        decode_subscribe_properties(properties_bytes, packet)?;
+
+        while payload_bytes.len() > 0 {
+            let mut subscription = Subscription {
+                ..Default::default()
+            };
+
+            payload_bytes = decode_length_prefixed_string(payload_bytes, &mut subscription.topic_filter)?;
+
+            let mut subscription_options: u8 = 0;
+            payload_bytes = decode_u8(payload_bytes, &mut subscription_options)?;
+
+            subscription.qos = convert_u8_to_quality_of_service(subscription_options & 0x03)?;
+
+            if (subscription_options & SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK) != 0 {
+                subscription.no_local = true;
+            }
+
+            if (subscription_options & SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK) != 0 {
+                subscription.retain_as_published = true;
+            }
+
+            subscription.retain_handling_type = convert_u8_to_retain_handling_type((subscription_options >> SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT) & 0x03)?;
+
+            packet.subscriptions.push(subscription);
         }
 
-        subscription.retain_handling_type = convert_u8_to_retain_handling_type((subscription_options >> SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT) & 0x03)?;
-
-        packet.subscriptions.push(subscription);
+        return Ok(box_packet);
     }
 
-    Ok(packet)
+    Err(Mqtt5Error::Unknown)
 }
 
 #[cfg(test)]
@@ -184,27 +188,27 @@ mod tests {
 
     #[test]
     fn subscribe_round_trip_encode_decode_default() {
-        let packet = Box::new(SubscribePacket {
+        let packet = SubscribePacket {
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
     #[test]
     fn subscribe_round_trip_encode_decode_basic() {
-        let packet = Box::new(SubscribePacket {
+        let packet = SubscribePacket {
             packet_id : 123,
             subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
             ..Default::default()
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
     #[test]
     fn subscribe_round_trip_encode_decode_all_properties() {
-        let packet = Box::new(SubscribePacket {
+        let packet = SubscribePacket {
             packet_id : 123,
             subscriptions : vec![
                 Subscription {
@@ -226,18 +230,18 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Worms".to_string(), value: "inmyhead".to_string()},
             )),
-        });
+        };
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
     #[test]
     fn subscribe_decode_failure_bad_fixed_header() {
-        let packet = Box::new(SubscribePacket {
+        let packet = SubscribePacket {
             packet_id : 123,
             subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
             ..Default::default()
-        });
+        };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Subscribe(packet), 7);
     }

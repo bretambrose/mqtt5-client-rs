@@ -292,36 +292,40 @@ macro_rules! define_ack_packet_decode_properties_function {
 pub(crate) use define_ack_packet_decode_properties_function;
 
 macro_rules! define_ack_packet_decode_function {
-    ($function_name: ident, $packet_type: ident, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
-        pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<$packet_type>> {
-            let mut packet = Box::new($packet_type { ..Default::default() });
-
+    ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
+        pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
             if first_byte != ($packet_type_value << 4) {
                 return Err(Mqtt5Error::MalformedPacket);
             }
 
-            let mut mutable_body = packet_body;
-            mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
-            if mutable_body.len() == 0 {
-                /* Success is the default, so nothing to do */
-                return Ok(packet);
+            let mut box_packet = Box::new(MqttPacket::$mqtt_packet_type($packet_type { ..Default::default() }));
+
+            if let MqttPacket::$mqtt_packet_type(packet) = box_packet.as_mut() {
+                let mut mutable_body = packet_body;
+                mutable_body = decode_u16(mutable_body, &mut packet.packet_id)?;
+                if mutable_body.len() == 0 {
+                    /* Success is the default, so nothing to do */
+                    return Ok(box_packet);
+                }
+
+                mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, $reason_code_converter_function_name)?;
+                if mutable_body.len() == 0 {
+                    return Ok(box_packet);
+                }
+
+                /* it's a mystery why the specification adds this field; it's completely unnecessary */
+                let mut properties_length = 0;
+                mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
+                if properties_length != mutable_body.len() {
+                    return Err(Mqtt5Error::MalformedPacket);
+                }
+
+                $decode_properties_function_name(mutable_body, packet)?;
+
+                return Ok(box_packet)
             }
 
-            mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, $reason_code_converter_function_name)?;
-            if mutable_body.len() == 0 {
-                return Ok(packet);
-            }
-
-            /* it's a mystery why the specification adds this field; it's completely unnecessary */
-            let mut properties_length = 0;
-            mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
-            if properties_length != mutable_body.len() {
-                return Err(Mqtt5Error::MalformedPacket);
-            }
-
-            $decode_properties_function_name(mutable_body, &mut packet)?;
-
-            Ok(packet)
+            Err(Mqtt5Error::Unknown)
         }
     };
 }

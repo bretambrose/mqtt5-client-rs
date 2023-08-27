@@ -9,7 +9,7 @@ use crate::*;
 use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
-use crate::encode::utils::MAXIMUM_VARIABLE_LENGTH_INTEGER;
+use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
@@ -51,7 +51,7 @@ pub(crate) struct DecodingContext {
 }
 
 pub(crate) struct DecoderOptions {
-    pub packet_stream: std::sync::mpsc::Sender<MqttPacket>
+    pub packet_stream: std::sync::mpsc::Sender<Box<MqttPacket>>
 }
 
 pub(crate) struct Decoder {
@@ -66,34 +66,25 @@ pub(crate) struct Decoder {
     remaining_length : Option<usize>,
 }
 
-macro_rules! decode_packet_by_type {
-    ($decode_function: ident, $packet_type: ident, $first_byte: ident, $packet_body: ident) => {
-        match $decode_function($first_byte, $packet_body) {
-            Ok(packet) => { return Ok(MqttPacket::$packet_type(packet)); }
-            Err(err) => { return Err(err); }
-        }
-    };
-}
-
-fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<MqttPacket> {
+fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     let packet_type = first_byte >> 4;
 
     match packet_type {
-        PACKET_TYPE_CONNECT => { decode_packet_by_type!(decode_connect_packet, Connect, first_byte, packet_body) }
-        PACKET_TYPE_CONNACK => { decode_packet_by_type!(decode_connack_packet, Connack, first_byte, packet_body) }
-        PACKET_TYPE_PUBLISH => { decode_packet_by_type!(decode_publish_packet, Publish, first_byte, packet_body) }
-        PACKET_TYPE_PUBACK => { decode_packet_by_type!(decode_puback_packet, Puback, first_byte, packet_body) }
-        PACKET_TYPE_PUBREC => { decode_packet_by_type!(decode_pubrec_packet, Pubrec, first_byte, packet_body) }
-        PACKET_TYPE_PUBREL => { decode_packet_by_type!(decode_pubrel_packet, Pubrel, first_byte, packet_body) }
-        PACKET_TYPE_PUBCOMP => { decode_packet_by_type!(decode_pubcomp_packet, Pubcomp, first_byte, packet_body) }
-        PACKET_TYPE_SUBSCRIBE => { decode_packet_by_type!(decode_subscribe_packet, Subscribe, first_byte, packet_body) }
-        PACKET_TYPE_SUBACK => { decode_packet_by_type!(decode_suback_packet, Suback, first_byte, packet_body) }
-        PACKET_TYPE_UNSUBSCRIBE => { decode_packet_by_type!(decode_unsubscribe_packet, Unsubscribe, first_byte, packet_body) }
-        PACKET_TYPE_UNSUBACK => { decode_packet_by_type!(decode_unsuback_packet, Unsuback, first_byte, packet_body) }
-        PACKET_TYPE_PINGREQ => { decode_packet_by_type!(decode_pingreq_packet, Pingreq, first_byte, packet_body) }
-        PACKET_TYPE_PINGRESP => { decode_packet_by_type!(decode_pingresp_packet, Pingresp, first_byte, packet_body) }
-        PACKET_TYPE_DISCONNECT => { decode_packet_by_type!(decode_disconnect_packet, Disconnect, first_byte, packet_body) }
-        PACKET_TYPE_AUTH => { decode_packet_by_type!(decode_auth_packet, Auth, first_byte, packet_body) }
+        PACKET_TYPE_CONNECT => { decode_connect_packet(first_byte, packet_body) }
+        PACKET_TYPE_CONNACK => { decode_connack_packet(first_byte, packet_body) }
+        PACKET_TYPE_PUBLISH => { decode_publish_packet(first_byte, packet_body) }
+        PACKET_TYPE_PUBACK => { decode_puback_packet(first_byte, packet_body) }
+        PACKET_TYPE_PUBREC => { decode_pubrec_packet(first_byte, packet_body) }
+        PACKET_TYPE_PUBREL => { decode_pubrel_packet(first_byte, packet_body) }
+        PACKET_TYPE_PUBCOMP => { decode_pubcomp_packet(first_byte, packet_body) }
+        PACKET_TYPE_SUBSCRIBE => { decode_subscribe_packet(first_byte, packet_body) }
+        PACKET_TYPE_SUBACK => { decode_suback_packet(first_byte, packet_body) }
+        PACKET_TYPE_UNSUBSCRIBE => { decode_unsubscribe_packet(first_byte, packet_body) }
+        PACKET_TYPE_UNSUBACK => { decode_unsuback_packet(first_byte, packet_body) }
+        PACKET_TYPE_PINGREQ => { decode_pingreq_packet(first_byte, packet_body) }
+        PACKET_TYPE_PINGRESP => { decode_pingresp_packet(first_byte, packet_body) }
+        PACKET_TYPE_DISCONNECT => { decode_disconnect_packet(first_byte, packet_body) }
+        PACKET_TYPE_AUTH => { decode_auth_packet(first_byte, packet_body) }
         _ => {
             return Err(Mqtt5Error::MalformedPacket);
         }
@@ -308,13 +299,13 @@ pub(crate) mod testing {
             let mut received_packet = receive_result.unwrap();
             matching_packets += 1;
 
-            if let MqttPacket::Publish(publish) = &mut received_packet {
+            if let MqttPacket::Publish(publish) = &mut *received_packet {
                 if let Err(_) = inbound_alias_resolver.resolve_topic_alias(&publish.topic_alias, &mut publish.topic) {
                     return false;
                 }
             }
 
-            assert_eq!(*packet, received_packet);
+            assert_eq!(*packet, *received_packet);
         }
 
         assert_eq!(encode_repetitions, matching_packets);
@@ -373,7 +364,7 @@ pub(crate) mod testing {
         assert_eq!(decode_result, Ok(()));
 
         let receive_result = packet_receiver.try_recv().unwrap();
-        assert_eq!(*packet, receive_result);
+        assert_eq!(*packet, *receive_result);
 
         let bad_encoded_bytes = mutator(good_encoded_bytes.as_slice());
 
@@ -407,7 +398,7 @@ pub(crate) mod testing {
         assert_eq!(decode_result, Ok(()));
 
         let receive_result = packet_receiver.try_recv().unwrap();
-        assert_eq!(*packet, receive_result);
+        assert_eq!(*packet, *receive_result);
 
         decoding_context.maximum_packet_size = (encoded_bytes.len() - 1) as u32;
 

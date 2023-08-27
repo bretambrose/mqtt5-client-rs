@@ -7,8 +7,8 @@
 /// Internal utilities to encode MQTT5 packets, based on the MQTT5 spec
 use std::collections::VecDeque;
 
-use crate::spec::{MqttPacket, UserProperty};
-use crate::{Mqtt5Error, Mqtt5Result};
+use crate::spec::*;
+use crate::*;
 
 pub(crate) enum EncodingStep {
     Uint8(u8),
