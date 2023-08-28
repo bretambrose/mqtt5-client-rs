@@ -147,11 +147,7 @@ pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
-    for filter in &packet.topic_filters {
-        if !is_valid_topic_filter(filter) {
-            return Err(Mqtt5Error::UnsubscribePacketValidation);
-        }
-    }
+    // topic filters are checked in detail in the internal validator
 
     validate_user_properties!(properties, &packet.user_properties, UnsubscribePacketValidation);
 
@@ -168,6 +164,12 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
 
     if packet.packet_id == 0 {
         return Err(Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    for filter in &packet.topic_filters {
+        if !is_topic_filter_valid_internal(filter, context) {
+            return Err(Mqtt5Error::UnsubscribePacketValidation);
+        }
     }
 
     Ok(())
@@ -199,9 +201,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 
-    #[test]
-    fn unsubscribe_round_trip_encode_decode_all_properties() {
-        let packet = UnsubscribePacket {
+    fn create_unsubscribe_all_properties() -> UnsubscribePacket {
+        UnsubscribePacket {
             packet_id : 123,
             topic_filters : vec![
                 "hello/world".to_string(),
@@ -211,7 +212,12 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Clickergames".to_string(), value: "arelame".to_string()},
             )),
-        };
+        }
+    }
+
+    #[test]
+    fn unsubscribe_round_trip_encode_decode_all_properties() {
+        let packet = create_unsubscribe_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }

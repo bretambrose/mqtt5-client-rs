@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+use crate::validate::*;
+
 macro_rules! validate_string_length {
     ($string_expr: expr, $error: ident) => {
         if $string_expr.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
@@ -196,7 +198,7 @@ macro_rules! test_ack_validate_failure_internal_packet_id_zero {
 pub(crate) use test_ack_validate_failure_internal_packet_id_zero;
 
 pub(crate) fn is_valid_topic(topic: &str) -> bool {
-    if topic.len() == 0 {
+    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
         return false;
     }
 
@@ -208,7 +210,7 @@ pub(crate) fn is_valid_topic(topic: &str) -> bool {
 }
 
 pub(crate) fn is_valid_topic_filter(topic: &str) -> bool {
-    if topic.len() == 0 {
+    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
         return false;
     }
 
@@ -226,6 +228,80 @@ pub(crate) fn is_valid_topic_filter(topic: &str) -> bool {
             return false;
         }
     }
+    true
+}
+
+// if the topic filter is not valid, then the other fields are not to be trusted
+struct TopicFilterProperties {
+    pub is_valid: bool,
+    pub is_shared: bool,
+    pub has_wildcard: bool
+}
+
+fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
+    let mut properties = TopicFilterProperties {
+        is_valid: true,
+        is_shared: false,
+        has_wildcard: false
+    };
+
+    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+        properties.is_valid = false;
+        return properties;
+    }
+
+    let mut has_share_prefix = false;
+    let mut has_share_name = false;
+    let mut seen_mlw = false;
+    for (index, segment) in  topic.split('/').enumerate() {
+        if seen_mlw {
+            properties.is_valid = false;
+            break;
+        }
+
+        if index == 0 && segment == "$share" {
+            has_share_prefix = true;
+        }
+
+        if index == 1 && has_share_prefix && segment.len() > 0 {
+            has_share_name = true;
+        }
+
+        if index == 2 && has_share_name {
+            properties.is_shared = true;
+        }
+
+        let has_wildcard = segment.contains(['#', '+']);
+        properties.has_wildcard |= has_wildcard;
+
+        if segment.len() == 1 {
+            if segment == "#" {
+                seen_mlw = true;
+            }
+        } else if has_wildcard {
+            properties.is_valid = false;
+            break;
+        }
+    }
+
+    properties
+}
+
+pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundValidationContext) -> bool {
+    let topic_filter_properties = compute_topic_filter_properties(filter);
+
+    if !topic_filter_properties.is_valid {
+        return false;
+    }
+
+    if topic_filter_properties.is_shared && !context.negotiated_settings.shared_subscriptions_available {
+        return false;
+    }
+
+    if topic_filter_properties.has_wildcard && !context.negotiated_settings.wildcard_subscriptions_available {
+        return false;
+    }
+
     true
 }
 
@@ -254,6 +330,7 @@ mod tests {
         assert_eq!(false, is_valid_topic("+/tennis/#"));
         assert_eq!(false, is_valid_topic("sport/+/player1"));
         assert_eq!(false, is_valid_topic("sport+"));
+        assert_eq!(false, is_valid_topic(&"s".repeat(70000).to_string()));
     }
 
     #[test]
@@ -279,5 +356,6 @@ mod tests {
         assert_eq!(false, is_valid_topic_filter("sport/tennis#"));
         assert_eq!(false, is_valid_topic_filter("sport/tennis/#/ranking"));
         assert_eq!(false, is_valid_topic_filter("sport+"));
+        assert_eq!(false, is_valid_topic_filter(&"s".repeat(70000).to_string()));
     }
 }
