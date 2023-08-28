@@ -400,6 +400,10 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
+    if packet.retain && !context.negotiated_settings.retain_available {
+        return Err(Mqtt5Error::PublishPacketValidation);
+    }
+
     Ok(())
 }
 

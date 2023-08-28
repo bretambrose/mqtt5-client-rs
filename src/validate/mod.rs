@@ -148,6 +148,9 @@ pub(crate) mod testing {
         };
 
         pinned_context.settings.maximum_packet_size_to_server = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
+        pinned_context.settings.retain_available = true;
+        pinned_context.settings.wildcard_subscriptions_available = true;
+        pinned_context.settings.shared_subscriptions_available = true;
 
         pinned_context
     }
