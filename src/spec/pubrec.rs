@@ -49,27 +49,9 @@ define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, Pubr
 define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket);
 define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
 
-pub(crate) fn validate_pubrec_packet_fixed(packet: &PubrecPacket) -> Mqtt5Result<()> {
-
-    validate_optional_string_length!(reason, &packet.reason_string, PubrecPacketValidation);
-    validate_user_properties!(properties, &packet.user_properties, PubrecPacketValidation);
-
-    Ok(())
-}
-
-pub(crate) fn validate_pubrec_packet_context_specific(packet: &PubrecPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-
-    /* inbound size is checked on decode, outbound size is checked here */
-    if context.is_outbound {
-        let (total_remaining_length, _) = compute_pubrec_packet_length_properties(packet)?;
-        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
-            return Err(Mqtt5Error::PubrecPacketValidation);
-        }
-    }
-
-    Ok(())
-}
+validate_ack_outbound!(validate_pubrec_packet_outbound, PubrecPacket, PubrecPacketValidation);
+validate_ack_outbound_internal!(validate_pubrec_packet_outbound_internal, PubrecPacket, PubrecPacketValidation, compute_pubrec_packet_length_properties);
+validate_ack_inbound_internal!(validate_pubrec_packet_inbound_internal, PubrecPacket, PubrecPacketValidation);
 
 #[cfg(test)]
 mod tests {
@@ -205,43 +187,9 @@ mod tests {
 
     use crate::validate::testing::*;
 
-    #[test]
-    fn pubrec_validate_success() {
-        let packet = create_pubrec_with_all_properties();
-
-        assert_eq!(validate_packet_fixed(&MqttPacket::Pubrec(packet)), Ok(()));
-    }
-
-    #[test]
-    fn pubrec_validate_failure_reason_string_length() {
-        let mut packet = create_pubrec_with_all_properties();
-        packet.reason_string = Some("A".repeat(128 * 1024).to_string());
-
-        assert_eq!(validate_packet_fixed(&MqttPacket::Pubrec(packet)), Err(Mqtt5Error::PubrecPacketValidation));
-    }
-
-    #[test]
-    fn pubrec_validate_failure_invalid_user_properties() {
-        let mut packet = create_pubrec_with_all_properties();
-        packet.user_properties = Some(create_invalid_user_properties());
-
-        assert_eq!(validate_packet_fixed(&MqttPacket::Pubrec(packet)), Err(Mqtt5Error::PubrecPacketValidation));
-    }
-
-    #[test]
-    fn pubrec_validate_success_context_specific() {
-        let packet = create_pubrec_with_all_properties();
-
-        let test_validation_context = create_pinned_validation_context();
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Pubrec(packet), &validation_context), Ok(()));
-    }
-
-    #[test]
-    fn pubrec_validate_failure_context_specific_outbound_size() {
-        let packet = create_pubrec_with_all_properties();
-
-        do_outbound_size_validate_failure_test(&MqttPacket::Pubrec(packet), Mqtt5Error::PubrecPacketValidation);
-    }
+    test_ack_validate_success!(pubrec_validate_success, Pubrec, create_pubrec_with_all_properties);
+    test_ack_validate_failure_reason_string_length!(pubrec_validate_failure_reason_string_length, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
+    test_ack_validate_failure_invalid_user_properties!(pubrec_validate_failure_invalid_user_properties, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
+    test_ack_validate_failure_outbound_size!(pubrec_validate_failure_outbound_size, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
+    test_ack_validate_failure_internal_packet_id_zero!(pubrec_validate_failure_internal_packet_id_zero, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
 }

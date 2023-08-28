@@ -16,26 +16,15 @@ use crate::spec::pubcomp::*;
 use crate::spec::publish::*;
 use crate::spec::pubrec::*;
 use crate::spec::pubrel::*;
-use crate::spec::suback::*;
-use crate::spec::unsuback::*;
+use crate::spec::subscribe::*;
+use crate::spec::unsubscribe::*;
 use crate::client::*;
 use crate::alias::*;
 
 pub(crate) const MAXIMUM_STRING_PROPERTY_LENGTH : usize = 65535;
 pub(crate) const MAXIMUM_BINARY_PROPERTY_LENGTH : usize = 65535;
 
-/*
-Dynamic validation flags/notes:
-
-Inbound utf-8 restrictions
-Outbound utf-8 restrictions
-Inbound payload format
-
-Outbound alias issues are dropped for the full topic
-
- */
-
-pub(crate) struct ValidationContext<'a> {
+pub(crate) struct OutboundValidationContext<'a> {
 
     // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
     pub negotiated_settings : &'a NegotiatedSettings,
@@ -43,10 +32,13 @@ pub(crate) struct ValidationContext<'a> {
     // session_expiry_interval for disconnect constraints
     pub client_config: &'a Mqtt5ClientOptions,
 
-    // true if this is destined for a broker, false if it is from a broker
-    pub is_outbound: bool,
-
     pub outbound_alias_resolution: Option<OutboundAliasResolution>
+}
+
+pub(crate) struct InboundValidationContext<'a> {
+
+    // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
+    pub negotiated_settings : &'a NegotiatedSettings,
 }
 
 fn validate_user_property(property: &UserProperty) -> Mqtt5Result<()> {
@@ -69,53 +61,72 @@ pub(crate) fn validate_user_properties(properties: &Vec<UserProperty>) -> Mqtt5R
     Ok(())
 }
 
-/// Validates all intrinsic packet properties against the MQTT5 spec requirements.
-/// The only property skipped is the total packet size (against the maximum variable length
-/// integer + 5) since we check packet size against the protocol-negotiated maximum later
-/// in the context_specific variant.  Packets that can be used before negotiation completes
-/// (auth, connect, connack) are the exception and do get a size check here.
-pub(crate) fn validate_packet_fixed(packet: &MqttPacket) -> Mqtt5Result<()> {
+/// Validates client-outbound packets against the MQTT5 spec requirements.
+///
+/// The validation applied here does not take into account any connection-bound state
+/// like maximum_qos, maximum_packet_size, etc...  Those constraints are checked in a different
+/// function.  This function is called synchronously on submitted packets before even crossing
+/// the async boundary into the client implementation.
+///
+/// Utf-8 codepoints are not currently checked by any validation function.
+pub(crate) fn validate_packet_outbound(packet: &MqttPacket) -> Mqtt5Result<()> {
     match packet {
-        MqttPacket::Auth(auth) => { validate_auth_packet_fixed(auth) }
-        MqttPacket::Connack(connack) => { validate_connack_packet_fixed(connack) }
-        MqttPacket::Connect(connect) => { validate_connect_packet_fixed(connect) }
-        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_fixed(disconnect) }
+        MqttPacket::Auth(auth) => { validate_auth_packet_outbound(auth) }
+        MqttPacket::Connect(connect) => { validate_connect_packet_outbound(connect) }
+        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_outbound(disconnect) }
         MqttPacket::Pingreq(_) => { Ok(()) }
-        MqttPacket::Pingresp(_) => { Ok(()) }
-        MqttPacket::Puback(puback) => { validate_puback_packet_fixed(puback) }
-        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_fixed(pubcomp) }
-        MqttPacket::Publish(publish) => { validate_publish_packet_fixed(publish) }
-        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_fixed(pubrec) }
-        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_fixed(pubrel) }
-        MqttPacket::Suback(suback) => { validate_suback_packet_fixed(suback) }
-        MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_fixed(unsuback) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_outbound(puback) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_outbound(pubcomp) }
+        MqttPacket::Publish(publish) => { validate_publish_packet_outbound(publish) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_outbound(pubrec) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_outbound(pubrel) }
+        MqttPacket::Subscribe(subscribe) => { validate_subscribe_packet_outbound(subscribe) }
+        MqttPacket::Unsubscribe(unsubscribe) => { validate_unsubscribe_packet_outbound(unsubscribe) }
         _ => {
-            Err(Mqtt5Error::Unimplemented)
+            Err(Mqtt5Error::ProtocolError)
         }
     }
 }
 
-/// Validates various context specific properties against the MQTT5 spec based on the current
-/// internal state of the client and its negotiated settings.
-///
-/// For example, validates against the negotiated maximum packet size, topic alias, etc...
-pub(crate) fn validate_packet_context_specific(packet: &MqttPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+/// Validates outbound packets against per-connection dynamic constraints.  Called internally
+/// right before a packet is seated as the current operation of the client.
+pub(crate) fn validate_packet_outbound_internal(packet: &MqttPacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
     match packet {
-        MqttPacket::Auth(auth) => { validate_auth_packet_context_specific(auth, context) }
-        MqttPacket::Connack(_) => { Ok(()) }
-        MqttPacket::Connect(_) => { Ok(()) }
-        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_context_specific(disconnect, context) }
+        MqttPacket::Auth(auth) => { validate_auth_packet_outbound_internal(auth, context) }
+        MqttPacket::Connect(connect) => { validate_connect_packet_outbound_internal(connect, context) }
+        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_outbound_internal(disconnect, context) }
         MqttPacket::Pingreq(_) => { Ok(()) }
-        MqttPacket::Pingresp(_) => { Ok(()) }
-        MqttPacket::Puback(puback) => { validate_puback_packet_context_specific(puback, context) }
-        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_context_specific(pubcomp, context) }
-        MqttPacket::Publish(publish) => { validate_publish_packet_context_specific(publish, context) }
-        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_context_specific(pubrec, context) }
-        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_context_specific(pubrel, context) }
-        MqttPacket::Suback(suback) => { validate_suback_packet_context_specific(suback, context) }
-        MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_context_specific(unsuback, context) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_outbound_internal(puback, context) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_outbound_internal(pubcomp, context) }
+        MqttPacket::Publish(publish) => { validate_publish_packet_outbound_internal(publish, context) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_outbound_internal(pubrec, context) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_outbound_internal(pubrel, context) }
+        MqttPacket::Subscribe(subscribe) => { validate_subscribe_packet_outbound_internal(subscribe, context) }
+        MqttPacket::Unsubscribe(unsubscribe) => { validate_unsubscribe_packet_outbound_internal(unsubscribe, context) }
         _ => {
-            Err(Mqtt5Error::Unimplemented)
+            Err(Mqtt5Error::ProtocolError)
+        }
+    }
+}
+
+/// Validates client-inbound packets against the MQTT5 spec requirements.  Many things can be
+/// skipped during inbound validation based on the fact that we assume the decoder created the
+/// packet, and so problems like invalid string or binary lengths are impossible.
+pub(crate) fn validate_packet_inbound_internal(packet: &MqttPacket, context: &InboundValidationContext) -> Mqtt5Result<()> {
+    match packet {
+        MqttPacket::Auth(auth) => { validate_auth_packet_inbound_internal(auth, context) }
+        MqttPacket::Connack(connack) => { validate_connack_packet_inbound_internal(connack, context) }
+        MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_inbound_internal(disconnect, context) }
+        MqttPacket::Pingresp(_) => { Ok(()) }
+        MqttPacket::Puback(puback) => { validate_puback_packet_inbound_internal(puback, context) }
+        MqttPacket::Pubcomp(pubcomp) => { validate_pubcomp_packet_inbound_internal(pubcomp, context) }
+        MqttPacket::Publish(publish) => { validate_publish_packet_inbound_internal(publish, context) }
+        MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_inbound_internal(pubrec, context) }
+        MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_inbound_internal(pubrel, context) }
+        MqttPacket::Suback(_) => { Ok(()) }
+        MqttPacket::Unsuback(_) => { Ok(()) }
+        _ => {
+            Err(Mqtt5Error::ProtocolError)
         }
     }
 }
@@ -141,12 +152,17 @@ pub(crate) mod testing {
         pinned_context
     }
 
-    pub(crate) fn create_validation_context_from_pinned(pinned: &PinnedValidationContext) -> ValidationContext {
-        ValidationContext {
+    pub(crate) fn create_outbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> OutboundValidationContext {
+        OutboundValidationContext {
             negotiated_settings : &pinned.settings,
             client_config : &pinned.config,
-            is_outbound : true,
             outbound_alias_resolution : None,
+        }
+    }
+
+    pub(crate) fn create_inbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> InboundValidationContext {
+        InboundValidationContext {
+            negotiated_settings : &pinned.settings,
         }
     }
 
@@ -163,13 +179,15 @@ pub(crate) mod testing {
         let encoded_bytes = encode_packet_for_test(packet);
 
         let mut test_validation_context = create_pinned_validation_context();
-        let validation_context1 = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(packet, &validation_context1), Ok(()));
+        let outbound_context1 = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(packet, &outbound_context1), Ok(()));
 
         test_validation_context.settings.maximum_packet_size_to_server = (encoded_bytes.len() - 1) as u32;
-        let validation_context2 = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(packet, &validation_context2), Err(error));
+        let outbound_context2 = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(packet, &outbound_context2), Err(error));
     }
 }

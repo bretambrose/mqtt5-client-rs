@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -178,6 +180,57 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
     }
 
     Err(Mqtt5Error::Unknown)
+}
+
+fn validate_outbound_subscription(subscription: &Subscription) -> Mqtt5Result<()> {
+    if !is_valid_topic_filter(&subscription.topic_filter) {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mqtt5Result<()> {
+
+    if packet.packet_id != 0 {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    if packet.subscriptions.len() == 0 {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    for subscription in &packet.subscriptions {
+        validate_outbound_subscription(subscription)?;
+    }
+
+    validate_user_properties!(properties, &packet.user_properties, SubscribePacketValidation);
+
+    Ok(())
+}
+
+fn validate_outbound_subscription_internal(subscription: &Subscription, context: &OutboundValidationContext) -> Mqtt5Result<()> {
+
+    Ok(())
+}
+
+pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
+
+    let (total_remaining_length, _) = compute_subscribe_packet_length_properties(packet)?;
+    let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    if packet.packet_id == 0 {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    for subscription in &packet.subscriptions {
+        validate_outbound_subscription_internal(subscription, context)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

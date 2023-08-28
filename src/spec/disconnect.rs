@@ -169,7 +169,7 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
     Err(Mqtt5Error::Unknown)
 }
 
-pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqtt5Result<()> {
+pub(crate) fn validate_disconnect_packet_outbound(packet: &DisconnectPacket) -> Mqtt5Result<()> {
 
     validate_optional_string_length!(reason_string, &packet.reason_string, DisconnectPacketValidation);
     validate_user_properties!(properties, &packet.user_properties, DisconnectPacketValidation);
@@ -178,36 +178,36 @@ pub(crate) fn validate_disconnect_packet_fixed(packet: &DisconnectPacket) -> Mqt
     Ok(())
 }
 
-pub(crate) fn validate_disconnect_packet_context_specific(packet: &DisconnectPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+pub(crate) fn validate_disconnect_packet_outbound_internal(packet: &DisconnectPacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
 
-    /* inbound size is checked on decode, outbound size is checked here */
-    if context.is_outbound {
-        let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
-        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
-            return Err(Mqtt5Error::DisconnectPacketValidation);
-        }
+    let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
+    let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::DisconnectPacketValidation);
     }
 
-    /* protocol error for the server to send us a session expiry interval property */
-    if !context.is_outbound {
-        if packet.session_expiry_interval_seconds.is_some() {
-            return Err(Mqtt5Error::DisconnectPacketValidation);
-        }
-    } else {
-        /*
-         * the client is not allowed to set a non zero session expiry if a zero session expiry
-         * was sent in the CONNECT.
-         */
-        let mut connect_session_expiry_interval = 0;
-        if let Some(connect) = &context.client_config.connect {
-            connect_session_expiry_interval = connect.session_expiry_interval_seconds.unwrap_or(0);
-        }
-        let disconnect_session_expiry_interval = packet.session_expiry_interval_seconds.unwrap_or(connect_session_expiry_interval);
+    /*
+     * the client is not allowed to set a non zero session expiry if a zero session expiry
+     * was sent in the CONNECT.
+     */
+    let mut connect_session_expiry_interval = 0;
+    if let Some(connect) = &context.client_config.connect {
+        connect_session_expiry_interval = connect.session_expiry_interval_seconds.unwrap_or(0);
+    }
+    let disconnect_session_expiry_interval = packet.session_expiry_interval_seconds.unwrap_or(connect_session_expiry_interval);
 
-        if connect_session_expiry_interval == 0 && disconnect_session_expiry_interval > 0 {
-            return Err(Mqtt5Error::DisconnectPacketValidation);
-        }
+    if connect_session_expiry_interval == 0 && disconnect_session_expiry_interval > 0 {
+        return Err(Mqtt5Error::DisconnectPacketValidation);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_disconnect_packet_inbound_internal(packet: &DisconnectPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
+
+    /* protocol error for the server to send us a session expiry interval property */
+    if packet.session_expiry_interval_seconds.is_some() {
+        return Err(Mqtt5Error::DisconnectPacketValidation);
     }
 
     Ok(())
@@ -388,9 +388,19 @@ mod tests {
 
     #[test]
     fn disconnect_validate_success() {
-        let packet = create_disconnect_packet_all_properties();
+        let mut packet = create_disconnect_packet_all_properties();
+        packet.session_expiry_interval_seconds = None;
+        let mqtt_packet = MqttPacket::Disconnect(packet);
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Ok(()));
+        assert_eq!(validate_packet_outbound(&mqtt_packet), Ok(()));
+
+        let test_validation_context = create_pinned_validation_context();
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&mqtt_packet, &outbound_validation_context), Ok(()));
+
+        let inbound_validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_inbound_internal(&mqtt_packet, &inbound_validation_context), Ok(()));
     }
 
     #[test]
@@ -398,7 +408,7 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.reason_string = Some("A".repeat(128 * 1024).to_string());
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -406,7 +416,7 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -414,42 +424,34 @@ mod tests {
         let mut packet = create_disconnect_packet_all_properties();
         packet.server_reference = Some("Z".repeat(65 * 1024).to_string());
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Disconnect(packet)), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
-    fn disconnect_validate_success_context_specific() {
-        let mut packet = create_disconnect_packet_all_properties();
-        packet.session_expiry_interval_seconds = None;
+    fn disconnect_validate_failure_inbound_session_expiry_interval_set_by_server() {
+        let packet = MqttPacket::Disconnect( DisconnectPacket {
+            reason_code: DisconnectReasonCode::ConnectionRateExceeded,
+            session_expiry_interval_seconds: Some(3600),
+            ..Default::default()
+        });
 
         let test_validation_context = create_pinned_validation_context();
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+        let validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Ok(()));
+        assert_eq!(validate_packet_inbound_internal(&packet, &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
-    fn disconnect_validate_failure_context_session_expiry_interval_set_by_server() {
-        let packet = create_disconnect_packet_all_properties();
-
-        let test_validation_context = create_pinned_validation_context();
-        let mut validation_context = create_validation_context_from_pinned(&test_validation_context);
-        validation_context.is_outbound = false;
-
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
-    }
-
-    #[test]
-    fn disconnect_validate_failure_context_session_expiry_interval_set_after_implicit_zero() {
+    fn disconnect_validate_failure_outbound_session_expiry_interval_set_after_implicit_zero() {
         let packet = create_disconnect_packet_all_properties();
 
         let mut test_validation_context = create_pinned_validation_context();
         test_validation_context.config.connect = Some(Box::new(ConnectPacket{
             ..Default::default()
         }));
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+        let validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_outbound_internal(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]
@@ -461,9 +463,9 @@ mod tests {
             session_expiry_interval_seconds : Some(0),
             ..Default::default()
         }));
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+        let validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
+        assert_eq!(validate_packet_outbound_internal(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
     }
 
     #[test]

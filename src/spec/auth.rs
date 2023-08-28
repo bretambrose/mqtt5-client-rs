@@ -164,14 +164,7 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
     Err(Mqtt5Error::Unknown)
 }
 
-pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()> {
-
-    // validate packet size against the theoretical maximum since this could be used
-    // before the connack establishes a different bound
-    let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
-    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
-        return Err(Mqtt5Error::AuthPacketValidation);
-    }
+pub(crate) fn validate_auth_packet_outbound(packet: &AuthPacket) -> Mqtt5Result<()> {
 
     if packet.authentication_method.is_none() {
         // while optional from an encode/decode perspective, method is required from a protocol
@@ -187,16 +180,26 @@ pub(crate) fn validate_auth_packet_fixed(packet: &AuthPacket) -> Mqtt5Result<()>
     Ok(())
 }
 
-pub(crate) fn validate_auth_packet_context_specific(packet: &AuthPacket, context: &ValidationContext) -> Mqtt5Result<()> {
+pub(crate) fn validate_auth_packet_outbound_internal(packet: &AuthPacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
 
-    /* inbound size is checked on decode, outbound size is checked here */
-    if context.is_outbound {
-        let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
-        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
-            return Err(Mqtt5Error::AuthPacketValidation);
-        }
+    let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
+    let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::AuthPacketValidation);
     }
+
+    Ok(())
+}
+
+pub(crate) fn validate_auth_packet_inbound_internal(packet: &AuthPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
+
+    if packet.authentication_method.is_none() {
+        // while optional from an encode/decode perspective, method is required from a protocol
+        // perspective
+        return Err(Mqtt5Error::AuthPacketValidation);
+    }
+
+    /* TODO: validation based on in-progress auth exchange */
 
     Ok(())
 }
@@ -377,54 +380,67 @@ mod tests {
 
     #[test]
     fn auth_validate_success_all_properties() {
-        let packet = create_all_properties_auth_packet();
+        let packet = MqttPacket::Auth(create_all_properties_auth_packet());
 
-        assert_eq!(validate_auth_packet_fixed(&packet), Ok(()));
+        assert_eq!(validate_packet_outbound(&packet), Ok(()));
 
         let test_validation_context = create_pinned_validation_context();
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Auth(packet), &validation_context), Ok(()));
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Ok(()));
+
+        let inbound_validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_inbound_internal(&packet, &inbound_validation_context), Ok(()));
     }
 
     #[test]
-    fn auth_validate_failure_authentication_method_length() {
+    fn auth_validate_outbound_failure_authentication_method_length() {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_method = Some("a".repeat(65537));
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
-    fn auth_validate_failure_authentication_method_missing() {
+    fn auth_validate_outbound_failure_authentication_method_missing() {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_method = None;
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
-    fn auth_validate_failure_authentication_data_length() {
+    fn auth_validate_inbound_failure_authentication_method_missing() {
+        let mut packet = create_all_properties_auth_packet();
+        packet.authentication_method = None;
+
+        let test_validation_context = create_pinned_validation_context();
+        let inbound_validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_inbound_internal(&MqttPacket::Auth(packet), &inbound_validation_context), Err(Mqtt5Error::AuthPacketValidation));
+    }
+
+    #[test]
+    fn auth_validate_outbound_failure_authentication_data_length() {
         let mut packet = create_all_properties_auth_packet();
         packet.authentication_data = Some(vec![0; 128 * 1024]);
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
-    fn auth_validate_failure_reason_string_length() {
+    fn auth_validate_outbound_failure_reason_string_length() {
         let mut packet = create_all_properties_auth_packet();
         packet.reason_string = Some("a".repeat(199000));
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]
-    fn auth_validate_failure_invalid_user_properties() {
+    fn auth_validate_outbound_failure_invalid_user_properties() {
         let mut packet = create_all_properties_auth_packet();
         packet.user_properties = Some(create_invalid_user_properties());
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
+        assert_eq!(validate_packet_outbound(&MqttPacket::Auth(packet)), Err(Mqtt5Error::AuthPacketValidation));
     }
 
     #[test]

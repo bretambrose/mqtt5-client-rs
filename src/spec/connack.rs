@@ -307,14 +307,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
     Err(Mqtt5Error::Unknown)
 }
 
-pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Result<()> {
-
-    // validate packet size against the theoretical maximum since this could be used
-    // before the connack establishes a different bound
-    let (total_remaining_length, _) = compute_connack_packet_length_properties(packet)?;
-    if total_remaining_length > MAXIMUM_VARIABLE_LENGTH_INTEGER as u32 {
-        return Err(Mqtt5Error::ConnackPacketValidation);
-    }
+pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
 
     if packet.session_present && packet.reason_code != ConnectReasonCode::Success {
         return Err(Mqtt5Error::ConnackPacketValidation);
@@ -329,7 +322,6 @@ pub(crate) fn validate_connack_packet_fixed(packet: &ConnackPacket) -> Mqtt5Resu
     }
 
     validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation);
-    validate_user_properties!(properties, &packet.user_properties, ConnackPacketValidation);
 
     Ok(())
 }
@@ -1043,16 +1035,21 @@ mod tests {
 
     use crate::validate::testing::*;
 
+    fn do_connack_validate_failure_test(packet: ConnackPacket) {
+        let test_validation_context = create_pinned_validation_context();
+        let validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_inbound_internal(&MqttPacket::Connack(packet), &validation_context), Err(Mqtt5Error::ConnackPacketValidation));
+    }
+
     #[test]
     fn connack_validate_success_all_properties() {
         let packet = create_all_properties_connack_packet();
 
-        assert_eq!(validate_connack_packet_fixed(&packet), Ok(()));
-
         let test_validation_context = create_pinned_validation_context();
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
+        let validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
 
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Connack(packet), &validation_context), Ok(()));
+        assert_eq!(validate_packet_inbound_internal(&MqttPacket::Connack(packet), &validation_context), Ok(()));
     }
 
     #[test]
@@ -1061,7 +1058,7 @@ mod tests {
         packet.session_present = true;
         packet.reason_code = ConnectReasonCode::BadUsernameOrPassword;
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
+        do_connack_validate_failure_test(packet);
     }
 
     #[test]
@@ -1069,7 +1066,7 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.receive_maximum = Some(0);
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
+        do_connack_validate_failure_test(packet);
     }
 
     #[test]
@@ -1077,7 +1074,7 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.maximum_qos = Some(QualityOfService::ExactlyOnce);
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
+        do_connack_validate_failure_test(packet);
     }
 
     #[test]
@@ -1085,14 +1082,6 @@ mod tests {
         let mut packet = create_all_properties_connack_packet();
         packet.maximum_packet_size = Some(0);
 
-        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
-    }
-
-    #[test]
-    fn connack_validate_failure_invalid_user_properties() {
-        let mut packet = create_all_properties_connack_packet();
-        packet.user_properties = Some(create_invalid_user_properties());
-
-        assert_eq!(validate_packet_fixed(&MqttPacket::Connack(packet)), Err(Mqtt5Error::ConnackPacketValidation));
+        do_connack_validate_failure_test(packet);
     }
 }

@@ -9,8 +9,6 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
-use crate::validate::*;
-use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -139,34 +137,11 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
     Err(Mqtt5Error::Unknown)
 }
 
-pub(crate) fn validate_suback_packet_fixed(packet: &SubackPacket) -> Mqtt5Result<()> {
-
-    validate_user_properties!(properties, &packet.user_properties, SubackPacketValidation);
-    validate_optional_string_length!(reason_string, &packet.reason_string, SubackPacketValidation);
-
-    Ok(())
-}
-
-pub(crate) fn validate_suback_packet_context_specific(packet: &SubackPacket, context: &ValidationContext) -> Mqtt5Result<()> {
-
-    if context.is_outbound {
-        /* inbound size is checked on decode, outbound size is checked here */
-        let (total_remaining_length, _) = compute_suback_packet_length_properties(packet)?;
-        let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-        if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
-            return Err(Mqtt5Error::SubackPacketValidation);
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::decode::testing::*;
-    use crate::validate::testing::create_invalid_user_properties;
 
     #[test]
     fn suback_round_trip_encode_decode_default() {
@@ -283,47 +258,4 @@ mod tests {
 
         do_mutated_decode_failure_test(&MqttPacket::Suback(packet), duplicate_reason_string);
     }
-
-    #[test]
-    fn suback_validate_success() {
-        let packet = create_suback_all_properties();
-
-        assert_eq!(Ok(()), validate_packet_fixed(&MqttPacket::Suback(packet)));
-    }
-
-    #[test]
-    fn suback_validate_failure_reason_string_length() {
-        let mut packet = create_suback_all_properties();
-        packet.reason_string = Some("Derp".repeat(20000).to_string());
-
-        assert_eq!(Err(Mqtt5Error::SubackPacketValidation), validate_packet_fixed(&MqttPacket::Suback(packet)));
-    }
-
-    #[test]
-    fn suback_validate_failure_user_properties_invalid() {
-        let mut packet = create_suback_all_properties();
-        packet.user_properties = Some(create_invalid_user_properties());
-
-        assert_eq!(Err(Mqtt5Error::SubackPacketValidation), validate_packet_fixed(&MqttPacket::Suback(packet)));
-    }
-
-    use crate::validate::testing::*;
-
-    #[test]
-    fn suback_validate_context_specific_success() {
-        let packet = create_suback_all_properties();
-
-        let test_validation_context = create_pinned_validation_context();
-        let validation_context = create_validation_context_from_pinned(&test_validation_context);
-
-        assert_eq!(validate_packet_context_specific(&MqttPacket::Suback(packet), &validation_context), Ok(()));
-    }
-
-    #[test]
-    fn suback_validate_context_specific_failure_outbound_size() {
-        let packet = create_suback_all_properties();
-
-        do_outbound_size_validate_failure_test(&MqttPacket::Suback(packet), Mqtt5Error::SubackPacketValidation);
-    }
-
 }

@@ -61,6 +61,140 @@ macro_rules! validate_user_properties {
 
 pub(crate) use validate_user_properties;
 
+macro_rules! validate_ack_outbound {
+    ($function_name: ident, $packet_type: ident, $error: ident) => {
+        pub(crate) fn $function_name(packet: &$packet_type) -> Mqtt5Result<()> {
+
+            validate_optional_string_length!(reason, &packet.reason_string, $error);
+            validate_user_properties!(properties, &packet.user_properties, $error);
+
+            Ok(())
+        }
+    };
+}
+
+pub(crate) use validate_ack_outbound;
+
+macro_rules! validate_ack_outbound_internal {
+    ($function_name: ident, $packet_type: ident, $error: ident, $packet_length_function_name: ident) => {
+        pub(crate) fn $function_name(packet: &$packet_type, context: &OutboundValidationContext) -> Mqtt5Result<()> {
+
+            let (total_remaining_length, _) = $packet_length_function_name(packet)?;
+            let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+            if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+                return Err(Mqtt5Error::$error);
+            }
+
+            if packet.packet_id == 0 {
+                return Err(Mqtt5Error::$error);
+            }
+
+            Ok(())
+        }
+    };
+}
+
+pub(crate) use validate_ack_outbound_internal;
+
+macro_rules! validate_ack_inbound_internal {
+    ($function_name: ident, $packet_type: ident, $error: ident) => {
+        pub(crate) fn $function_name(packet: &$packet_type, _: &InboundValidationContext) -> Mqtt5Result<()> {
+
+            if packet.packet_id == 0 {
+                return Err(Mqtt5Error::$error);
+            }
+
+            Ok(())
+        }
+    };
+}
+
+pub(crate) use validate_ack_inbound_internal;
+
+macro_rules! test_ack_validate_success {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident) => {
+        #[test]
+        fn $function_name() {
+            let packet = MqttPacket::$packet_type($packet_factory_function());
+
+            assert_eq!(validate_packet_outbound(&packet), Ok(()));
+
+            let test_validation_context = create_pinned_validation_context();
+
+            let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+            assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Ok(()));
+
+            let inbound_validation_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+            assert_eq!(validate_packet_inbound_internal(&packet, &inbound_validation_context), Ok(()));
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_success;
+
+macro_rules! test_ack_validate_failure_reason_string_length {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
+        #[test]
+        fn $function_name() {
+            let mut packet = $packet_factory_function();
+            packet.reason_string = Some("A".repeat(128 * 1024).to_string());
+
+            assert_eq!(validate_packet_outbound(&MqttPacket::$packet_type(packet)), Err(Mqtt5Error::$error));
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_failure_reason_string_length;
+
+macro_rules! test_ack_validate_failure_invalid_user_properties {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
+        #[test]
+        fn $function_name() {
+            let mut packet = $packet_factory_function();
+            packet.user_properties = Some(create_invalid_user_properties());
+
+            assert_eq!(validate_packet_outbound(&MqttPacket::$packet_type(packet)), Err(Mqtt5Error::$error));
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_failure_invalid_user_properties;
+
+macro_rules! test_ack_validate_failure_outbound_size {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
+        #[test]
+        fn $function_name() {
+            let packet = $packet_factory_function();
+
+            do_outbound_size_validate_failure_test(&MqttPacket::$packet_type(packet), Mqtt5Error::$error);
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_failure_outbound_size;
+
+macro_rules! test_ack_validate_failure_internal_packet_id_zero {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
+        #[test]
+        fn $function_name() {
+            let mut ack = $packet_factory_function();
+            ack.packet_id = 0;
+
+            let packet = MqttPacket::$packet_type(ack);
+
+            let test_validation_context = create_pinned_validation_context();
+
+            let outbound_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+            assert_eq!(validate_packet_outbound_internal(&packet, &outbound_context), Err(Mqtt5Error::$error));
+
+            let inbound_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+            assert_eq!(validate_packet_inbound_internal(&packet, &inbound_context), Err(Mqtt5Error::$error));
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_failure_internal_packet_id_zero;
+
 pub(crate) fn is_valid_topic(topic: &str) -> bool {
     if topic.len() == 0 {
         return false;

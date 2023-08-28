@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -134,6 +136,41 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
     }
 
     Err(Mqtt5Error::Unknown)
+}
+
+pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -> Mqtt5Result<()> {
+    if packet.packet_id != 0 {
+        return Err(Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    if packet.topic_filters.len() == 0 {
+        return Err(Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    for filter in &packet.topic_filters {
+        if !is_valid_topic_filter(filter) {
+            return Err(Mqtt5Error::UnsubscribePacketValidation);
+        }
+    }
+
+    validate_user_properties!(properties, &packet.user_properties, UnsubscribePacketValidation);
+
+    Ok(())
+}
+
+pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &UnsubscribePacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
+
+    let (total_remaining_length, _) = compute_unsubscribe_packet_length_properties(packet)?;
+    let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
+    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        return Err(Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    if packet.packet_id == 0 {
+        return Err(Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
