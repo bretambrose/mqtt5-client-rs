@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_qos_zero_and_duplicate() {
+    fn publish_validate_failure_outbound_qos_zero_and_duplicate() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.qos = QualityOfService::AtMostOnce;
         packet.duplicate = true;
@@ -789,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_qos_zero_and_packet_id() {
+    fn publish_validate_failure_outbound_qos_zero_and_packet_id() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.qos = QualityOfService::AtMostOnce;
         packet.packet_id = 1;
@@ -798,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_topic_length() {
+    fn publish_validate_outbound_failure_topic_length() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.topic = "A".repeat(65536).to_string();
 
@@ -806,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_topic_invalid() {
+    fn publish_validate_outbound_failure_topic_invalid() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.topic = "A/+/B".to_string();
 
@@ -814,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_topic_alias_zero() {
+    fn publish_validate_failure_outbound_topic_alias_zero() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.topic_alias = Some(0);
 
@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_response_topic_invalid() {
+    fn publish_validate_failure_outbound_response_topic_invalid() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.response_topic = Some("A/#/B".to_string());
 
@@ -830,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_response_topic_length() {
+    fn publish_validate_failure_outbound_response_topic_length() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.response_topic = Some("AB".repeat(33000).to_string());
 
@@ -838,7 +838,15 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_user_properties_invalid() {
+    fn publish_validate_failure_outbound_subscription_identifiers_exist() {
+        let mut packet = create_outbound_publish_with_all_fields();
+        packet.subscription_identifiers = Some(vec![2, 3, 4]);
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_outbound_user_properties_invalid() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.user_properties = Some(create_invalid_user_properties());
 
@@ -846,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_correlation_data_length() {
+    fn publish_validate_failure_outbound_correlation_data_length() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.correlation_data = Some(vec![0; 80 * 1024]);
 
@@ -854,17 +862,9 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_content_type_length() {
+    fn publish_validate_failure_outbound_content_type_length() {
         let mut packet = create_outbound_publish_with_all_fields();
         packet.content_type = Some("CD".repeat(33000).to_string());
-
-        assert_eq!(validate_packet_outbound(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
-    }
-
-    #[test]
-    fn publish_validate_failure_outbound_subscription_identifiers() {
-        let mut packet = create_outbound_publish_with_all_fields();
-        packet.subscription_identifiers = Some(vec![1, 2, 3]);
 
         assert_eq!(validate_packet_outbound(&MqttPacket::Publish(packet)), Err(Mqtt5Error::PublishPacketValidation));
     }
@@ -880,6 +880,21 @@ mod tests {
         do_outbound_size_validate_failure_test(&MqttPacket::Publish(packet), Mqtt5Error::PublishPacketValidation);
     }
 
+
+    #[test]
+    fn publish_validate_failure_outbound_internal_retain_unavailable() {
+        let mut packet = create_outbound_publish_with_all_fields();
+        packet.retain = true;
+
+        let packet = MqttPacket::Publish(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.retain_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
     #[test]
     fn publish_validate_failure_inbound_empty_topic() {
         let mut packet = create_publish_with_all_fields();
@@ -892,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_validate_failure_packet_id_zero() {
+    fn publish_validate_failure_qos1plus_packet_id_zero() {
         let mut packet = create_publish_with_all_fields();
         packet.subscription_identifiers = None;
         packet.packet_id = 0;

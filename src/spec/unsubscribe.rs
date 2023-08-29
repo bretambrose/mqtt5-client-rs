@@ -232,4 +232,113 @@ mod tests {
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsubscribe(packet), 14);
     }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn unsubscribe_validate_success() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.packet_id = 0;
+
+        let outbound_packet = MqttPacket::Unsubscribe(packet);
+
+        assert_eq!(validate_packet_outbound(&outbound_packet), Ok(()));
+
+        let mut packet2 = create_unsubscribe_all_properties();
+        packet2.packet_id = 1;
+
+        let outbound_internal_packet = MqttPacket::Unsubscribe(packet2);
+
+        let test_validation_context = create_pinned_validation_context();
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&outbound_internal_packet, &outbound_validation_context), Ok(()));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_packet_id_non_zero() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.packet_id = 1;
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Unsubscribe(packet)), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_topic_filters_empty() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.topic_filters = vec![];
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Unsubscribe(packet)), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_user_properties_invalid() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Unsubscribe(packet)), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_size() {
+        let packet = create_unsubscribe_all_properties();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Unsubscribe(packet), Mqtt5Error::UnsubscribePacketValidation);
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_internal_packet_id_zero() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.packet_id = 0;
+
+        let packet = MqttPacket::Unsubscribe(packet);
+
+        let test_validation_context = create_pinned_validation_context();
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_internal_topic_filter_invalid() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.topic_filters = vec![ "a/#/c".to_string() ];
+
+        let packet = MqttPacket::Unsubscribe(packet);
+
+        let test_validation_context = create_pinned_validation_context();
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_internal_shared_topic_filter_not_allowed() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.topic_filters = vec![ "$share/sharename/hello/world".to_string() ];
+
+        let packet = MqttPacket::Unsubscribe(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.shared_subscriptions_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
+
+    #[test]
+    fn unsubscribe_validate_failure_outbound_internal_wildcard_topic_filter_not_allowed() {
+        let mut packet = create_unsubscribe_all_properties();
+        packet.topic_filters = vec![ "a/+/c".to_string() ];
+
+        let packet = MqttPacket::Unsubscribe(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.wildcard_subscriptions_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::UnsubscribePacketValidation));
+    }
 }
