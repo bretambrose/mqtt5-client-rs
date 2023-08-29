@@ -16,8 +16,10 @@ use crate::spec::pubcomp::*;
 use crate::spec::publish::*;
 use crate::spec::pubrec::*;
 use crate::spec::pubrel::*;
+use crate::spec::suback::*;
 use crate::spec::subscribe::*;
 use crate::spec::unsubscribe::*;
+use crate::spec::unsuback::*;
 use crate::client::*;
 use crate::alias::*;
 
@@ -123,8 +125,8 @@ pub(crate) fn validate_packet_inbound_internal(packet: &MqttPacket, context: &In
         MqttPacket::Publish(publish) => { validate_publish_packet_inbound_internal(publish, context) }
         MqttPacket::Pubrec(pubrec) => { validate_pubrec_packet_inbound_internal(pubrec, context) }
         MqttPacket::Pubrel(pubrel) => { validate_pubrel_packet_inbound_internal(pubrel, context) }
-        MqttPacket::Suback(_) => { Ok(()) }
-        MqttPacket::Unsuback(_) => { Ok(()) }
+        MqttPacket::Suback(suback) => { validate_suback_packet_inbound_internal(suback, context) }
+        MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_inbound_internal(unsuback, context) }
         _ => {
             Err(Mqtt5Error::ProtocolError)
         }

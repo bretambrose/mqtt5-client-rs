@@ -9,6 +9,8 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
+use crate::validate::*;
+use crate::validate::utils::*;
 
 use std::collections::VecDeque;
 
@@ -137,6 +139,8 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
     Err(Mqtt5Error::Unknown)
 }
 
+validate_ack_inbound_internal!(validate_suback_packet_inbound_internal, SubackPacket, SubackPacketValidation);
+
 #[cfg(test)]
 mod tests {
 
@@ -258,4 +262,15 @@ mod tests {
 
         do_mutated_decode_failure_test(&MqttPacket::Suback(packet), duplicate_reason_string);
     }
+
+    #[test]
+    fn suback_decode_failure_inbound_packet_size() {
+        let packet = create_suback_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Suback(packet));
+    }
+
+    use crate::validate::testing::*;
+
+    test_ack_validate_failure_inbound_packet_id_zero!(suback_validate_failure_internal_packet_id_zero, Suback, create_suback_all_properties, SubackPacketValidation);
 }

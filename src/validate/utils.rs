@@ -175,7 +175,7 @@ macro_rules! test_ack_validate_failure_outbound_size {
 
 pub(crate) use test_ack_validate_failure_outbound_size;
 
-macro_rules! test_ack_validate_failure_internal_packet_id_zero {
+macro_rules! test_ack_validate_failure_packet_id_zero {
     ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
         #[test]
         fn $function_name() {
@@ -195,7 +195,25 @@ macro_rules! test_ack_validate_failure_internal_packet_id_zero {
     };
 }
 
-pub(crate) use test_ack_validate_failure_internal_packet_id_zero;
+pub(crate) use test_ack_validate_failure_packet_id_zero;
+
+macro_rules! test_ack_validate_failure_inbound_packet_id_zero {
+    ($function_name: ident, $packet_type: ident, $packet_factory_function: ident, $error: ident) => {
+        #[test]
+        fn $function_name() {
+            let mut ack = $packet_factory_function();
+            ack.packet_id = 0;
+
+            let packet = MqttPacket::$packet_type(ack);
+
+            let test_validation_context = create_pinned_validation_context();
+            let inbound_context = create_inbound_validation_context_from_pinned(&test_validation_context);
+            assert_eq!(validate_packet_inbound_internal(&packet, &inbound_context), Err(Mqtt5Error::$error));
+        }
+    };
+}
+
+pub(crate) use test_ack_validate_failure_inbound_packet_id_zero;
 
 pub(crate) fn is_valid_topic(topic: &str) -> bool {
     if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {

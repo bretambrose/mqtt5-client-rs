@@ -191,5 +191,5 @@ mod tests {
     test_ack_validate_failure_reason_string_length!(pubrec_validate_failure_reason_string_length, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
     test_ack_validate_failure_invalid_user_properties!(pubrec_validate_failure_invalid_user_properties, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
     test_ack_validate_failure_outbound_size!(pubrec_validate_failure_outbound_size, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
-    test_ack_validate_failure_internal_packet_id_zero!(pubrec_validate_failure_internal_packet_id_zero, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
+    test_ack_validate_failure_packet_id_zero!(pubrec_validate_failure_packet_id_zero, Pubrec, create_pubrec_with_all_properties, PubrecPacketValidation);
 }

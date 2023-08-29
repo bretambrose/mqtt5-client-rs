@@ -372,6 +372,13 @@ mod tests {
         do_mutated_decode_failure_test(&MqttPacket::Subscribe(packet), invalidate_subscription_qos);
     }
 
+    #[test]
+    fn subscribe_decode_failure_inbound_packet_size() {
+        let packet = create_subscribe_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Subscribe(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]

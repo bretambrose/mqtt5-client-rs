@@ -188,5 +188,5 @@ mod tests {
     test_ack_validate_failure_reason_string_length!(puback_validate_failure_reason_string_length, Puback, create_puback_with_all_properties, PubackPacketValidation);
     test_ack_validate_failure_invalid_user_properties!(puback_validate_failure_invalid_user_properties, Puback, create_puback_with_all_properties, PubackPacketValidation);
     test_ack_validate_failure_outbound_size!(puback_validate_failure_outbound_size, Puback, create_puback_with_all_properties, PubackPacketValidation);
-    test_ack_validate_failure_internal_packet_id_zero!(puback_validate_failure_internal_packet_id_zero, Puback, create_puback_with_all_properties, PubackPacketValidation);
+    test_ack_validate_failure_packet_id_zero!(puback_validate_failure_packet_id_zero, Puback, create_puback_with_all_properties, PubackPacketValidation);
 }

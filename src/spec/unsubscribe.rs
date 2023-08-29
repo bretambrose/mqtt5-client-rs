@@ -233,6 +233,13 @@ mod tests {
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Unsubscribe(packet), 14);
     }
 
+    #[test]
+    fn unsubscribe_decode_failure_inbound_packet_size() {
+        let packet = create_unsubscribe_all_properties();
+
+        do_inbound_size_decode_failure_test(&MqttPacket::Unsubscribe(packet));
+    }
+
     use crate::validate::testing::*;
 
     #[test]
