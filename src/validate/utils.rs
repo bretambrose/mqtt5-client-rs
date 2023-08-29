@@ -232,13 +232,13 @@ pub(crate) fn is_valid_topic_filter(topic: &str) -> bool {
 }
 
 // if the topic filter is not valid, then the other fields are not to be trusted
-struct TopicFilterProperties {
+pub(crate) struct TopicFilterProperties {
     pub is_valid: bool,
     pub is_shared: bool,
     pub has_wildcard: bool
 }
 
-fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
+pub(crate) fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
     let mut properties = TopicFilterProperties {
         is_valid: true,
         is_shared: false,

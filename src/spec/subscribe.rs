@@ -129,6 +129,8 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
     Ok(())
 }
 
+const SUBSCRIPTION_OPTIONS_RESERVED_BITS_MASK : u8 = 192;
+
 pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
@@ -161,6 +163,10 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
             let mut subscription_options: u8 = 0;
             payload_bytes = decode_u8(payload_bytes, &mut subscription_options)?;
 
+            if (subscription_options & SUBSCRIPTION_OPTIONS_RESERVED_BITS_MASK) != 0 {
+                return Err(Mqtt5Error::MalformedPacket);
+            }
+
             subscription.qos = convert_u8_to_quality_of_service(subscription_options & 0x03)?;
 
             if (subscription_options & SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK) != 0 {
@@ -182,14 +188,6 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
     Err(Mqtt5Error::Unknown)
 }
 
-fn validate_outbound_subscription(subscription: &Subscription) -> Mqtt5Result<()> {
-    if !is_valid_topic_filter(&subscription.topic_filter) {
-        return Err(Mqtt5Error::SubscribePacketValidation);
-    }
-
-    Ok(())
-}
-
 pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mqtt5Result<()> {
 
     if packet.packet_id != 0 {
@@ -200,16 +198,28 @@ pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mq
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
-    for subscription in &packet.subscriptions {
-        validate_outbound_subscription(subscription)?;
-    }
-
     validate_user_properties!(properties, &packet.user_properties, SubscribePacketValidation);
 
     Ok(())
 }
 
 fn validate_outbound_subscription_internal(subscription: &Subscription, context: &OutboundValidationContext) -> Mqtt5Result<()> {
+
+    let topic_filter_properties = compute_topic_filter_properties(&subscription.topic_filter);
+
+    if !topic_filter_properties.is_valid {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
+
+    if topic_filter_properties.is_shared {
+        if !context.negotiated_settings.shared_subscriptions_available || subscription.no_local {
+            return Err(Mqtt5Error::SubscribePacketValidation);
+        }
+    }
+
+    if topic_filter_properties.has_wildcard && !context.negotiated_settings.wildcard_subscriptions_available {
+        return Err(Mqtt5Error::SubscribePacketValidation);
+    }
 
     Ok(())
 }
@@ -259,9 +269,8 @@ mod tests {
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 
-    #[test]
-    fn subscribe_round_trip_encode_decode_all_properties() {
-        let packet = SubscribePacket {
+    fn create_subscribe_all_properties() -> SubscribePacket {
+        SubscribePacket {
             packet_id : 123,
             subscriptions : vec![
                 Subscription {
@@ -283,7 +292,12 @@ mod tests {
             user_properties: Some(vec!(
                 UserProperty{name: "Worms".to_string(), value: "inmyhead".to_string()},
             )),
-        };
+        }
+    }
+
+    #[test]
+    fn subscribe_round_trip_encode_decode_all_properties() {
+        let packet = create_subscribe_all_properties();
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
@@ -297,5 +311,188 @@ mod tests {
         };
 
         do_fixed_header_flag_decode_failure_test(&MqttPacket::Subscribe(packet), 7);
+    }
+
+    const SUBSCRIBE_PACKET_TEST_SUBSCRIPTION_OPTIONS_INDEX : usize = 18;
+
+    #[test]
+    fn subscribe_decode_failure_subscription_qos3() {
+        let packet = SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
+            ..Default::default()
+        };
+
+        let invalidate_subscription_qos = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[SUBSCRIBE_PACKET_TEST_SUBSCRIPTION_OPTIONS_INDEX] |= 0x03;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Subscribe(packet), invalidate_subscription_qos);
+    }
+
+    #[test]
+    fn subscribe_decode_failure_subscription_retain_handling3() {
+        let packet = SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
+            ..Default::default()
+        };
+
+        let invalidate_subscription_qos = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[SUBSCRIBE_PACKET_TEST_SUBSCRIPTION_OPTIONS_INDEX] |= 0x03 << 4;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Subscribe(packet), invalidate_subscription_qos);
+    }
+
+    #[test]
+    fn subscribe_decode_failure_subscription_reserved_bits() {
+        let packet = SubscribePacket {
+            packet_id : 123,
+            subscriptions : vec![ Subscription { topic_filter: "hello/world".to_string(), qos: QualityOfService::AtLeastOnce, ..Default::default() } ],
+            ..Default::default()
+        };
+
+        let invalidate_subscription_qos = | bytes: &[u8] | -> Vec<u8> {
+            let mut clone = bytes.to_vec();
+
+            clone[SUBSCRIBE_PACKET_TEST_SUBSCRIPTION_OPTIONS_INDEX] |= 192;
+
+            clone
+        };
+
+        do_mutated_decode_failure_test(&MqttPacket::Subscribe(packet), invalidate_subscription_qos);
+    }
+
+    use crate::validate::testing::*;
+
+    #[test]
+    fn unsubscribe_validate_success() {
+        let mut packet = create_subscribe_all_properties();
+        packet.packet_id = 0;
+
+        let outbound_packet = MqttPacket::Subscribe(packet);
+
+        assert_eq!(validate_packet_outbound(&outbound_packet), Ok(()));
+
+        let mut packet2 = create_subscribe_all_properties();
+        packet2.packet_id = 1;
+
+        let outbound_internal_packet = MqttPacket::Subscribe(packet2);
+
+        let test_validation_context = create_pinned_validation_context();
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&outbound_internal_packet, &outbound_validation_context), Ok(()));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_packet_id_non_zero() {
+        let mut packet = create_subscribe_all_properties();
+        packet.packet_id = 1;
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Subscribe(packet)), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_topic_filters_empty() {
+        let mut packet = create_subscribe_all_properties();
+        packet.subscriptions = vec![];
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Subscribe(packet)), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_user_properties_invalid() {
+        let mut packet = create_subscribe_all_properties();
+        packet.user_properties = Some(create_invalid_user_properties());
+
+        assert_eq!(validate_packet_outbound(&MqttPacket::Subscribe(packet)), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_size() {
+        let packet = create_subscribe_all_properties();
+
+        do_outbound_size_validate_failure_test(&MqttPacket::Subscribe(packet), Mqtt5Error::SubscribePacketValidation);
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_internal_packet_id_zero() {
+        let mut packet = create_subscribe_all_properties();
+        packet.packet_id = 0;
+
+        let packet = MqttPacket::Subscribe(packet);
+
+        let test_validation_context = create_pinned_validation_context();
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_internal_topic_filter_invalid() {
+        let mut packet = create_subscribe_all_properties();
+        packet.subscriptions[0].topic_filter = "a/#/c".to_string();
+
+        let packet = MqttPacket::Subscribe(packet);
+
+        let test_validation_context = create_pinned_validation_context();
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_internal_shared_topic_filter_not_allowed() {
+        let mut packet = create_subscribe_all_properties();
+        packet.subscriptions[0].topic_filter = "$share/sharename/hello/world".to_string();
+        packet.subscriptions[0].no_local = false;
+
+        let packet = MqttPacket::Subscribe(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.shared_subscriptions_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_internal_shared_topic_filter_no_local() {
+        let mut packet = create_subscribe_all_properties();
+        packet.subscriptions[0].topic_filter = "$share/sharename/hello/world".to_string();
+        packet.subscriptions[0].no_local = true;
+
+        let packet = MqttPacket::Subscribe(packet);
+
+        let test_validation_context = create_pinned_validation_context();
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::SubscribePacketValidation));
+    }
+
+    #[test]
+    fn subscribe_validate_failure_outbound_internal_wildcard_topic_filter_not_allowed() {
+        let mut packet = create_subscribe_all_properties();
+        packet.subscriptions[0].topic_filter = "a/+/+".to_string();
+
+        let packet = MqttPacket::Subscribe(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.wildcard_subscriptions_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::SubscribePacketValidation));
     }
 }
