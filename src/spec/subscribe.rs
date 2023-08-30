@@ -203,27 +203,6 @@ pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mq
     Ok(())
 }
 
-fn validate_outbound_subscription_internal(subscription: &Subscription, context: &OutboundValidationContext) -> Mqtt5Result<()> {
-
-    let topic_filter_properties = compute_topic_filter_properties(&subscription.topic_filter);
-
-    if !topic_filter_properties.is_valid {
-        return Err(Mqtt5Error::SubscribePacketValidation);
-    }
-
-    if topic_filter_properties.is_shared {
-        if !context.negotiated_settings.shared_subscriptions_available || subscription.no_local {
-            return Err(Mqtt5Error::SubscribePacketValidation);
-        }
-    }
-
-    if topic_filter_properties.has_wildcard && !context.negotiated_settings.wildcard_subscriptions_available {
-        return Err(Mqtt5Error::SubscribePacketValidation);
-    }
-
-    Ok(())
-}
-
 pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
 
     let (total_remaining_length, _) = compute_subscribe_packet_length_properties(packet)?;
@@ -237,7 +216,9 @@ pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePack
     }
 
     for subscription in &packet.subscriptions {
-        validate_outbound_subscription_internal(subscription, context)?;
+        if !is_topic_filter_valid_internal(&subscription.topic_filter, context, Some(subscription.no_local)) {
+            return Err(Mqtt5Error::SubscribePacketValidation);
+        }
     }
 
     Ok(())

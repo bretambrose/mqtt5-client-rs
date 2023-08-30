@@ -256,7 +256,7 @@ pub(crate) struct TopicFilterProperties {
     pub has_wildcard: bool
 }
 
-pub(crate) fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
+fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
     let mut properties = TopicFilterProperties {
         is_valid: true,
         is_shared: false,
@@ -277,20 +277,22 @@ pub(crate) fn compute_topic_filter_properties(topic: &str) -> TopicFilterPropert
             break;
         }
 
+        let has_wildcard = segment.contains(['#', '+']);
+        properties.has_wildcard |= has_wildcard;
+
         if index == 0 && segment == "$share" {
             has_share_prefix = true;
         }
 
-        if index == 1 && has_share_prefix && segment.len() > 0 {
+        if index == 1 && has_share_prefix && segment.len() > 0 && !has_wildcard {
             has_share_name = true;
         }
 
-        if index == 2 && has_share_name {
-            properties.is_shared = true;
+        if has_share_name {
+            if (index == 2 && segment.len() > 0) || index > 2 {
+                properties.is_shared = true;
+            }
         }
-
-        let has_wildcard = segment.contains(['#', '+']);
-        properties.has_wildcard |= has_wildcard;
 
         if segment.len() == 1 {
             if segment == "#" {
@@ -305,15 +307,23 @@ pub(crate) fn compute_topic_filter_properties(topic: &str) -> TopicFilterPropert
     properties
 }
 
-pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundValidationContext) -> bool {
+pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundValidationContext, no_local: Option<bool>) -> bool {
     let topic_filter_properties = compute_topic_filter_properties(filter);
 
     if !topic_filter_properties.is_valid {
         return false;
     }
 
-    if topic_filter_properties.is_shared && !context.negotiated_settings.shared_subscriptions_available {
-        return false;
+    if topic_filter_properties.is_shared {
+        if !context.negotiated_settings.shared_subscriptions_available {
+            return false;
+        }
+
+        if let Some(no_local_value) = no_local {
+            if no_local_value {
+                return false;
+            }
+        }
     }
 
     if topic_filter_properties.has_wildcard && !context.negotiated_settings.wildcard_subscriptions_available {
@@ -375,5 +385,44 @@ mod tests {
         assert_eq!(false, is_valid_topic_filter("sport/tennis/#/ranking"));
         assert_eq!(false, is_valid_topic_filter("sport+"));
         assert_eq!(false, is_valid_topic_filter(&"s".repeat(70000).to_string()));
+    }
+
+    #[test]
+    fn check_topic_properties() {
+        assert_eq!(true, compute_topic_filter_properties("a/b/c").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("#").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("/#").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("sports/tennis/#").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("+").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("/+").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("+/a").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("+/tennis/#").is_valid);
+        assert_eq!(true, compute_topic_filter_properties("port/+/player1").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("derp+").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("derp+/").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("derp#/").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("#/a").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("sport/tennis#").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("sport/tennis/#/ranking").is_valid);
+        assert_eq!(false, compute_topic_filter_properties("sport+").is_valid);
+        assert_eq!(false, compute_topic_filter_properties(&"s".repeat(70000).to_string()).is_valid);
+
+        assert_eq!(false, compute_topic_filter_properties("a/b/c").is_shared);
+        assert_eq!(false, compute_topic_filter_properties("$share//c").is_shared);
+        assert_eq!(false, compute_topic_filter_properties("$share/a").is_shared);
+        assert_eq!(false, compute_topic_filter_properties("$share/+/a").is_shared);
+        assert_eq!(false, compute_topic_filter_properties("$share/#/a").is_shared);
+        assert_eq!(false, compute_topic_filter_properties("$share/b/").is_shared);
+        assert_eq!(true, compute_topic_filter_properties("$share/b//").is_shared);
+        assert_eq!(true, compute_topic_filter_properties("$share/a/b").is_shared);
+        assert_eq!(true, compute_topic_filter_properties("$share/a/b/c").is_shared);
+
+        assert_eq!(false, compute_topic_filter_properties("a/b/c").has_wildcard);
+        assert_eq!(false, compute_topic_filter_properties("/").has_wildcard);
+        assert_eq!(true, compute_topic_filter_properties("#").has_wildcard);
+        assert_eq!(true, compute_topic_filter_properties("+").has_wildcard);
+        assert_eq!(true, compute_topic_filter_properties("a/+/+").has_wildcard);
+        assert_eq!(true, compute_topic_filter_properties("a/b/#").has_wildcard);
     }
 }
