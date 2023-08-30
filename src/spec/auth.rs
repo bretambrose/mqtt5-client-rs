@@ -13,6 +13,7 @@ use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 AUTH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901217) packet.
 #[derive(Clone, Debug, Default)]
@@ -202,6 +203,14 @@ pub(crate) fn validate_auth_packet_inbound_internal(packet: &AuthPacket, _: &Inb
     /* TODO: validation based on in-progress auth exchange */
 
     Ok(())
+}
+
+impl fmt::Display for AuthPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{{\n")?;
+        write!(f, "  reason_code: {}\n", authenticate_reason_code_to_str(self.reason_code))?;
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]

@@ -165,7 +165,7 @@ pub enum ConnectReasonCode {
     ServerMoved = 157,
 
     /// Returned when the server connection rate limit has been exceeded.
-    ConnectionRateExceeeded = 159,
+    ConnectionRateExceeded = 159,
 }
 
 /// Reason code inside PUBACK packets that indicates the result of the associated PUBLISH request.
@@ -527,7 +527,7 @@ pub enum SubackReasonCode {
 
     /// Returned when the subscription's topic filter contains a wildcard but the server does not support
     /// wildcard subscriptions.
-    WildcaredSubscriptionsNotSupported = 162,
+    WildcardSubscriptionsNotSupported = 162,
 }
 
 /// Reason codes inside UNSUBACK packet payloads that specify the results for each topic filter in the associated
