@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 CONNECT](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901033) packet.
 #[derive(Clone, Debug, Default)]
@@ -554,6 +556,36 @@ pub(crate) fn validate_connect_packet_outbound_internal(packet: &ConnectPacket, 
     Ok(())
 }
 
+impl fmt::Display for ConnectPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ConnectPacket: {{\n")?;
+        log_primitive_value!(self.keep_alive_interval_seconds, f, "keep_alive_interval_seconds");
+        log_primitive_value!(self.clean_start, f, "clean_start");
+        log_optional_string_sensitive!(self.username, f, "username");
+        log_optional_binary_data_sensitive!(self.password, f, "password");
+        log_optional_primitive_value!(self.session_expiry_interval_seconds, f, "session_expiry_interval_seconds", value);
+        log_optional_primitive_value!(self.request_response_information, f, "request_response_information", value);
+        log_optional_primitive_value!(self.request_problem_information, f, "request_problem_information", value);
+        log_optional_primitive_value!(self.receive_maximum, f, "receive_maximum", value);
+        log_optional_primitive_value!(self.topic_alias_maximum, f, "topic_alias_maximum", value);
+        log_optional_primitive_value!(self.maximum_packet_size_bytes, f, "maximum_packet_size_bytes", value);
+        log_optional_string!(self.authentication_method, f, "authentication_method", value);
+        log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
+        log_user_properties!(self.user_properties, f, value);
+
+        log_optional_primitive_value!(self.will_delay_interval_seconds, f, "will_delay_interval_seconds", value);
+        if let Some(will) = &self.will {
+            write!(f, "  Will: {{\n")?;
+            // ??;
+            write!(f, "  }}\n")?;
+        }
+
+        write!(f, "}}\n")?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -754,6 +786,8 @@ mod tests {
     #[test]
     fn connect_round_trip_encode_decode_everything() {
         let packet  = create_connect_packet_all_properties();
+
+        println!("{}", packet);
 
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Connect(packet)));
     }

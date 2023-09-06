@@ -8,12 +8,14 @@ use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 PUBLISH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100) packet
 #[derive(Clone, Debug, Default)]
@@ -38,7 +40,8 @@ pub struct PublishPacket {
     /// See [MQTT5 QoS](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901103)
     pub qos: QualityOfService,
 
-    /// ??
+    /// Indicates to the recipient that this packet is a resend of a previously-submitted
+    /// Publish
     pub duplicate: bool,
 
     /// True if this is a retained message, false otherwise.
@@ -419,6 +422,29 @@ pub(crate) fn validate_publish_packet_inbound_internal(packet: &PublishPacket, _
     }
 
     Ok(())
+}
+
+impl fmt::Display for PublishPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PublishPacket: {{\n")?;
+        log_primitive_value!(self.packet_id, f, "packet_id");
+        log_string!(self.topic, f, "topic");
+        log_enum!(self.qos, f, "qos", quality_of_service_to_str);
+        log_primitive_value!(self.duplicate, f, "duplicate");
+        log_primitive_value!(self.retain, f, "retain");
+        log_optional_binary_data!(self.payload, f, "payload", value);
+        log_optional_enum!(self.payload_format, f, "payload_format", value, payload_format_indicator_to_str);
+        log_optional_primitive_value!(self.message_expiry_interval_seconds, f, "message_expiry_interval_seconds", value);
+        log_optional_primitive_value!(self.topic_alias, f, "topic_alias", value);
+        log_optional_string!(self.response_topic, f, "response_topic", value);
+        log_optional_binary_data!(self.correlation_data, f, "correlation_data", value);
+
+        // write!(f, "  subscription_identifiers: {:?}\n", self.subscription_identifiers)?;
+
+        log_optional_string!(self.content_type, f, "content_type", value);
+        log_user_properties!(self.user_properties, f, value);
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]

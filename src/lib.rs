@@ -9,6 +9,7 @@ mod alias;
 pub mod client;
 mod decode;
 mod encode;
+mod logging;
 pub mod spec;
 mod validate;
 

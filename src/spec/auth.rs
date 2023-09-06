@@ -7,6 +7,7 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
@@ -207,8 +208,12 @@ pub(crate) fn validate_auth_packet_inbound_internal(packet: &AuthPacket, _: &Inb
 
 impl fmt::Display for AuthPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{{\n")?;
-        write!(f, "  reason_code: {}\n", authenticate_reason_code_to_str(self.reason_code))?;
+        write!(f, "AuthPacket: {{\n")?;
+        log_enum!(self.reason_code, f, "reason_code", authenticate_reason_code_to_str);
+        log_optional_string!(self.authentication_method, f, "authentication_method", value);
+        log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
+        log_optional_string!(self.reason_string, f, "reason_string", value);
+        log_user_properties!(self.user_properties, f, value);
         write!(f, "}}\n")
     }
 }

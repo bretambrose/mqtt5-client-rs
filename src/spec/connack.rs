@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 CONNACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901074) packet.
 #[derive(Clone, Debug, Default)]
@@ -324,6 +326,32 @@ pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _
     validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation);
 
     Ok(())
+}
+
+impl fmt::Display for ConnackPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ConnackPacket: {{\n")?;
+        log_primitive_value!(self.session_present, f, "session_present");
+        log_enum!(self.reason_code, f, "reason_code", connect_reason_code_to_str);
+        log_optional_primitive_value!(self.session_expiry_interval, f, "session_expiry_interval", value);
+        log_optional_primitive_value!(self.receive_maximum, f, "receive_maximum", value);
+        log_optional_enum!(self.maximum_qos, f, "maximum_qos", value, quality_of_service_to_str);
+        log_optional_primitive_value!(self.retain_available, f, "retain_available", value);
+        log_optional_primitive_value!(self.maximum_packet_size, f, "maximum_packet_size", value);
+        log_optional_string!(self.assigned_client_identifier, f, "assigned_client_identifier", value);
+        log_optional_primitive_value!(self.topic_alias_maximum, f, "topic_alias_maximum", value);
+        log_optional_string!(self.reason_string, f, "reason_string", value);
+        log_user_properties!(self.user_properties, f, value);
+        log_optional_primitive_value!(self.wildcard_subscriptions_available, f, "wildcard_subscriptions_available", value);
+        log_optional_primitive_value!(self.subscription_identifiers_available, f, "subscription_identifiers_available", value);
+        log_optional_primitive_value!(self.shared_subscriptions_available, f, "shared_subscriptions_available", value);
+        log_optional_primitive_value!(self.server_keep_alive, f, "server_keep_alive", value);
+        log_optional_primitive_value!(self.response_information, f, "response_information", value);
+        log_optional_string!(self.server_reference, f, "server_reference", value);
+        log_optional_string!(self.authentication_method, f, "authentication_method", value);
+        log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]
