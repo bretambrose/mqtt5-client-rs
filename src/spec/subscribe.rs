@@ -7,12 +7,15 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
+use std::fmt::Write;
 
 /// Data model of an [MQTT5 SUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901161) packet.
 #[derive(Clone, Debug, Default)]
@@ -222,6 +225,32 @@ pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePack
     }
 
     Ok(())
+}
+
+fn build_subscription_log_string(subscription: &Subscription) -> String {
+    let mut val : String = "{\n".to_string();
+    write!(&mut val, "      topic_filter: {}\n", subscription.topic_filter).ok();
+    write!(&mut val, "      qos: {}\n", quality_of_service_to_str(subscription.qos)).ok();
+    write!(&mut val, "      no_local: {}\n", subscription.no_local).ok();
+    write!(&mut val, "      retain_as_published: {}\n", subscription.retain_as_published).ok();
+    write!(&mut val, "      retain_handling_type: {}\n", retain_handling_type_to_str(subscription.retain_handling_type)).ok();
+    write!(&mut val, "    }}").ok();
+    val
+}
+
+impl fmt::Display for SubscribePacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SubscribePacket: {{\n")?;
+        log_primitive_value!(self.packet_id, f, "packet_id");
+        log_optional_primitive_value!(self.subscription_identifier, f, "subscription_identifier", value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
+        write!(f, "  subscriptions: [\n")?;
+        for (i, subscription) in self.subscriptions.iter().enumerate() {
+            write!(f, "    {}: {}\n", i, build_subscription_log_string(subscription))?;
+        }
+        write!(f, "  ]")?;
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]

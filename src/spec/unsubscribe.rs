@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 UNSUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901179) packet.
 #[derive(Clone, Debug, Default)]
@@ -173,6 +175,20 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
     }
 
     Ok(())
+}
+
+impl fmt::Display for UnsubscribePacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UnsubscribePacket: {{\n")?;
+        log_primitive_value!(self.packet_id, f, "packet_id");
+        log_user_properties!(self.user_properties, f, "user_properties", value);
+        write!(f, "  topic_filters: [\n")?;
+        for (i, topic_filter) in self.topic_filters.iter().enumerate() {
+            write!(f, "    {}: {}\n", i, topic_filter)?;
+        }
+        write!(f, "  ]")?;
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]

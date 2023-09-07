@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 SUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901171) packet.
 #[derive(Clone, Debug, Default)]
@@ -140,6 +142,21 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
 }
 
 validate_ack_inbound_internal!(validate_suback_packet_inbound_internal, SubackPacket, SubackPacketValidation);
+
+impl fmt::Display for SubackPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SubackPacket: {{\n")?;
+        log_primitive_value!(self.packet_id, f, "packet_id");
+        log_optional_string!(self.reason_string, f, "reason_string", value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
+        write!(f, "  reason_codes: [\n")?;
+        for (i, rc) in self.reason_codes.iter().enumerate() {
+            write!(f, "    {}: {}\n", i, suback_reason_code_to_str(*rc))?;
+        }
+        write!(f, "  ]")?;
+        write!(f, "}}\n")
+    }
+}
 
 #[cfg(test)]
 mod tests {
