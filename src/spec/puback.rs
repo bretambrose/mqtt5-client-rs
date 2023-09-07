@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 PUBACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901121) packet
 #[derive(Clone, Debug, Default)]
@@ -52,6 +54,8 @@ define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, P
 validate_ack_outbound!(validate_puback_packet_outbound, PubackPacket, PubackPacketValidation);
 validate_ack_outbound_internal!(validate_puback_packet_outbound_internal, PubackPacket, PubackPacketValidation, compute_puback_packet_length_properties);
 validate_ack_inbound_internal!(validate_puback_packet_inbound_internal, PubackPacket, PubackPacketValidation);
+
+define_ack_packet_display_trait!(PubackPacket, "PubackPacket", puback_reason_code_to_str);
 
 #[cfg(test)]
 mod tests {

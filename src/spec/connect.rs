@@ -571,12 +571,20 @@ impl fmt::Display for ConnectPacket {
         log_optional_primitive_value!(self.maximum_packet_size_bytes, f, "maximum_packet_size_bytes", value);
         log_optional_string!(self.authentication_method, f, "authentication_method", value);
         log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
-        log_user_properties!(self.user_properties, f, value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
 
         log_optional_primitive_value!(self.will_delay_interval_seconds, f, "will_delay_interval_seconds", value);
         if let Some(will) = &self.will {
             write!(f, "  Will: {{\n")?;
-            // ??;
+            log_string!(will.topic, f, "  topic");
+            log_enum!(will.qos, f, "  qos", quality_of_service_to_str);
+            log_primitive_value!(will.retain, f, "retain");
+            log_optional_binary_data!(will.payload, f, "  payload", value);
+            log_optional_enum!(will.payload_format, f, "  payload_format", value, payload_format_indicator_to_str);
+            log_optional_string!(will.content_type, f, "content_type", value);
+            log_optional_string!(will.response_topic, f, "  response_topic", value);
+            log_optional_binary_data!(will.correlation_data, f, "  correlation_data", value);
+            log_user_properties!(will.user_properties, f, "  user_properties", value);
             write!(f, "  }}\n")?;
         }
 

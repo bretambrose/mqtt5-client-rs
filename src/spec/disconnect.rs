@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 DISCONNECT](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901205) packet.
 #[derive(Clone, Debug, Default)]
@@ -211,6 +213,17 @@ pub(crate) fn validate_disconnect_packet_inbound_internal(packet: &DisconnectPac
     }
 
     Ok(())
+}
+
+impl fmt::Display for DisconnectPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "DisconnectPacket: {{\n")?;
+        log_enum!(self.reason_code, f, "reason_code", disconnect_reason_code_to_str);
+        log_optional_primitive_value!(self.session_expiry_interval_seconds, f, "session_expiry_interval_seconds", value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
+        log_optional_string!(self.server_reference, f, "server_reference", value);
+        write!(f, "}}\n")
+    }
 }
 
 #[cfg(test)]

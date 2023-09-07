@@ -439,10 +439,16 @@ impl fmt::Display for PublishPacket {
         log_optional_string!(self.response_topic, f, "response_topic", value);
         log_optional_binary_data!(self.correlation_data, f, "correlation_data", value);
 
-        // write!(f, "  subscription_identifiers: {:?}\n", self.subscription_identifiers)?;
+        if let Some(ids) = &self.subscription_identifiers {
+            write!(f, "  subscription_identifiers: [")?;
+            for id in ids {
+                write!(f, "{} ", id)?;
+            }
+            write!(f, "]\n")?;
+        }
 
         log_optional_string!(self.content_type, f, "content_type", value);
-        log_user_properties!(self.user_properties, f, value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
         write!(f, "}}\n")
     }
 }

@@ -341,7 +341,7 @@ impl fmt::Display for ConnackPacket {
         log_optional_string!(self.assigned_client_identifier, f, "assigned_client_identifier", value);
         log_optional_primitive_value!(self.topic_alias_maximum, f, "topic_alias_maximum", value);
         log_optional_string!(self.reason_string, f, "reason_string", value);
-        log_user_properties!(self.user_properties, f, value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
         log_optional_primitive_value!(self.wildcard_subscriptions_available, f, "wildcard_subscriptions_available", value);
         log_optional_primitive_value!(self.subscription_identifiers_available, f, "subscription_identifiers_available", value);
         log_optional_primitive_value!(self.shared_subscriptions_available, f, "shared_subscriptions_available", value);

@@ -7,12 +7,14 @@ use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 PUBREL](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901141) packet
 #[derive(Clone, Debug, Default)]
@@ -52,6 +54,8 @@ define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, P
 validate_ack_outbound!(validate_pubrel_packet_outbound, PubrelPacket, PubrelPacketValidation);
 validate_ack_outbound_internal!(validate_pubrel_packet_outbound_internal, PubrelPacket, PubrelPacketValidation, compute_pubrel_packet_length_properties);
 validate_ack_inbound_internal!(validate_pubrel_packet_inbound_internal, PubrelPacket, PubrelPacketValidation);
+
+define_ack_packet_display_trait!(PubrelPacket, "PubrelPacket", pubrel_reason_code_to_str);
 
 #[cfg(test)]
 mod tests {

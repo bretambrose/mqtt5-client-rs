@@ -108,11 +108,28 @@ macro_rules! log_optional_binary_data_sensitive {
 pub(crate) use log_optional_binary_data_sensitive;
 
 macro_rules! log_user_properties {
-    ($user_properties: expr, $formatter: expr, $value:ident) => {
+    ($user_properties: expr, $formatter: expr, $log_field: expr, $value:ident) => {
         if let Some($value) = &$user_properties {
-            write!($formatter, "  UserProperties: {}\n", create_user_properties_log_string($value))?;
+            write!($formatter, "  {}: {}\n", $log_field, create_user_properties_log_string($value))?;
         }
     };
 }
 
 pub(crate) use log_user_properties;
+
+macro_rules! define_ack_packet_display_trait {
+    ($packet_type: ident, $packet_name: expr, $reason_code_to_str_fn: ident) => {
+        impl fmt::Display for $packet_type {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{}:{{\n", $packet_name)?;
+                log_primitive_value!(self.packet_id, f, "packet_id");
+                log_enum!(self.reason_code, f, "reason_code", $reason_code_to_str_fn);
+                log_optional_string!(self.reason_string, f, "reason_string", value);
+                log_user_properties!(self.user_properties, f, "user_properties", value);
+                write!(f, "}}\n")
+            }
+        }
+    };
+}
+
+pub(crate) use define_ack_packet_display_trait;

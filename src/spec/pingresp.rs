@@ -10,6 +10,7 @@ use crate::spec::*;
 use crate::spec::utils::*;
 
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Data model of an [MQTT5 PINGRESP](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901200) packet.
 #[derive(Clone, Debug)]
@@ -36,6 +37,12 @@ pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
     }
 
     return Ok(Box::new(MqttPacket::Pingresp(PingrespPacket{})));
+}
+
+impl fmt::Display for PingrespPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PingrespPacket:{{}}\n")
+    }
 }
 
 #[cfg(test)]

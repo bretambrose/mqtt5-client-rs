@@ -213,7 +213,7 @@ impl fmt::Display for AuthPacket {
         log_optional_string!(self.authentication_method, f, "authentication_method", value);
         log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
         log_optional_string!(self.reason_string, f, "reason_string", value);
-        log_user_properties!(self.user_properties, f, value);
+        log_user_properties!(self.user_properties, f, "user_properties", value);
         write!(f, "}}\n")
     }
 }
