@@ -3,8 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::{Mqtt5Error, Mqtt5Result};
 use crate::spec::UserProperty;
+
+use log::*;
 
 #[derive(Eq, PartialEq, Debug)]
 pub(crate) enum DecodeVliResult<'a> {
@@ -33,13 +37,17 @@ pub(crate) fn decode_vli(buffer: &[u8]) -> Mqtt5Result<DecodeVliResult> {
         }
     }
 
+    error!("Packet Decode - invalid variable length integer");
     Err(Mqtt5Error::DecoderInvalidVli)
 }
 
 pub(crate) fn decode_vli_into_mutable<'a>(buffer: &'a[u8], value: &mut usize) -> Mqtt5Result<&'a[u8]> {
     let decode_result = decode_vli(buffer);
     match decode_result {
-        Ok(DecodeVliResult::InsufficientData) => { Err(Mqtt5Error::MalformedPacket)}
+        Ok(DecodeVliResult::InsufficientData) => {
+            error!("Packet Decode - truncated variable length integer");
+            Err(Mqtt5Error::MalformedPacket)
+        }
         Ok(DecodeVliResult::Value(vli, remaining_slice)) => {
             *value = vli as usize;
             Ok(remaining_slice)
@@ -51,17 +59,20 @@ pub(crate) fn decode_vli_into_mutable<'a>(buffer: &'a[u8], value: &mut usize) ->
 }
 
 fn map_utf8_err_to_malformed_packet(_: std::str::Utf8Error) -> Mqtt5Error {
+    error!("Packet Decode - invalid utf-8");
     return Mqtt5Error::MalformedPacket;
 }
 
 pub(crate) fn decode_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut String) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Utf-8 string value does not have a full length prefix");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
+        error!("Packet Decode - Utf-8 string value has length larger than remaining packet bytes");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -72,16 +83,19 @@ pub(crate) fn decode_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut Stri
 
 pub(crate) fn decode_optional_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut Option<String>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Utf-8 string value does not have a full length prefix");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional string property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
+        error!("Packet Decode - Utf-8 string value has length larger than remaining packet bytes");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -92,10 +106,12 @@ pub(crate) fn decode_optional_length_prefixed_string<'a>(bytes: &'a[u8], value: 
 
 pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: &mut Option<String>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Utf-8 string value does not have a full length prefix");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional string property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -108,6 +124,7 @@ pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: 
     }
 
     if value_length > mutable_bytes.len() {
+        error!("Packet Decode - Utf-8 string value has length larger than remaining packet bytes");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -118,16 +135,19 @@ pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: 
 
 pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Binary data value does not have a full length prefix");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional binary data property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
+        error!("Packet Decode - Binary data value has length larger than remaining packet bytes");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -137,10 +157,12 @@ pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &
 
 pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &mut Option<Vec<u8>>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Binary data value does not have a full length prefix");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional binary data property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -153,6 +175,7 @@ pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &
     }
 
     if value_length > mutable_bytes.len() {
+        error!("Packet Decode - Binary data value has length larger than remaining packet bytes");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -188,10 +211,12 @@ pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u
 
 pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<bool>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 1 {
+        error!("Packet Decode - Insufficent packet bytes for boolean property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional boolean property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -200,6 +225,7 @@ pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<
     } else if bytes[0] == 1 {
         *value = Some(true);
     } else {
+        error!("Packet Decode - Invalid byte value for boolean property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -208,6 +234,7 @@ pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<
 
 pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter: fn(u8) ->Mqtt5Result<T>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 1 {
+        error!("Packet Decode - Insufficent packet bytes for enum property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -218,10 +245,12 @@ pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter:
 
 pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Option<T>, converter: fn(u8) -> Mqtt5Result<T>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 1 {
+        error!("Packet Decode - Insufficent packet bytes for enum property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional enum property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -232,6 +261,7 @@ pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Opti
 
 pub(crate) fn decode_u16<'a>(bytes: &'a[u8], value: &mut u16) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Insufficent packet bytes for u16 property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -242,10 +272,12 @@ pub(crate) fn decode_u16<'a>(bytes: &'a[u8], value: &mut u16) -> Mqtt5Result<&'a
 
 pub(crate) fn decode_optional_u16<'a>(bytes: &'a[u8], value: &mut Option<u16>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 2 {
+        error!("Packet Decode - Insufficent packet bytes for u16 property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional u16 property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -256,10 +288,12 @@ pub(crate) fn decode_optional_u16<'a>(bytes: &'a[u8], value: &mut Option<u16>) -
 
 pub(crate) fn decode_optional_u32<'a>(bytes: &'a[u8], value: &mut Option<u32>) -> Mqtt5Result<&'a[u8]> {
     if bytes.len() < 4 {
+        error!("Packet Decode - Insufficent packet bytes for u32 property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if value.is_some() {
+        error!("Packet Decode - Invalid duplicate optional u32 property");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -269,7 +303,7 @@ pub(crate) fn decode_optional_u32<'a>(bytes: &'a[u8], value: &mut Option<u32>) -
 }
 
 macro_rules! define_ack_packet_decode_properties_function {
-    ($function_name: ident, $packet_type: ident) => {
+    ($function_name: ident, $packet_type: ident, $packet_type_as_string: expr) => {
         fn $function_name(property_bytes: &[u8], packet : &mut $packet_type) -> Mqtt5Result<()> {
             let mut mutable_property_bytes = property_bytes;
 
@@ -280,7 +314,10 @@ macro_rules! define_ack_packet_decode_properties_function {
                 match property_key {
                     PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
                     PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
-                    _ => { return Err(Mqtt5Error::MalformedPacket); }
+                    _ => {
+                        error!("Invalid property type ({}) encountered while decoding {}", property_key, $packet_type_as_string);
+                        return Err(Mqtt5Error::MalformedPacket);
+                    }
                 }
             }
 
@@ -292,9 +329,10 @@ macro_rules! define_ack_packet_decode_properties_function {
 pub(crate) use define_ack_packet_decode_properties_function;
 
 macro_rules! define_ack_packet_decode_function {
-    ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
+    ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_as_string: expr, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
         pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
             if first_byte != ($packet_type_value << 4) {
+                error!("Packet Decode - invalid first byte for {}", $packet_type_as_string);
                 return Err(Mqtt5Error::MalformedPacket);
             }
 
@@ -317,6 +355,7 @@ macro_rules! define_ack_packet_decode_function {
                 let mut properties_length = 0;
                 mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
                 if properties_length != mutable_body.len() {
+                    error!("Packet Decode - {} property length does not match remaining packet length", $packet_type_as_string);
                     return Err(Mqtt5Error::MalformedPacket);
                 }
 
@@ -325,7 +364,7 @@ macro_rules! define_ack_packet_decode_function {
                 return Ok(box_packet)
             }
 
-            Err(Mqtt5Error::Unknown)
+            panic!("Internal error: ack packet not an ack packet");
         }
     };
 }

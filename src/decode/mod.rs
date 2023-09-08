@@ -10,6 +10,7 @@ use crate::alias::*;
 use crate::decode::utils::*;
 use crate::encode::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
@@ -167,6 +168,7 @@ impl Decoder {
         }
 
         if let Ok(packet) = decode_packet(self.first_byte.unwrap(), packet_slice) {
+            log_packet("Successfully decoded incoming packet: ", &*packet);
             if self.config.packet_stream.send(packet).is_err() {
                 return (DecoderDirective::TerminalError, &[]);
             }

@@ -3,12 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -29,10 +32,12 @@ const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
 
 pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if packet_body.len() != 0 {
+        error!("Packet Decode - Pingresp packet with non-zero remaining length");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
     if first_byte != PINGRESP_FIRST_BYTE {
+        error!("Packet Decode - Pingresp packet with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 

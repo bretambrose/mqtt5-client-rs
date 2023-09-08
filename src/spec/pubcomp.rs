@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
@@ -13,6 +15,7 @@ use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -48,8 +51,8 @@ define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubc
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket);
-define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
+define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket, "PubcompPacket");
+define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, "PubcompPacket", PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
 
 validate_ack_outbound!(validate_pubcomp_packet_outbound, PubcompPacket, PubcompPacketValidation);
 validate_ack_outbound_internal!(validate_pubcomp_packet_outbound_internal, PubcompPacket, PubcompPacketValidation, compute_pubcomp_packet_length_properties);

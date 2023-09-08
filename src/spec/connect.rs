@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
@@ -13,6 +15,7 @@ use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -383,7 +386,10 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
-            _ => { return Err(Mqtt5Error::MalformedPacket); }
+            _ => {
+                error!("Invalid property type ({}) encountered while decoding ConnectPacket", property_key);
+                return Err(Mqtt5Error::MalformedPacket);
+            }
         }
     }
 

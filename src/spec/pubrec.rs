@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
@@ -13,6 +15,7 @@ use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -48,8 +51,8 @@ define_ack_packet_user_property_accessor!(get_pubrec_packet_user_property, Pubre
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, PubrecReasonCode, PACKET_TYPE_PUBREC, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket);
-define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
+define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket, "PubrecPacket");
+define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, "PubrecPacket", PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
 
 validate_ack_outbound!(validate_pubrec_packet_outbound, PubrecPacket, PubrecPacketValidation);
 validate_ack_outbound_internal!(validate_pubrec_packet_outbound_internal, PubrecPacket, PubrecPacketValidation, compute_pubrec_packet_length_properties);

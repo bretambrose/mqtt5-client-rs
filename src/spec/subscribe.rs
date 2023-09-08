@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
@@ -13,6 +15,7 @@ use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Write;
@@ -125,7 +128,10 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
         match property_key {
             PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.subscription_identifier)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
-            _ => { return Err(Mqtt5Error::MalformedPacket); }
+            _ => {
+                error!("Invalid property type ({}) encountered while decoding SubscribePacket", property_key);
+                return Err(Mqtt5Error::MalformedPacket);
+            }
         }
     }
 

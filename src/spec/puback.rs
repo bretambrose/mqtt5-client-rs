@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::decode::utils::*;
 use crate::encode::*;
@@ -13,6 +15,7 @@ use crate::spec::utils::*;
 use crate::validate::*;
 use crate::validate::utils::*;
 
+use log::*;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -48,8 +51,8 @@ define_ack_packet_user_property_accessor!(get_puback_packet_user_property, Pubac
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_puback_encoding_steps, PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket);
-define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
+define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket, "PubackPacket");
+define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, "PubackPacket", PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
 
 validate_ack_outbound!(validate_puback_packet_outbound, PubackPacket, PubackPacketValidation);
 validate_ack_outbound_internal!(validate_puback_packet_outbound_internal, PubackPacket, PubackPacketValidation, compute_puback_packet_length_properties);
