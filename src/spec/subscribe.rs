@@ -248,7 +248,7 @@ impl fmt::Display for SubscribePacket {
         for (i, subscription) in self.subscriptions.iter().enumerate() {
             write!(f, "    {}: {}\n", i, build_subscription_log_string(subscription))?;
         }
-        write!(f, "  ]")?;
+        write!(f, "  ]\n")?;
         write!(f, "}}\n")
     }
 }
@@ -308,7 +308,6 @@ mod tests {
     #[test]
     fn subscribe_round_trip_encode_decode_all_properties() {
         let packet = create_subscribe_all_properties();
-
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Subscribe(packet)));
     }
 

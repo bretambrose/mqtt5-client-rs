@@ -186,7 +186,7 @@ impl fmt::Display for UnsubscribePacket {
         for (i, topic_filter) in self.topic_filters.iter().enumerate() {
             write!(f, "    {}: {}\n", i, topic_filter)?;
         }
-        write!(f, "  ]")?;
+        write!(f, "  ]\n")?;
         write!(f, "}}\n")
     }
 }
@@ -234,7 +234,6 @@ mod tests {
     #[test]
     fn unsubscribe_round_trip_encode_decode_all_properties() {
         let packet = create_unsubscribe_all_properties();
-
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsubscribe(packet)));
     }
 

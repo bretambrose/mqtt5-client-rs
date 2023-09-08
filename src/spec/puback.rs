@@ -128,7 +128,6 @@ mod tests {
 
     #[test]
     fn puback_round_trip_encode_decode_failure_with_props() {
-
         let packet = create_puback_with_all_properties();
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Puback(packet)));
     }

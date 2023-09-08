@@ -154,7 +154,7 @@ impl fmt::Display for UnsubackPacket {
         for (i, rc) in self.reason_codes.iter().enumerate() {
             write!(f, "    {}: {}\n", i, unsuback_reason_code_to_str(*rc))?;
         }
-        write!(f, "  ]")?;
+        write!(f, "  ]\n")?;
         write!(f, "}}\n")
     }
 }
@@ -208,7 +208,6 @@ mod tests {
     #[test]
     fn unsuback_round_trip_encode_decode_all() {
         let packet = create_unsuback_all_properties();
-
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Unsuback(packet)));
     }
 

@@ -514,9 +514,7 @@ mod tests {
 
     #[test]
     fn publish_round_trip_encode_decode_all_fields() {
-
         let packet = create_publish_with_all_fields();
-
         assert!(do_round_trip_encode_decode_test(&MqttPacket::Publish(packet)));
     }
 

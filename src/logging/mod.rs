@@ -121,7 +121,7 @@ macro_rules! define_ack_packet_display_trait {
     ($packet_type: ident, $packet_name: expr, $reason_code_to_str_fn: ident) => {
         impl fmt::Display for $packet_type {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "{}:{{\n", $packet_name)?;
+                write!(f, "{}: {{\n", $packet_name)?;
                 log_primitive_value!(self.packet_id, f, "packet_id");
                 log_enum!(self.reason_code, f, "reason_code", $reason_code_to_str_fn);
                 log_optional_string!(self.reason_string, f, "reason_string", value);

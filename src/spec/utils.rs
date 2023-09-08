@@ -79,9 +79,9 @@ pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<Quality
 
 pub(crate) fn quality_of_service_to_str (qos: QualityOfService) -> &'static str {
     match qos {
-        QualityOfService::AtMostOnce => { "AtMostOnce (0)" }
-        QualityOfService::AtLeastOnce => { "AtLeastOnce (1)" }
-        QualityOfService::ExactlyOnce => { "ExactlyOnce (2)" }
+        QualityOfService::AtMostOnce => { "0 (AtMostOnce)" }
+        QualityOfService::AtLeastOnce => { "1 (AtLeastOnce)" }
+        QualityOfService::ExactlyOnce => { "2 (ExactlyOnce)" }
     }
 }
 
@@ -95,8 +95,8 @@ pub(crate) fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<P
 
 pub(crate) fn payload_format_indicator_to_str (pfi: PayloadFormatIndicator) -> &'static str {
     match pfi {
-        PayloadFormatIndicator::Bytes => { "Bytes (0)" }
-        PayloadFormatIndicator::Utf8 => { "Utf8 (1)" }
+        PayloadFormatIndicator::Bytes => { "0 (Bytes)" }
+        PayloadFormatIndicator::Utf8 => { "1 (Utf8)" }
     }
 }
 
@@ -117,15 +117,15 @@ pub(crate) fn convert_u8_to_puback_reason_code(value: u8) -> Mqtt5Result<PubackR
 
 pub(crate) fn puback_reason_code_to_str (reason_code: PubackReasonCode) -> &'static str {
     match reason_code {
-        PubackReasonCode::Success => { "Success (0)" }
-        PubackReasonCode::NoMatchingSubscribers => { "NoMatchingSubscribers (16)" }
-        PubackReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        PubackReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        PubackReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        PubackReasonCode::TopicNameInvalid => { "TopicNameInvalid (144)" }
-        PubackReasonCode::PacketIdentifierInUse => { "PacketIdentifierInUse (145)" }
-        PubackReasonCode::QuotaExceeded => { "QuotaExceeded (151)" }
-        PubackReasonCode::PayloadFormatInvalid => { "PayloadFormatInvalid (153)" }
+        PubackReasonCode::Success => { "0 (Success)" }
+        PubackReasonCode::NoMatchingSubscribers => { "16 (NoMatchingSubscribers)" }
+        PubackReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        PubackReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        PubackReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        PubackReasonCode::TopicNameInvalid => { "144 (TopicNameInvalid)" }
+        PubackReasonCode::PacketIdentifierInUse => { "145 (PacketIdentifierInUse)" }
+        PubackReasonCode::QuotaExceeded => { "151 (QuotaExceeded)" }
+        PubackReasonCode::PayloadFormatInvalid => { "153 (PayloadFormatInvalid)" }
     }
 }
 
@@ -146,15 +146,15 @@ pub(crate) fn convert_u8_to_pubrec_reason_code(value: u8) -> Mqtt5Result<PubrecR
 
 pub(crate) fn pubrec_reason_code_to_str (reason_code: PubrecReasonCode) -> &'static str {
     match reason_code {
-        PubrecReasonCode::Success => { "Success (0)" }
-        PubrecReasonCode::NoMatchingSubscribers => { "NoMatchingSubscribers (16)" }
-        PubrecReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        PubrecReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        PubrecReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        PubrecReasonCode::TopicNameInvalid => { "TopicNameInvalid (144)" }
-        PubrecReasonCode::PacketIdentifierInUse => { "PacketIdentifierInUse (145)" }
-        PubrecReasonCode::QuotaExceeded => { "QuotaExceeded (151)" }
-        PubrecReasonCode::PayloadFormatInvalid => { "PayloadFormatInvalid (153)" }
+        PubrecReasonCode::Success => { "0 (Success)" }
+        PubrecReasonCode::NoMatchingSubscribers => { "16 (NoMatchingSubscribers)" }
+        PubrecReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        PubrecReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        PubrecReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        PubrecReasonCode::TopicNameInvalid => { "144 (TopicNameInvalid)" }
+        PubrecReasonCode::PacketIdentifierInUse => { "145 (PacketIdentifierInUse)" }
+        PubrecReasonCode::QuotaExceeded => { "151 (QuotaExceeded)" }
+        PubrecReasonCode::PayloadFormatInvalid => { "153 (PayloadFormatInvalid)" }
     }
 }
 
@@ -168,8 +168,8 @@ pub(crate) fn convert_u8_to_pubrel_reason_code(value: u8) -> Mqtt5Result<PubrelR
 
 pub(crate) fn pubrel_reason_code_to_str (reason_code: PubrelReasonCode) -> &'static str {
     match reason_code {
-        PubrelReasonCode::Success => { "Success (0)" }
-        PubrelReasonCode::PacketIdentifierNotFound => { "PacketIdentifierNotFound (146)" }
+        PubrelReasonCode::Success => { "0 (Success)" }
+        PubrelReasonCode::PacketIdentifierNotFound => { "146 (PacketIdentifierNotFound)" }
     }
 }
 
@@ -183,8 +183,8 @@ pub(crate) fn convert_u8_to_pubcomp_reason_code(value: u8) -> Mqtt5Result<Pubcom
 
 pub(crate) fn pubcomp_reason_code_to_str (reason_code: PubcompReasonCode) -> &'static str {
     match reason_code {
-        PubcompReasonCode::Success => { "Success (0)" }
-        PubcompReasonCode::PacketIdentifierNotFound => { "PacketIdentifierNotFound (146)" }
+        PubcompReasonCode::Success => { "0 (Success)" }
+        PubcompReasonCode::PacketIdentifierNotFound => { "146 (PacketIdentifierNotFound)" }
     }
 }
 
@@ -219,28 +219,28 @@ pub(crate) fn convert_u8_to_connect_reason_code(value: u8) -> Mqtt5Result<Connec
 
 pub(crate) fn connect_reason_code_to_str (reason_code: ConnectReasonCode) -> &'static str {
     match reason_code {
-        ConnectReasonCode::Success => { "Success (0)" }
-        ConnectReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        ConnectReasonCode::MalformedPacket => { "MalformedPacket (129)" }
-        ConnectReasonCode::ProtocolError => { "ProtocolError (130)" }
-        ConnectReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        ConnectReasonCode::UnsupportedProtocolVersion => { "UnsupportedProtocolVersion (132)" }
-        ConnectReasonCode::ClientIdentifierNotValid => { "ClientIdentifierNotValid (133)" }
-        ConnectReasonCode::BadUsernameOrPassword => { "BadUsernameOrPassword (134)" }
-        ConnectReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        ConnectReasonCode::ServerUnavailable => { "ServerUnavailable (136)" }
-        ConnectReasonCode::ServerBusy => { "ServerBusy (137)" }
-        ConnectReasonCode::Banned => { "Banned (138)" }
-        ConnectReasonCode::BadAuthenticationMethod => { "BadAuthenticationMethod (140)" }
-        ConnectReasonCode::TopicNameInvalid => { "TopicNameInvalid (144)" }
-        ConnectReasonCode::PacketTooLarge => { "PacketTooLarge (149)" }
-        ConnectReasonCode::QuotaExceeded => { "QuotaExceeded (151)" }
-        ConnectReasonCode::PayloadFormatInvalid => { "PayloadFormatInvalid (153)" }
-        ConnectReasonCode::RetainNotSupported => { "RetainNotSupported (154)" }
-        ConnectReasonCode::QosNotSupported => { "QosNotSupported (155)" }
-        ConnectReasonCode::UseAnotherServer => { "UseAnotherServer (156)" }
-        ConnectReasonCode::ServerMoved => { "ServerMoved (157)" }
-        ConnectReasonCode::ConnectionRateExceeded => { "ConnectionRateExceeded (159)" }
+        ConnectReasonCode::Success => { "0 (Success)" }
+        ConnectReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        ConnectReasonCode::MalformedPacket => { "129 (MalformedPacket)" }
+        ConnectReasonCode::ProtocolError => { "130 (ProtocolError)" }
+        ConnectReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        ConnectReasonCode::UnsupportedProtocolVersion => { "132 (UnsupportedProtocolVersion)" }
+        ConnectReasonCode::ClientIdentifierNotValid => { "133 (ClientIdentifierNotValid)" }
+        ConnectReasonCode::BadUsernameOrPassword => { "134 (BadUsernameOrPassword)" }
+        ConnectReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        ConnectReasonCode::ServerUnavailable => { "136 (ServerUnavailable)" }
+        ConnectReasonCode::ServerBusy => { "137 (ServerBusy)" }
+        ConnectReasonCode::Banned => { "138 (Banned)" }
+        ConnectReasonCode::BadAuthenticationMethod => { "140 (BadAuthenticationMethod)" }
+        ConnectReasonCode::TopicNameInvalid => { "144 (TopicNameInvalid)" }
+        ConnectReasonCode::PacketTooLarge => { "149 (PacketTooLarge)" }
+        ConnectReasonCode::QuotaExceeded => { "151 (QuotaExceeded)" }
+        ConnectReasonCode::PayloadFormatInvalid => { "153 (PayloadFormatInvalid)" }
+        ConnectReasonCode::RetainNotSupported => { "154 (RetainNotSupported)" }
+        ConnectReasonCode::QosNotSupported => { "155 (QosNotSupported)" }
+        ConnectReasonCode::UseAnotherServer => { "156 (UseAnotherServer)" }
+        ConnectReasonCode::ServerMoved => { "157 (ServerMoved)" }
+        ConnectReasonCode::ConnectionRateExceeded => { "159 (ConnectionRateExceeded)" }
     }
 }
 
@@ -281,35 +281,35 @@ pub(crate) fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<Dis
 
 pub(crate) fn disconnect_reason_code_to_str (reason_code: DisconnectReasonCode) -> &'static str {
     match reason_code {
-        DisconnectReasonCode::NormalDisconnection => { "NormalDisconnection (0)" }
-        DisconnectReasonCode::DisconnectWithWillMessage => { "DisconnectWithWillMessage (4)" }
-        DisconnectReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        DisconnectReasonCode::MalformedPacket => { "MalformedPacket (129)" }
-        DisconnectReasonCode::ProtocolError => { "ProtocolError (130)" }
-        DisconnectReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        DisconnectReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        DisconnectReasonCode::ServerBusy => { "ServerBusy (137)" }
-        DisconnectReasonCode::ServerShuttingDown => { "ServerShuttingDown (139)" }
-        DisconnectReasonCode::KeepAliveTimeout => { "KeepAliveTimeout (141)" }
-        DisconnectReasonCode::SessionTakenOver => { "SessionTakenOver (142)" }
-        DisconnectReasonCode::TopicFilterInvalid => { "TopicFilterInvalid (143)" }
-        DisconnectReasonCode::TopicNameInvalid => { "TopicNameInvalid (144)" }
-        DisconnectReasonCode::ReceiveMaximumExceeded => { "ReceiveMaximumExceeded (147)" }
-        DisconnectReasonCode::TopicAliasInvalid => { "TopicAliasInvalid (148)" }
-        DisconnectReasonCode::PacketTooLarge => { "PacketTooLarge (149)" }
-        DisconnectReasonCode::MessageRateTooHigh => { "MessageRateTooHigh (150)" }
-        DisconnectReasonCode::QuotaExceeded => { "QuotaExceeded (151)" }
-        DisconnectReasonCode::AdministrativeAction => { "AdministrativeAction (152)" }
-        DisconnectReasonCode::PayloadFormatInvalid => { "PayloadFormatInvalid (153)" }
-        DisconnectReasonCode::RetainNotSupported => { "RetainNotSupported (154)" }
-        DisconnectReasonCode::QosNotSupported => { "QosNotSupported (155)" }
-        DisconnectReasonCode::UseAnotherServer => { "UseAnotherServer (156)" }
-        DisconnectReasonCode::ServerMoved => { "ServerMoved (157)" }
-        DisconnectReasonCode::SharedSubscriptionsNotSupported => { "SharedSubscriptionsNotSupported (158)" }
-        DisconnectReasonCode::ConnectionRateExceeded => { "ConnectionRateExceeded (159)" }
-        DisconnectReasonCode::MaximumConnectTime => { "MaximumConnectTime (160)" }
-        DisconnectReasonCode::SubscriptionIdentifiersNotSupported => { "SubscriptionIdentifiersNotSupported (161)" }
-        DisconnectReasonCode::WildcardSubscriptionsNotSupported => { "WildcardSubscriptionsNotSupported (162)" }
+        DisconnectReasonCode::NormalDisconnection => { "0 (NormalDisconnection)" }
+        DisconnectReasonCode::DisconnectWithWillMessage => { "4 (DisconnectWithWillMessage)" }
+        DisconnectReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        DisconnectReasonCode::MalformedPacket => { "129 (MalformedPacket)" }
+        DisconnectReasonCode::ProtocolError => { "130 (ProtocolError)" }
+        DisconnectReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        DisconnectReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        DisconnectReasonCode::ServerBusy => { "137 (ServerBusy)" }
+        DisconnectReasonCode::ServerShuttingDown => { "139 (ServerShuttingDown)" }
+        DisconnectReasonCode::KeepAliveTimeout => { "141 (KeepAliveTimeout)" }
+        DisconnectReasonCode::SessionTakenOver => { "142 (SessionTakenOver)" }
+        DisconnectReasonCode::TopicFilterInvalid => { "143 (TopicFilterInvalid)" }
+        DisconnectReasonCode::TopicNameInvalid => { "144 (TopicNameInvalid)" }
+        DisconnectReasonCode::ReceiveMaximumExceeded => { "147 (ReceiveMaximumExceeded)" }
+        DisconnectReasonCode::TopicAliasInvalid => { "148 (TopicAliasInvalid)" }
+        DisconnectReasonCode::PacketTooLarge => { "149 (PacketTooLarge)" }
+        DisconnectReasonCode::MessageRateTooHigh => { "150 (MessageRateTooHigh)" }
+        DisconnectReasonCode::QuotaExceeded => { "151 (QuotaExceeded)" }
+        DisconnectReasonCode::AdministrativeAction => { "152 (AdministrativeAction)" }
+        DisconnectReasonCode::PayloadFormatInvalid => { "153 (PayloadFormatInvalid)" }
+        DisconnectReasonCode::RetainNotSupported => { "154 (RetainNotSupported)" }
+        DisconnectReasonCode::QosNotSupported => { "155 (QosNotSupported)" }
+        DisconnectReasonCode::UseAnotherServer => { "156 (UseAnotherServer)" }
+        DisconnectReasonCode::ServerMoved => { "157 (ServerMoved)" }
+        DisconnectReasonCode::SharedSubscriptionsNotSupported => { "158 (SharedSubscriptionsNotSupported)" }
+        DisconnectReasonCode::ConnectionRateExceeded => { "159 (ConnectionRateExceeded)" }
+        DisconnectReasonCode::MaximumConnectTime => { "160 (MaximumConnectTime)" }
+        DisconnectReasonCode::SubscriptionIdentifiersNotSupported => { "161 (SubscriptionIdentifiersNotSupported)" }
+        DisconnectReasonCode::WildcardSubscriptionsNotSupported => { "162 (WildcardSubscriptionsNotSupported)" }
     }
 }
 
@@ -324,9 +324,9 @@ pub(crate) fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<A
 
 pub(crate) fn authenticate_reason_code_to_str (reason_code: AuthenticateReasonCode) -> &'static str {
     match reason_code {
-        AuthenticateReasonCode::Success => { "Success (0)" }
-        AuthenticateReasonCode::ContinueAuthentication => { "ContinueAuthentication (24)" }
-        AuthenticateReasonCode::ReAuthenticate => { "ReAuthenticate (25)" }
+        AuthenticateReasonCode::Success => { "0 (Success)" }
+        AuthenticateReasonCode::ContinueAuthentication => { "24 (ContinueAuthentication)" }
+        AuthenticateReasonCode::ReAuthenticate => { "25 (ReAuthenticate)" }
     }
 }
 
@@ -345,13 +345,13 @@ pub(crate) fn convert_u8_to_unsuback_reason_code(value: u8) -> Mqtt5Result<Unsub
 
 pub(crate) fn unsuback_reason_code_to_str (reason_code: UnsubackReasonCode) -> &'static str {
     match reason_code {
-        UnsubackReasonCode::Success => { "Success (0)" }
-        UnsubackReasonCode::NoSubscriptionExisted => { "NoSubscriptionExisted (17)" }
-        UnsubackReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        UnsubackReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        UnsubackReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        UnsubackReasonCode::TopicNameInvalid => { "TopicNameInvalid (144)" }
-        UnsubackReasonCode::PacketIdentifierInUse => { "PacketIdentifierInUse (145)" }
+        UnsubackReasonCode::Success => { "0 (Success)" }
+        UnsubackReasonCode::NoSubscriptionExisted => { "17 (NoSubscriptionExisted)" }
+        UnsubackReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        UnsubackReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        UnsubackReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        UnsubackReasonCode::TopicNameInvalid => { "144 (TopicNameInvalid)" }
+        UnsubackReasonCode::PacketIdentifierInUse => { "145 (PacketIdentifierInUse)" }
     }
 }
 
@@ -375,18 +375,18 @@ pub(crate) fn convert_u8_to_suback_reason_code(value: u8) -> Mqtt5Result<SubackR
 
 pub(crate) fn suback_reason_code_to_str (reason_code: SubackReasonCode) -> &'static str {
     match reason_code {
-        SubackReasonCode::GrantedQos0 => { "GrantedQos0 (0)" }
-        SubackReasonCode::GrantedQos1 => { "GrantedQos1 (1)" }
-        SubackReasonCode::GrantedQos2 => { "GrantedQos2 (2)" }
-        SubackReasonCode::UnspecifiedError => { "UnspecifiedError (128)" }
-        SubackReasonCode::ImplementationSpecificError => { "ImplementationSpecificError (131)" }
-        SubackReasonCode::NotAuthorized => { "NotAuthorized (135)" }
-        SubackReasonCode::TopicFilterInvalid => { "TopicFilterInvalid (143)" }
-        SubackReasonCode::PacketIdentifierInUse => { "PacketIdentifierInUse (145)" }
-        SubackReasonCode::QuotaExceeded => { "QuotaExceeded (151)" }
-        SubackReasonCode::SharedSubscriptionsNotSupported => { "SharedSubscriptionsNotSupported (158)" }
-        SubackReasonCode::SubscriptionIdentifiersNotSupported => { "SubscriptionIdentifiersNotSupported (161)" }
-        SubackReasonCode::WildcardSubscriptionsNotSupported => { "WildcardSubscriptionsNotSupported (162)" }
+        SubackReasonCode::GrantedQos0 => { "0 (GrantedQos0)" }
+        SubackReasonCode::GrantedQos1 => { "1 (GrantedQos1)" }
+        SubackReasonCode::GrantedQos2 => { "2 (GrantedQos2)" }
+        SubackReasonCode::UnspecifiedError => { "128 (UnspecifiedError)" }
+        SubackReasonCode::ImplementationSpecificError => { "131 (ImplementationSpecificError)" }
+        SubackReasonCode::NotAuthorized => { "135 (NotAuthorized)" }
+        SubackReasonCode::TopicFilterInvalid => { "143 (TopicFilterInvalid)" }
+        SubackReasonCode::PacketIdentifierInUse => { "145 (PacketIdentifierInUse)" }
+        SubackReasonCode::QuotaExceeded => { "151 (QuotaExceeded)" }
+        SubackReasonCode::SharedSubscriptionsNotSupported => { "158 (SharedSubscriptionsNotSupported)" }
+        SubackReasonCode::SubscriptionIdentifiersNotSupported => { "161 (SubscriptionIdentifiersNotSupported)" }
+        SubackReasonCode::WildcardSubscriptionsNotSupported => { "162 (WildcardSubscriptionsNotSupported)" }
     }
 }
 
@@ -401,8 +401,8 @@ pub(crate) fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<Retai
 
 pub(crate) fn retain_handling_type_to_str (rht: RetainHandlingType) -> &'static str {
     match rht {
-        RetainHandlingType::SendOnSubscribe => { "SendOnSubscribe (0)" }
-        RetainHandlingType::SendOnSubscribeIfNew => { "SendOnSubscribeIfNew (1)" }
-        RetainHandlingType::DontSend => { "DontSend (2)" }
+        RetainHandlingType::SendOnSubscribe => { "0 (SendOnSubscribe)" }
+        RetainHandlingType::SendOnSubscribeIfNew => { "1 (SendOnSubscribeIfNew)" }
+        RetainHandlingType::DontSend => { "2 (DontSend)" }
     }
 }
