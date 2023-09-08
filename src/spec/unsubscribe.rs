@@ -101,7 +101,7 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
         match property_key {
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding UnsubscribePacket", property_key);
+                error!("Packet Decode - Invalid UnsubscribePacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -113,6 +113,7 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
 pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != UNSUBSCRIBE_FIRST_BYTE {
+        error!("Packet Decode - UnsubscribePacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 

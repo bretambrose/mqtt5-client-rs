@@ -387,7 +387,7 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding ConnectPacket", property_key);
+                error!("Packet Decode - Invalid ConnectPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -411,7 +411,10 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
             PROPERTY_KEY_RESPONSE_TOPIC => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut will.response_topic)?; }
             PROPERTY_KEY_CORRELATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut will.correlation_data)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut will.user_properties)?; }
-            _ => { return Err(Mqtt5Error::MalformedPacket); }
+            _ => {
+                error!("Packet Decode - Invalid ConnectPacket will property type ({})", property_key);
+                return Err(Mqtt5Error::MalformedPacket);
+            }
         }
     }
 
@@ -422,6 +425,7 @@ const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
 
 pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_CONNECT << 4)  {
+        error!("Packet Decode - ConnectPacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -520,7 +524,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: ConnectPacket not a ConnectPacket");
 }
 
 pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5Result<()> {

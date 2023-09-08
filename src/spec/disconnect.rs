@@ -136,7 +136,7 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_SERVER_REFERENCE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.server_reference)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding DisconnectPacket", property_key);
+                error!("Packet Decode - Invalid DisconnectPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -147,6 +147,7 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
 
 pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
+        error!("Packet Decode - DisconnectPacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 

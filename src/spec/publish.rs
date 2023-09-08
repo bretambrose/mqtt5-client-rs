@@ -301,7 +301,7 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_CONTENT_TYPE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.content_type)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding PublishPacket", property_key);
+                error!("Packet Decode - Invalid PublishPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }

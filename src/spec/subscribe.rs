@@ -129,7 +129,7 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
             PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.subscription_identifier)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding SubscribePacket", property_key);
+                error!("Packet Decode - Invalid SubscribePacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -143,6 +143,7 @@ const SUBSCRIPTION_OPTIONS_RESERVED_BITS_MASK : u8 = 192;
 pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
+        error!("Packet Decode - SubscribePacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 

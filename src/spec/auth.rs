@@ -135,7 +135,7 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding AuthPacket", property_key);
+                error!("Packet Decode - Invalid AuthPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -146,6 +146,7 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
 
 pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_AUTH << 4) {
+        error!("Packet Decode - AuthPacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -161,7 +162,7 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
         let mut properties_length : usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length != mutable_body.len() {
-            error!("AuthPacket property length does not match expected overall packet length");
+            error!("Packet Decode - AuthPacket property length does not match expected overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -170,7 +171,7 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
         return Ok(box_packet);
     }
 
-    panic!("Internal error: AuthPacket not an AuthPacket");
+    panic!("Packet Decode - Internal error: AuthPacket not an AuthPacket");
 }
 
 pub(crate) fn validate_auth_packet_outbound(packet: &AuthPacket) -> Mqtt5Result<()> {

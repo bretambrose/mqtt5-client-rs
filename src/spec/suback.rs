@@ -103,7 +103,7 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding SubackPacket", property_key);
+                error!("Packet Decode - Invalid SubackPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -114,6 +114,7 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
 
 pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_SUBACK << 4) {
+        error!("Packet Decode - SubackPacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 

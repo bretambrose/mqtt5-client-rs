@@ -267,7 +267,7 @@ fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket)
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
             _ => {
-                error!("Invalid property type ({}) encountered while decoding ConnackPacket", property_key);
+                error!("Packet Decode - Invalid ConnackPacket property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -279,6 +279,7 @@ fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket)
 pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != (PACKET_TYPE_CONNACK << 4) {
+        error!("Packet Decode - ConnackPacket with invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -287,6 +288,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
     if let MqttPacket::Connack(packet) = box_packet.as_mut() {
         let mut mutable_body = packet_body;
         if mutable_body.len() == 0 {
+            error!("Packet Decode - ConnackPacket packet too short");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -296,6 +298,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         if flags == 1 {
             packet.session_present = true;
         } else if flags != 0 {
+            error!("Packet Decode - invalid value for session_present field");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -304,6 +307,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length != mutable_body.len() {
+            error!("Packet Decode - ConnackPacket property length does not match expected overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -312,7 +316,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: ConnackPacket not a ConnackPacket");
 }
 
 pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
