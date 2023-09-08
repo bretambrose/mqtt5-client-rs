@@ -34,51 +34,21 @@ pub(crate) struct EncodingContext {
 
 fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     match mqtt_packet {
-        MqttPacket::Connect(packet) => {
-            write_connect_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Connack(packet) => {
-            write_connack_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Publish(packet) => {
-            write_publish_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Puback(packet) => {
-            write_puback_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Pubrec(packet) => {
-            write_pubrec_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Pubrel(packet) => {
-            write_pubrel_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Pubcomp(packet) => {
-            write_pubcomp_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Subscribe(packet) => {
-            write_subscribe_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Suback(packet) => {
-            write_suback_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Unsubscribe(packet) => {
-            write_unsubscribe_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Unsuback(packet) => {
-            write_unsuback_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Pingreq(packet) => {
-            write_pingreq_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Pingresp(packet) => {
-            write_pingresp_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Disconnect(packet) => {
-            write_disconnect_encoding_steps(packet, context, steps)
-        }
-        MqttPacket::Auth(packet) => {
-            write_auth_encoding_steps(packet, context, steps)
-        }
+        MqttPacket::Connect(packet) => { write_connect_encoding_steps(packet, context, steps) }
+        MqttPacket::Connack(packet) => { write_connack_encoding_steps(packet, context, steps) }
+        MqttPacket::Publish(packet) => { write_publish_encoding_steps(packet, context, steps) }
+        MqttPacket::Puback(packet) => { write_puback_encoding_steps(packet, context, steps) }
+        MqttPacket::Pubrec(packet) => { write_pubrec_encoding_steps(packet, context, steps) }
+        MqttPacket::Pubrel(packet) => { write_pubrel_encoding_steps(packet, context, steps) }
+        MqttPacket::Pubcomp(packet) => { write_pubcomp_encoding_steps(packet, context, steps) }
+        MqttPacket::Subscribe(packet) => { write_subscribe_encoding_steps(packet, context, steps) }
+        MqttPacket::Suback(packet) => { write_suback_encoding_steps(packet, context, steps) }
+        MqttPacket::Unsubscribe(packet) => { write_unsubscribe_encoding_steps(packet, context, steps) }
+        MqttPacket::Unsuback(packet) => { write_unsuback_encoding_steps(packet, context, steps) }
+        MqttPacket::Pingreq(packet) => { write_pingreq_encoding_steps(packet, context, steps) }
+        MqttPacket::Pingresp(packet) => {  write_pingresp_encoding_steps(packet, context, steps) }
+        MqttPacket::Disconnect(packet) => { write_disconnect_encoding_steps(packet, context, steps) }
+        MqttPacket::Auth(packet) => { write_auth_encoding_steps(packet, context, steps) }
     }
 }
 

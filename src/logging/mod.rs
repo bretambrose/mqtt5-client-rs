@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::spec::*;
+
+use log::*;
 
 use std::fmt;
 use std::fmt::Write;
@@ -133,3 +137,58 @@ macro_rules! define_ack_packet_display_trait {
 }
 
 pub(crate) use define_ack_packet_display_trait;
+
+fn get_packet_type_for_logging(packet: &MqttPacket) -> &'static str {
+    match packet {
+        MqttPacket::Connect(packet) => { "ConnectPacket{...}" }
+        MqttPacket::Connack(packet) => { "ConnackPacket{...}" }
+        MqttPacket::Publish(packet) => { "PublishPacket{...}" }
+        MqttPacket::Puback(packet) => { "PubackPacket{...}" }
+        MqttPacket::Pubrec(packet) => { "PubrecPacket{...}" }
+        MqttPacket::Pubrel(packet) => { "PubrelPacket{...}" }
+        MqttPacket::Pubcomp(packet) => { "PubcompPacket{...}" }
+        MqttPacket::Subscribe(packet) => { "SubscribePacket{...}" }
+        MqttPacket::Suback(packet) => { "SubackPacket{...}" }
+        MqttPacket::Unsubscribe(packet) => { "UnsubscribePacket{...}" }
+        MqttPacket::Unsuback(packet) => { "UnsubackPacket{...}" }
+        MqttPacket::Pingreq(packet) => { "PingreqPacket{...}" }
+        MqttPacket::Pingresp(packet) => { "PingrespPacket{...}" }
+        MqttPacket::Disconnect(packet) => { "DisconnectPacket{...}" }
+        MqttPacket::Auth(packet) => { "AuthPacket{...}" }
+    }
+}
+
+impl fmt::Display for MqttPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            MqttPacket::Connect(packet) => { packet.fmt(f) }
+            MqttPacket::Connack(packet) => { packet.fmt(f) }
+            MqttPacket::Publish(packet) => { packet.fmt(f) }
+            MqttPacket::Puback(packet) => { packet.fmt(f) }
+            MqttPacket::Pubrec(packet) => { packet.fmt(f) }
+            MqttPacket::Pubrel(packet) => { packet.fmt(f) }
+            MqttPacket::Pubcomp(packet) => { packet.fmt(f) }
+            MqttPacket::Subscribe(packet) => { packet.fmt(f) }
+            MqttPacket::Suback(packet) => { packet.fmt(f) }
+            MqttPacket::Unsubscribe(packet) => { packet.fmt(f) }
+            MqttPacket::Unsuback(packet) => { packet.fmt(f) }
+            MqttPacket::Pingreq(packet) => { packet.fmt(f) }
+            MqttPacket::Pingresp(packet) => { packet.fmt(f) }
+            MqttPacket::Disconnect(packet) => { packet.fmt(f) }
+            MqttPacket::Auth(packet) => { packet.fmt(f) }
+        }
+    }
+}
+
+pub(crate) fn log_packet(prefix: &str, packet: &MqttPacket) -> () {
+    let level = log::max_level();
+    match level {
+        LevelFilter::Info => {
+            info!("{}{}", prefix, get_packet_type_for_logging(packet));
+        }
+        LevelFilter::Debug | LevelFilter::Trace => {
+            debug!("{}{}", prefix, packet);
+        }
+        _ => {}
+    }
+}
