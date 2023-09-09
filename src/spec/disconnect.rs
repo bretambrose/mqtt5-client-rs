@@ -167,6 +167,7 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
         let mut properties_length : usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length != mutable_body.len() {
+            error!("Packet Decode - DisconnectPacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -175,14 +176,14 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: DisconnectPacket not a DisconnectPacket");
 }
 
 pub(crate) fn validate_disconnect_packet_outbound(packet: &DisconnectPacket) -> Mqtt5Result<()> {
 
-    validate_optional_string_length!(reason_string, &packet.reason_string, DisconnectPacketValidation);
-    validate_user_properties!(properties, &packet.user_properties, DisconnectPacketValidation);
-    validate_optional_string_length!(server_reference, &packet.server_reference, DisconnectPacketValidation);
+    validate_optional_string_length(&packet.reason_string, Mqtt5Error::DisconnectPacketValidation, "Disconnect", "reason_string")?;
+    validate_user_properties(&packet.user_properties, Mqtt5Error::DisconnectPacketValidation, "Disconnect")?;
+    validate_optional_string_length(&packet.server_reference, Mqtt5Error::DisconnectPacketValidation, "Disconnect", "server_reference")?;
 
     Ok(())
 }

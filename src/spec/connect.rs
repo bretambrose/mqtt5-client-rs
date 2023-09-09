@@ -387,7 +387,7 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
             PROPERTY_KEY_AUTHENTICATION_METHOD => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.authentication_method)?; }
             PROPERTY_KEY_AUTHENTICATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut packet.authentication_data)?; }
             _ => {
-                error!("Packet Decode - Invalid ConnectPacket property type ({})", property_key);
+                error!("ConnectPacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -412,7 +412,7 @@ fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, conne
             PROPERTY_KEY_CORRELATION_DATA => { mutable_property_bytes = decode_optional_length_prefixed_bytes(mutable_property_bytes, &mut will.correlation_data)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut will.user_properties)?; }
             _ => {
-                error!("Packet Decode - Invalid ConnectPacket will property type ({})", property_key);
+                error!("ConnectPacket Decode - Invalid will property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -425,7 +425,7 @@ const CONNECT_HEADER_PROTOCOL_LENGTH : usize = 7;
 
 pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_CONNECT << 4)  {
-        error!("Packet Decode - ConnectPacket with invalid first byte");
+        error!("ConnectPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -434,6 +434,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
     if let MqttPacket::Connect(packet) = box_packet.as_mut() {
         let mut mutable_body = packet_body;
         if mutable_body.len() < CONNECT_HEADER_PROTOCOL_LENGTH {
+            error!("ConnectPacket Decode - packet too short");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -442,7 +443,10 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
         match protocol_bytes {
             [0u8, 4u8, 77u8, 81u8, 84u8, 84u8, 5u8] => { }
-            _ => { return Err(Mqtt5Error::MalformedPacket); }
+            _ => {
+                error!("ConnectPacket Decode - invalid protocol");
+                return Err(Mqtt5Error::MalformedPacket);
+            }
         }
 
         let mut connect_flags : u8 = 0;
@@ -450,6 +454,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
         // if the reserved bit is set, that's fatal
         if (connect_flags & 0x01) != 0 {
+            error!("ConnectPacket Decode - invalid flags");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -461,6 +466,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         if !has_will {
             /* indirectly check bits of connect flags vs. spec */
             if will_retain || will_qos != QualityOfService::AtMostOnce {
+                error!("ConnectPacket Decode - no will but has will flags set");
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -474,6 +480,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         mutable_body = decode_vli_into_mutable(mutable_body, &mut connect_property_length)?;
 
         if mutable_body.len() < connect_property_length {
+            error!("ConnectPacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -489,6 +496,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
             mutable_body = decode_vli_into_mutable(mutable_body, &mut will_property_length)?;
 
             if mutable_body.len() < will_property_length {
+                error!("ConnectPacket Decode - will property length exceeds overall packet length");
                 return Err(Mqtt5Error::MalformedPacket);
             }
 
@@ -518,18 +526,19 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         }
 
         if mutable_body.len() > 0 {
+            error!("ConnectPacket Decode - body length does not match expected overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: ConnectPacket not a ConnectPacket");
+    panic!("ConnectPacket Decode - Internal error");
 }
 
 pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5Result<()> {
 
-    validate_optional_string_length!(client_id, &packet.client_id, ConnectPacketValidation);
+    validate_optional_string_length(&packet.client_id, Mqtt5Error::ConnectPacketValidation, "Connect", "client_id")?;
     validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnectPacketValidation);
     validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size_bytes, ConnectPacketValidation);
 
@@ -537,18 +546,18 @@ pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5R
         return Err(Mqtt5Error::ConnectPacketValidation);
     }
 
-    validate_optional_string_length!(authentication_method, &packet.authentication_method, ConnectPacketValidation);
+    validate_optional_string_length(&packet.authentication_method, Mqtt5Error::ConnectPacketValidation, "Connect", "authentication_method")?;
     validate_optional_binary_length!(authentication_data, &packet.authentication_data, ConnectPacketValidation);
-    validate_optional_string_length!(username, &packet.username, ConnectPacketValidation);
+    validate_optional_string_length(&packet.username, Mqtt5Error::ConnectPacketValidation, "Connect", "username")?;
     validate_optional_binary_length!(password, &packet.password, ConnectPacketValidation);
-    validate_user_properties!(properties, &packet.user_properties, ConnectPacketValidation);
+    validate_user_properties(&packet.user_properties, Mqtt5Error::ConnectPacketValidation, "Connect")?;
 
     if let Some(will) = &packet.will {
-        validate_optional_string_length!(content_type, &will.content_type, ConnectPacketValidation);
-        validate_optional_string_length!(response_topic, &will.response_topic, ConnectPacketValidation);
+        validate_optional_string_length(&will.content_type, Mqtt5Error::ConnectPacketValidation, "Connect", "content_type")?;
+        validate_optional_string_length(&will.response_topic, Mqtt5Error::ConnectPacketValidation, "Connect", "response_topic")?;
         validate_optional_binary_length!(correlation_data, &will.correlation_data, ConnectPacketValidation);
-        validate_user_properties!(will_properties, &will.user_properties, ConnectPacketValidation);
-        validate_string_length!(will.topic, ConnectPacketValidation);
+        validate_user_properties(&will.user_properties, Mqtt5Error::ConnectPacketValidation, "ConnectWill")?;
+        validate_string_length(&will.topic, Mqtt5Error::ConnectPacketValidation, "Connect", "WillTopic")?;
         validate_optional_binary_length!(will_payload, &will.payload, ConnectPacketValidation);
     }
 

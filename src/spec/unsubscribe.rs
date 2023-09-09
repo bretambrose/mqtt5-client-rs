@@ -126,6 +126,7 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
+            error!("Packet Decode - UnsubscribePacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -144,7 +145,7 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: UnsubscribePacket not a UnsubscribePacket");
 }
 
 pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -> Mqtt5Result<()> {
@@ -158,7 +159,7 @@ pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -
 
     // topic filters are checked in detail in the internal validator
 
-    validate_user_properties!(properties, &packet.user_properties, UnsubscribePacketValidation);
+    validate_user_properties(&packet.user_properties, Mqtt5Error::UnsubscribePacketValidation, "Unsubscribe")?;
 
     Ok(())
 }

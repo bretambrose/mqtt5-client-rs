@@ -135,7 +135,7 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Packet Decode - Invalid AuthPacket property type ({})", property_key);
+                error!("AuthPacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -146,7 +146,7 @@ fn decode_auth_properties(property_bytes: &[u8], packet : &mut AuthPacket) -> Mq
 
 pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_AUTH << 4) {
-        error!("Packet Decode - AuthPacket with invalid first byte");
+        error!("AuthPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -162,7 +162,7 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
         let mut properties_length : usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length != mutable_body.len() {
-            error!("Packet Decode - AuthPacket property length does not match expected overall packet length");
+            error!("AuthPacket Decode - property length does not match expected overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -171,21 +171,22 @@ pub(crate) fn decode_auth_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Res
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: AuthPacket not an AuthPacket");
+    panic!("AuthPacket Decode - Internal error");
 }
 
 pub(crate) fn validate_auth_packet_outbound(packet: &AuthPacket) -> Mqtt5Result<()> {
 
     if packet.authentication_method.is_none() {
+        error!("AuthPacket Outbound Validation - authentication method must be set");
         // while optional from an encode/decode perspective, method is required from a protocol
         // perspective
         return Err(Mqtt5Error::AuthPacketValidation);
     }
 
-    validate_optional_string_length!(authentication_method, &packet.authentication_method, AuthPacketValidation);
+    validate_optional_string_length(&packet.authentication_method, Mqtt5Error::AuthPacketValidation, "Auth", "authentication_method")?;
     validate_optional_binary_length!(authentication_data, &packet.authentication_data, AuthPacketValidation);
-    validate_optional_string_length!(reason_string, &packet.reason_string, AuthPacketValidation);
-    validate_user_properties!(properties, &packet.user_properties, AuthPacketValidation);
+    validate_optional_string_length(&packet.reason_string, Mqtt5Error::AuthPacketValidation, "Auth", "reason_string")?;
+    validate_user_properties(&packet.user_properties, Mqtt5Error::AuthPacketValidation, "Auth")?;
 
     Ok(())
 }
@@ -195,6 +196,7 @@ pub(crate) fn validate_auth_packet_outbound_internal(packet: &AuthPacket, contex
     let (total_remaining_length, _) = compute_auth_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
     if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        error!("AuthPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::AuthPacketValidation);
     }
 
@@ -206,6 +208,7 @@ pub(crate) fn validate_auth_packet_inbound_internal(packet: &AuthPacket, _: &Inb
     if packet.authentication_method.is_none() {
         // while optional from an encode/decode perspective, method is required from a protocol
         // perspective
+        error!("AuthPacket Inbound Validation - authentication method must be set");
         return Err(Mqtt5Error::AuthPacketValidation);
     }
 

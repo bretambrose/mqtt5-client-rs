@@ -127,6 +127,7 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
+            error!("Packet Decode - SubackPacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -145,7 +146,7 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: SubackPacket not a SubackPacket");
 }
 
 validate_ack_inbound_internal!(validate_suback_packet_inbound_internal, SubackPacket, SubackPacketValidation);

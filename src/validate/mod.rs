@@ -5,8 +5,12 @@
 
 pub(crate) mod utils;
 
-use crate::spec::*;
+extern crate log;
+
 use crate::*;
+use crate::alias::*;
+use crate::client::*;
+use crate::spec::*;
 use crate::spec::auth::*;
 use crate::spec::connack::*;
 use crate::spec::connect::*;
@@ -20,8 +24,9 @@ use crate::spec::suback::*;
 use crate::spec::subscribe::*;
 use crate::spec::unsubscribe::*;
 use crate::spec::unsuback::*;
-use crate::client::*;
-use crate::alias::*;
+use crate::validate::utils::*;
+
+use log::*;
 
 pub(crate) const MAXIMUM_STRING_PROPERTY_LENGTH : usize = 65535;
 pub(crate) const MAXIMUM_BINARY_PROPERTY_LENGTH : usize = 65535;
@@ -43,21 +48,18 @@ pub(crate) struct InboundValidationContext<'a> {
     pub negotiated_settings : &'a NegotiatedSettings,
 }
 
-fn validate_user_property(property: &UserProperty) -> Mqtt5Result<()> {
-    if property.name.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-        return Err(Mqtt5Error::UserPropertyValidation);
-    }
-
-    if property.value.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-        return Err(Mqtt5Error::UserPropertyValidation);
-    }
+fn validate_user_property(property: &UserProperty, error: Mqtt5Error, packet_type: &str) -> Mqtt5Result<()> {
+    validate_string_length(&property.name, error, packet_type, "UserProperty Name")?;
+    validate_string_length(&property.name, error, packet_type, "UserProperty Value")?;
 
     Ok(())
 }
 
-pub(crate) fn validate_user_properties(properties: &Vec<UserProperty>) -> Mqtt5Result<()> {
-    for property in properties {
-        validate_user_property(property)?;
+pub(crate) fn validate_user_properties(properties: &Option<Vec<UserProperty>>, error: Mqtt5Error, packet_type: &str) -> Mqtt5Result<()> {
+    if let Some(props) = properties {
+        for property in props {
+            validate_user_property(property, error, packet_type)?;
+        }
     }
 
     Ok(())
@@ -85,6 +87,7 @@ pub(crate) fn validate_packet_outbound(packet: &MqttPacket) -> Mqtt5Result<()> {
         MqttPacket::Subscribe(subscribe) => { validate_subscribe_packet_outbound(subscribe) }
         MqttPacket::Unsubscribe(unsubscribe) => { validate_unsubscribe_packet_outbound(unsubscribe) }
         _ => {
+            error!("Packet Outbound Validation - unexpected packet type");
             Err(Mqtt5Error::ProtocolError)
         }
     }
@@ -106,6 +109,7 @@ pub(crate) fn validate_packet_outbound_internal(packet: &MqttPacket, context: &O
         MqttPacket::Subscribe(subscribe) => { validate_subscribe_packet_outbound_internal(subscribe, context) }
         MqttPacket::Unsubscribe(unsubscribe) => { validate_unsubscribe_packet_outbound_internal(unsubscribe, context) }
         _ => {
+            error!("Packet Outbound Internal Validation - unexpected packet type");
             Err(Mqtt5Error::ProtocolError)
         }
     }
@@ -128,6 +132,7 @@ pub(crate) fn validate_packet_inbound_internal(packet: &MqttPacket, context: &In
         MqttPacket::Suback(suback) => { validate_suback_packet_inbound_internal(suback, context) }
         MqttPacket::Unsuback(unsuback) => { validate_unsuback_packet_inbound_internal(unsuback, context) }
         _ => {
+            error!("Packet Inbound Validation - unexpected packet type");
             Err(Mqtt5Error::ProtocolError)
         }
     }

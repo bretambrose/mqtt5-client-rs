@@ -155,6 +155,7 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
+            error!("Packet Decode - SubscribePacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -195,7 +196,7 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: SubscribePacket not a SubscribePacket");
 }
 
 pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mqtt5Result<()> {
@@ -208,7 +209,7 @@ pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mq
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
-    validate_user_properties!(properties, &packet.user_properties, SubscribePacketValidation);
+    validate_user_properties(&packet.user_properties, Mqtt5Error::SubscribePacketValidation, "Subscribe")?;
 
     Ok(())
 }

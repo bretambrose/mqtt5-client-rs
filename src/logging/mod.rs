@@ -140,21 +140,21 @@ pub(crate) use define_ack_packet_display_trait;
 
 fn get_packet_type_for_logging(packet: &MqttPacket) -> &'static str {
     match packet {
-        MqttPacket::Connect(packet) => { "ConnectPacket{...}" }
-        MqttPacket::Connack(packet) => { "ConnackPacket{...}" }
-        MqttPacket::Publish(packet) => { "PublishPacket{...}" }
-        MqttPacket::Puback(packet) => { "PubackPacket{...}" }
-        MqttPacket::Pubrec(packet) => { "PubrecPacket{...}" }
-        MqttPacket::Pubrel(packet) => { "PubrelPacket{...}" }
-        MqttPacket::Pubcomp(packet) => { "PubcompPacket{...}" }
-        MqttPacket::Subscribe(packet) => { "SubscribePacket{...}" }
-        MqttPacket::Suback(packet) => { "SubackPacket{...}" }
-        MqttPacket::Unsubscribe(packet) => { "UnsubscribePacket{...}" }
-        MqttPacket::Unsuback(packet) => { "UnsubackPacket{...}" }
-        MqttPacket::Pingreq(packet) => { "PingreqPacket{...}" }
-        MqttPacket::Pingresp(packet) => { "PingrespPacket{...}" }
-        MqttPacket::Disconnect(packet) => { "DisconnectPacket{...}" }
-        MqttPacket::Auth(packet) => { "AuthPacket{...}" }
+        MqttPacket::Connect(_) => { "ConnectPacket{...}" }
+        MqttPacket::Connack(_) => { "ConnackPacket{...}" }
+        MqttPacket::Publish(_) => { "PublishPacket{...}" }
+        MqttPacket::Puback(_) => { "PubackPacket{...}" }
+        MqttPacket::Pubrec(_) => { "PubrecPacket{...}" }
+        MqttPacket::Pubrel(_) => { "PubrelPacket{...}" }
+        MqttPacket::Pubcomp(_) => { "PubcompPacket{...}" }
+        MqttPacket::Subscribe(_) => { "SubscribePacket{...}" }
+        MqttPacket::Suback(_) => { "SubackPacket{...}" }
+        MqttPacket::Unsubscribe(_) => { "UnsubscribePacket{...}" }
+        MqttPacket::Unsuback(_) => { "UnsubackPacket{...}" }
+        MqttPacket::Pingreq(_) => { "PingreqPacket{...}" }
+        MqttPacket::Pingresp(_) => { "PingrespPacket{...}" }
+        MqttPacket::Disconnect(_) => { "DisconnectPacket{...}" }
+        MqttPacket::Auth(_) => { "AuthPacket{...}" }
     }
 }
 

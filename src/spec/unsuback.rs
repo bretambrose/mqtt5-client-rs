@@ -128,6 +128,7 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
+            error!("Packet Decode - UnsubackPacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -146,7 +147,7 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: UnsubackPacket not a UnsubackPacket");
 }
 
 validate_ack_inbound_internal!(validate_unsuback_packet_inbound_internal, UnsubackPacket, UnsubackPacketValidation);

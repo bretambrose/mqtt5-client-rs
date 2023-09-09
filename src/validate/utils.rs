@@ -3,29 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::validate::*;
 
-macro_rules! validate_string_length {
-    ($string_expr: expr, $error: ident) => {
-        if $string_expr.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-            return Err(Mqtt5Error::$error);
-        }
-    };
+use log::*;
+
+pub(crate) fn validate_string_length(value: &String, error: Mqtt5Error, packet_type: &str, field_name: &str) -> Mqtt5Result<()> {
+    if value.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+        error!("{}Packet Validation - {} string field too long", packet_type, field_name);
+        return Err(error);
+    }
+
+    Ok(())
 }
 
-pub(crate) use validate_string_length;
-
-macro_rules! validate_optional_string_length {
-    ($value_name: ident, $optional_string_expr: expr, $error: ident) => {
-        if let Some($value_name) = $optional_string_expr {
-            if $value_name.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-                return Err(Mqtt5Error::$error);
-            }
+pub(crate) fn validate_optional_string_length(optional_string: &Option<String>, error: Mqtt5Error, packet_type: &str, field_name: &str) -> Mqtt5Result<()> {
+    if let Some(value) = &optional_string {
+        if value.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+            error!("{}Packet Validation - {} string field too long", packet_type, field_name);
+            return Err(error);
         }
-    };
-}
+    }
 
-pub(crate) use validate_optional_string_length;
+    Ok(())
+}
 
 macro_rules! validate_optional_binary_length {
     ($value_name: ident, $optional_binary_expr: expr, $error: ident) => {
@@ -51,24 +53,12 @@ macro_rules! validate_optional_integer_non_zero {
 
 pub(crate) use validate_optional_integer_non_zero;
 
-macro_rules! validate_user_properties {
-    ($value_name: ident, $optional_properties_expr: expr, $error: ident) => {
-        if let Some($value_name) = $optional_properties_expr {
-            if let Err(_) = validate_user_properties(&$value_name) {
-                return Err(Mqtt5Error::$error);
-            }
-        }
-    };
-}
-
-pub(crate) use validate_user_properties;
-
 macro_rules! validate_ack_outbound {
-    ($function_name: ident, $packet_type: ident, $error: ident) => {
+    ($function_name: ident, $packet_type: ident, $error: expr, $packet_type_string: expr) => {
         pub(crate) fn $function_name(packet: &$packet_type) -> Mqtt5Result<()> {
 
-            validate_optional_string_length!(reason, &packet.reason_string, $error);
-            validate_user_properties!(properties, &packet.user_properties, $error);
+            validate_optional_string_length(&packet.reason_string, $error, $packet_type_string, "reason_string")?;
+            validate_user_properties(&packet.user_properties, $error, $packet_type_string)?;
 
             Ok(())
         }

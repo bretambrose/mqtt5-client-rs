@@ -3,8 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
+
 use crate::*;
 use crate::spec::*;
+
+use log::*;
 
 pub const PACKET_TYPE_CONNECT: u8 = 1;
 pub const PACKET_TYPE_CONNACK: u8 = 2;
@@ -73,7 +77,10 @@ pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<Quality
         0 => { Ok(QualityOfService::AtMostOnce) }
         1 => { Ok(QualityOfService::AtLeastOnce) }
         2 => { Ok(QualityOfService::ExactlyOnce) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid quality of service value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -89,7 +96,10 @@ pub(crate) fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<P
     match value {
         0 => { Ok(PayloadFormatIndicator::Bytes) }
         1 => { Ok(PayloadFormatIndicator::Utf8) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid payload format indicator value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -111,7 +121,10 @@ pub(crate) fn convert_u8_to_puback_reason_code(value: u8) -> Mqtt5Result<PubackR
         145 => { Ok(PubackReasonCode::PacketIdentifierInUse) }
         151 => { Ok(PubackReasonCode::QuotaExceeded) }
         153 => { Ok(PubackReasonCode::PayloadFormatInvalid) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid puback reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -140,7 +153,10 @@ pub(crate) fn convert_u8_to_pubrec_reason_code(value: u8) -> Mqtt5Result<PubrecR
         145 => { Ok(PubrecReasonCode::PacketIdentifierInUse) }
         151 => { Ok(PubrecReasonCode::QuotaExceeded) }
         153 => { Ok(PubrecReasonCode::PayloadFormatInvalid) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid pubrec reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -162,7 +178,10 @@ pub(crate) fn convert_u8_to_pubrel_reason_code(value: u8) -> Mqtt5Result<PubrelR
     match value {
         0 => { Ok(PubrelReasonCode::Success) }
         146 => { Ok(PubrelReasonCode::PacketIdentifierNotFound) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid pubrel reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -177,7 +196,10 @@ pub(crate) fn convert_u8_to_pubcomp_reason_code(value: u8) -> Mqtt5Result<Pubcom
     match value {
         0 => { Ok(PubcompReasonCode::Success) }
         146 => { Ok(PubcompReasonCode::PacketIdentifierNotFound) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid pubcomp reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -212,8 +234,10 @@ pub(crate) fn convert_u8_to_connect_reason_code(value: u8) -> Mqtt5Result<Connec
         156 => { Ok(ConnectReasonCode::UseAnotherServer) }
         157 => { Ok(ConnectReasonCode::ServerMoved) }
         159 => { Ok(ConnectReasonCode::ConnectionRateExceeded) }
-
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid connect reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -275,7 +299,10 @@ pub(crate) fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<Dis
         160 => { Ok(DisconnectReasonCode::MaximumConnectTime) }
         161 => { Ok(DisconnectReasonCode::SubscriptionIdentifiersNotSupported) }
         162 => { Ok(DisconnectReasonCode::WildcardSubscriptionsNotSupported) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid disconnect reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -318,7 +345,10 @@ pub(crate) fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<A
         0 => { Ok(AuthenticateReasonCode::Success) }
         24 => { Ok(AuthenticateReasonCode::ContinueAuthentication) }
         25 => { Ok(AuthenticateReasonCode::ReAuthenticate) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid authenticate reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -339,7 +369,10 @@ pub(crate) fn convert_u8_to_unsuback_reason_code(value: u8) -> Mqtt5Result<Unsub
         135 => { Ok(UnsubackReasonCode::NotAuthorized) }
         144 => { Ok(UnsubackReasonCode::TopicNameInvalid) }
         145 => { Ok(UnsubackReasonCode::PacketIdentifierInUse) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid unsuback reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -369,7 +402,10 @@ pub(crate) fn convert_u8_to_suback_reason_code(value: u8) -> Mqtt5Result<SubackR
         158 => { Ok(SubackReasonCode::SharedSubscriptionsNotSupported) }
         161 => { Ok(SubackReasonCode::SubscriptionIdentifiersNotSupported) }
         162 => { Ok(SubackReasonCode::WildcardSubscriptionsNotSupported) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid suback reason code value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 
@@ -395,7 +431,10 @@ pub(crate) fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<Retai
         0 => { Ok(RetainHandlingType::SendOnSubscribe) }
         1 => { Ok(RetainHandlingType::SendOnSubscribeIfNew) }
         2 => { Ok(RetainHandlingType::DontSend) }
-        _ => { Err(Mqtt5Error::MalformedPacket) }
+        _ => {
+            error!("Packet Decode - Invalid retain handling type value ({})", value);
+            Err(Mqtt5Error::MalformedPacket)
+        }
     }
 }
 

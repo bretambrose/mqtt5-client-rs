@@ -54,7 +54,7 @@ define_ack_packet_encoding_impl!(write_puback_encoding_steps, PubackPacket, Puba
 define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket, "PubackPacket");
 define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, "PubackPacket", PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
 
-validate_ack_outbound!(validate_puback_packet_outbound, PubackPacket, PubackPacketValidation);
+validate_ack_outbound!(validate_puback_packet_outbound, PubackPacket, Mqtt5Error::PubackPacketValidation, "Puback");
 validate_ack_outbound_internal!(validate_puback_packet_outbound_internal, PubackPacket, PubackPacketValidation, compute_puback_packet_length_properties);
 validate_ack_inbound_internal!(validate_puback_packet_inbound_internal, PubackPacket, PubackPacketValidation);
 

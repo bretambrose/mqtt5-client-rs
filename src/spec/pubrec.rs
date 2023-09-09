@@ -54,7 +54,7 @@ define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, Pubr
 define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket, "PubrecPacket");
 define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, "PubrecPacket", PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
 
-validate_ack_outbound!(validate_pubrec_packet_outbound, PubrecPacket, PubrecPacketValidation);
+validate_ack_outbound!(validate_pubrec_packet_outbound, PubrecPacket, Mqtt5Error::PubrecPacketValidation, "Pubrec");
 validate_ack_outbound_internal!(validate_pubrec_packet_outbound_internal, PubrecPacket, PubrecPacketValidation, compute_pubrec_packet_length_properties);
 validate_ack_inbound_internal!(validate_pubrec_packet_inbound_internal, PubrecPacket, PubrecPacketValidation);
 

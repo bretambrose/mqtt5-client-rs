@@ -336,6 +336,7 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
+            error!("Packet Decode - PublishPacket property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -351,7 +352,7 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         return Ok(box_packet);
     }
 
-    Err(Mqtt5Error::Unknown)
+    panic!("Packet Decode - Internal error: PublishPacket not a PublishPacket");
 }
 
 pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5Result<()> {
@@ -366,7 +367,7 @@ pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5R
         }
     }
 
-    validate_string_length!(&packet.topic, PublishPacketValidation);
+    validate_string_length(&packet.topic, Mqtt5Error::PublishPacketValidation, "Publish", "topic")?;
 
     if !is_valid_topic(&packet.topic) {
         return Err(Mqtt5Error::PublishPacketValidation);
@@ -387,12 +388,12 @@ pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5R
             return Err(Mqtt5Error::PublishPacketValidation);
         }
 
-        validate_string_length!(response_topic, PublishPacketValidation);
+        validate_string_length(response_topic, Mqtt5Error::PublishPacketValidation, "Publish", "response_topic")?;
     }
 
-    validate_user_properties!(properties, &packet.user_properties, PublishPacketValidation);
+    validate_user_properties(&packet.user_properties, Mqtt5Error::PublishPacketValidation, "Publish")?;
     validate_optional_binary_length!(correlation_data, &packet.correlation_data, PublishPacketValidation);
-    validate_optional_string_length!(content_type, &packet.content_type, PublishPacketValidation);
+    validate_optional_string_length(&packet.content_type, Mqtt5Error::PublishPacketValidation, "Publish", "content_type")?;
 
     Ok(())
 }
