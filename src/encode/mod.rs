@@ -5,6 +5,8 @@
 
 pub(crate) mod utils;
 
+extern crate log;
+
 use crate::*;
 use crate::alias::*;
 use crate::encode::utils::*;
@@ -24,6 +26,8 @@ use crate::spec::suback::*;
 use crate::spec::subscribe::*;
 use crate::spec::unsuback::*;
 use crate::spec::unsubscribe::*;
+
+use log::*;
 
 use std::collections::VecDeque;
 
@@ -82,6 +86,7 @@ impl Encoder {
     ) -> Mqtt5Result<EncodeResult> {
         let capacity = dest.capacity();
         if capacity < 4 {
+            error!("Encoder - target buffer too small");
             return Err(Mqtt5Error::EncodeBufferTooSmall);
         }
 

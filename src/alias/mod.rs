@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
 extern crate lru;
 
-use lru::LruCache;
-use std::num::NonZeroUsize;
-
-use std::collections::HashMap;
 use crate::*;
+
+use log::*;
+use lru::LruCache;
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 #[derive(Default, Copy, Clone)]
 #[cfg_attr(test, derive(Debug, Eq, PartialEq))]
@@ -219,11 +221,12 @@ impl InboundAliasResolver {
             }
 
             if *alias_value == 0 || *alias_value > self.maximum_alias_value {
+                error!("Topic Alias Resolution - inbound alias out of range");
                 return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
-            // TODO: consider making this validate the topic itself
             if topic.len() == 0 {
+                error!("Topic Alias Resolution - zero length topic");
                 return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
