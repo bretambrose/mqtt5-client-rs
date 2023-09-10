@@ -129,7 +129,7 @@ fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePac
             PROPERTY_KEY_SUBSCRIPTION_IDENTIFIER => { mutable_property_bytes = decode_optional_u32(mutable_property_bytes, &mut packet.subscription_identifier)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Packet Decode - Invalid SubscribePacket property type ({})", property_key);
+                error!("SubscribePacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -143,7 +143,7 @@ const SUBSCRIPTION_OPTIONS_RESERVED_BITS_MASK : u8 = 192;
 pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != SUBSCRIBE_FIRST_BYTE {
-        error!("Packet Decode - SubscribePacket with invalid first byte");
+        error!("SubscribePacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -155,7 +155,7 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
-            error!("Packet Decode - SubscribePacket property length exceeds overall packet length");
+            error!("SubscribePacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -196,16 +196,18 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: SubscribePacket not a SubscribePacket");
+    panic!("SubscribePacket Decode - Internal error");
 }
 
 pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mqtt5Result<()> {
 
     if packet.packet_id != 0 {
+        error!("SubscribePacket Outbound Validation - packet id may not be set");
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
     if packet.subscriptions.len() == 0 {
+        error!("SubscribePacket Outbound Validation - empty subscription set");
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
@@ -219,15 +221,18 @@ pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePack
     let (total_remaining_length, _) = compute_subscribe_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
     if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        error!("SubscribePacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
     if packet.packet_id == 0 {
+        error!("SubscribePacket Outbound Validation - packet id is zero");
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
     for subscription in &packet.subscriptions {
         if !is_topic_filter_valid_internal(&subscription.topic_filter, context, Some(subscription.no_local)) {
+            error!("SubscribePacket Outbound Validation - invalid topic filter");
             return Err(Mqtt5Error::SubscribePacketValidation);
         }
     }

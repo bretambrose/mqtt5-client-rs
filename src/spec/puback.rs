@@ -51,12 +51,12 @@ define_ack_packet_user_property_accessor!(get_puback_packet_user_property, Pubac
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_puback_encoding_steps, PubackPacket, PubackReasonCode, PACKET_TYPE_PUBACK, compute_puback_packet_length_properties, get_puback_packet_reason_string, get_puback_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket, "PubackPacket");
-define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, "PubackPacket", PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
+define_ack_packet_decode_properties_function!(decode_puback_properties, PubackPacket, "Puback");
+define_ack_packet_decode_function!(decode_puback_packet, Puback, PubackPacket, "Puback", PACKET_TYPE_PUBACK, convert_u8_to_puback_reason_code, decode_puback_properties);
 
 validate_ack_outbound!(validate_puback_packet_outbound, PubackPacket, Mqtt5Error::PubackPacketValidation, "Puback");
-validate_ack_outbound_internal!(validate_puback_packet_outbound_internal, PubackPacket, PubackPacketValidation, compute_puback_packet_length_properties);
-validate_ack_inbound_internal!(validate_puback_packet_inbound_internal, PubackPacket, PubackPacketValidation);
+validate_ack_outbound_internal!(validate_puback_packet_outbound_internal, PubackPacket, PubackPacketValidation, compute_puback_packet_length_properties, "Puback");
+validate_ack_inbound_internal!(validate_puback_packet_inbound_internal, PubackPacket, PubackPacketValidation, "Puback");
 
 define_ack_packet_display_trait!(PubackPacket, "PubackPacket", puback_reason_code_to_str);
 
@@ -66,6 +66,7 @@ mod tests {
     use super::*;
     use crate::decode::testing::*;
     use crate::validate::testing::*;
+    use crate::validate::utils::testing::*;
 
     #[test]
     fn puback_round_trip_encode_decode_default() {

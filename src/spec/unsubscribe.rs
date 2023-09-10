@@ -101,7 +101,7 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
         match property_key {
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Packet Decode - Invalid UnsubscribePacket property type ({})", property_key);
+                error!("UnsubscribePacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -113,7 +113,7 @@ fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut Unsubscrib
 pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != UNSUBSCRIBE_FIRST_BYTE {
-        error!("Packet Decode - UnsubscribePacket with invalid first byte");
+        error!("UnsubscribePacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -126,7 +126,7 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
-            error!("Packet Decode - UnsubscribePacket property length exceeds overall packet length");
+            error!("UnsubscribePacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -145,15 +145,17 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: UnsubscribePacket not a UnsubscribePacket");
+    panic!("UnsubscribePacket Decode - Internal error");
 }
 
 pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -> Mqtt5Result<()> {
     if packet.packet_id != 0 {
+        error!("UnsubscribePacket Outbound Validation - packet id may not be set");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
     if packet.topic_filters.len() == 0 {
+        error!("UnsubscribePacket Outbound Validation - empty topic filters list");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
@@ -169,15 +171,18 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
     let (total_remaining_length, _) = compute_unsubscribe_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
     if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        error!("UnsubscribePacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
     if packet.packet_id == 0 {
+        error!("UnsubscribePacket Outbound Validation - packet id is zero");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
     for filter in &packet.topic_filters {
         if !is_topic_filter_valid_internal(filter, context, None) {
+            error!("UnsubscribePacket Outbound Validation - invalid topic filter");
             return Err(Mqtt5Error::UnsubscribePacketValidation);
         }
     }

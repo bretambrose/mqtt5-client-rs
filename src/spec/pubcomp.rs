@@ -51,12 +51,12 @@ define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubc
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket, "PubcompPacket");
-define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, "PubcompPacket", PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
+define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket, "Pubcomp");
+define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, "Pubcomp", PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
 
 validate_ack_outbound!(validate_pubcomp_packet_outbound, PubcompPacket, Mqtt5Error::PubcompPacketValidation, "Pubcomp");
-validate_ack_outbound_internal!(validate_pubcomp_packet_outbound_internal, PubcompPacket, PubcompPacketValidation, compute_pubcomp_packet_length_properties);
-validate_ack_inbound_internal!(validate_pubcomp_packet_inbound_internal, PubcompPacket, PubcompPacketValidation);
+validate_ack_outbound_internal!(validate_pubcomp_packet_outbound_internal, PubcompPacket, PubcompPacketValidation, compute_pubcomp_packet_length_properties, "Puback");
+validate_ack_inbound_internal!(validate_pubcomp_packet_inbound_internal, PubcompPacket, PubcompPacketValidation, "Pubcomp");
 
 define_ack_packet_display_trait!(PubcompPacket, "PubcompPacket", pubcomp_reason_code_to_str);
 
@@ -193,6 +193,7 @@ mod tests {
     }
 
     use crate::validate::testing::*;
+    use crate::validate::utils::testing::*;
 
     test_ack_validate_success!(pubcomp_validate_success, Pubcomp, create_pubcomp_with_all_properties);
     test_ack_validate_failure_reason_string_length!(pubcomp_validate_failure_reason_string_length, Pubcomp, create_pubcomp_with_all_properties, PubcompPacketValidation);

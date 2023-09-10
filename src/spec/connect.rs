@@ -539,37 +539,27 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5Result<()> {
 
     validate_optional_string_length(&packet.client_id, Mqtt5Error::ConnectPacketValidation, "Connect", "client_id")?;
-    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnectPacketValidation);
-    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size_bytes, ConnectPacketValidation);
+    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnectPacketValidation, "Connect", "receive_maximum");
+    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size_bytes, ConnectPacketValidation, "Connect", "maximum_packet_size");
 
     if packet.authentication_data.is_some() && packet.authentication_method.is_none() {
+        error!("ConnectPacket Validation - authentication data without authentication method");
         return Err(Mqtt5Error::ConnectPacketValidation);
     }
 
     validate_optional_string_length(&packet.authentication_method, Mqtt5Error::ConnectPacketValidation, "Connect", "authentication_method")?;
-    validate_optional_binary_length!(authentication_data, &packet.authentication_data, ConnectPacketValidation);
+    validate_optional_binary_length(&packet.authentication_data, Mqtt5Error::ConnectPacketValidation, "Connect", "authentication_data")?;
     validate_optional_string_length(&packet.username, Mqtt5Error::ConnectPacketValidation, "Connect", "username")?;
-    validate_optional_binary_length!(password, &packet.password, ConnectPacketValidation);
+    validate_optional_binary_length(&packet.password, Mqtt5Error::ConnectPacketValidation, "Connect", "password")?;
     validate_user_properties(&packet.user_properties, Mqtt5Error::ConnectPacketValidation, "Connect")?;
 
     if let Some(will) = &packet.will {
         validate_optional_string_length(&will.content_type, Mqtt5Error::ConnectPacketValidation, "Connect", "content_type")?;
         validate_optional_string_length(&will.response_topic, Mqtt5Error::ConnectPacketValidation, "Connect", "response_topic")?;
-        validate_optional_binary_length!(correlation_data, &will.correlation_data, ConnectPacketValidation);
+        validate_optional_binary_length(&will.correlation_data, Mqtt5Error::ConnectPacketValidation, "Connect", "correlation_data")?;
         validate_user_properties(&will.user_properties, Mqtt5Error::ConnectPacketValidation, "ConnectWill")?;
-        validate_string_length(&will.topic, Mqtt5Error::ConnectPacketValidation, "Connect", "WillTopic")?;
-        validate_optional_binary_length!(will_payload, &will.payload, ConnectPacketValidation);
-    }
-
-    Ok(())
-}
-
-pub(crate) fn validate_connect_packet_outbound_internal(packet: &ConnectPacket, context: &OutboundValidationContext) -> Mqtt5Result<()> {
-
-    let (total_remaining_length, _, _) = compute_connect_packet_length_properties(packet)?;
-    let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
-        return Err(Mqtt5Error::AuthPacketValidation);
+        validate_string_length(&will.topic, Mqtt5Error::ConnectPacketValidation, "ConnectWill", "topic")?;
+        validate_optional_binary_length(&will.payload, Mqtt5Error::ConnectPacketValidation, "ConnectWill", "payload")?;
     }
 
     Ok(())

@@ -301,7 +301,7 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             PROPERTY_KEY_CONTENT_TYPE => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.content_type)?; }
             _ => {
-                error!("Packet Decode - Invalid PublishPacket property type ({})", property_key);
+                error!("PublishPacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -336,7 +336,7 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
-            error!("Packet Decode - PublishPacket property length exceeds overall packet length");
+            error!("PublishPacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -352,17 +352,19 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: PublishPacket not a PublishPacket");
+    panic!("PublishPacket Decode - Internal error");
 }
 
 pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5Result<()> {
 
     if packet.packet_id != 0 {
+        error!("PublishPacket Outbound Validation - packet id may not be set");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if packet.qos == QualityOfService::AtMostOnce {
         if packet.duplicate {
+            error!("PublishPacket Outbound Validation - packet id is zero");
             return Err(Mqtt5Error::PublishPacketValidation);
         }
     }
@@ -370,21 +372,25 @@ pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5R
     validate_string_length(&packet.topic, Mqtt5Error::PublishPacketValidation, "Publish", "topic")?;
 
     if !is_valid_topic(&packet.topic) {
+        error!("PublishPacket Outbound Validation - invalid topic");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if let Some(alias) = packet.topic_alias {
         if alias == 0 {
+            error!("PublishPacket Outbound Validation - topic alias is zero");
             return Err(Mqtt5Error::PublishPacketValidation);
         }
     }
 
     if packet.subscription_identifiers.is_some() {
+        error!("PublishPacket Outbound Validation - subscription identifiers not allowed on client packets");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if let Some(response_topic) = &packet.response_topic {
         if !is_valid_topic(response_topic) {
+            error!("PublishPacket Outbound Validation - invalid response topic");
             return Err(Mqtt5Error::PublishPacketValidation);
         }
 
@@ -392,7 +398,7 @@ pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5R
     }
 
     validate_user_properties(&packet.user_properties, Mqtt5Error::PublishPacketValidation, "Publish")?;
-    validate_optional_binary_length!(correlation_data, &packet.correlation_data, PublishPacketValidation);
+    validate_optional_binary_length(&packet.correlation_data, Mqtt5Error::PublishPacketValidation, "Publish", "correlation_data")?;
     validate_optional_string_length(&packet.content_type, Mqtt5Error::PublishPacketValidation, "Publish", "content_type")?;
 
     Ok(())
@@ -403,14 +409,17 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
     let (total_remaining_length, _) = compute_publish_packet_length_properties(packet, &context.outbound_alias_resolution.unwrap_or(OutboundAliasResolution{..Default::default() }))?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
     if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        error!("PublishPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if packet.packet_id == 0 && packet.qos != QualityOfService::AtMostOnce {
+        error!("PublishPacket Outbound Validation - packet id must be non zero");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if packet.retain && !context.negotiated_settings.retain_available {
+        error!("PublishPacket Outbound Validation - retained messages not allowed on this connection");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
@@ -421,10 +430,12 @@ pub(crate) fn validate_publish_packet_inbound_internal(packet: &PublishPacket, _
 
     /* alias resolution happens after decode and before validation, so by now we should have a real topic */
     if packet.topic.len() == 0 {
+        error!("PublishPacket Inbound Validation - topic could not be resolved");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     if packet.packet_id == 0 && packet.qos != QualityOfService::AtMostOnce {
+        error!("PublishPacket Inbound Validation - packet id must be non zero");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 

@@ -147,7 +147,7 @@ fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectP
 
 pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     if first_byte != (PACKET_TYPE_DISCONNECT << 4) {
-        error!("Packet Decode - DisconnectPacket with invalid first byte");
+        error!("DisconnectPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -167,7 +167,7 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
         let mut properties_length : usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length != mutable_body.len() {
-            error!("Packet Decode - DisconnectPacket property length exceeds overall packet length");
+            error!("DisconnectPacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -176,7 +176,7 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: DisconnectPacket not a DisconnectPacket");
+    panic!("DisconnectPacket Decode - Internal error");
 }
 
 pub(crate) fn validate_disconnect_packet_outbound(packet: &DisconnectPacket) -> Mqtt5Result<()> {
@@ -193,6 +193,7 @@ pub(crate) fn validate_disconnect_packet_outbound_internal(packet: &DisconnectPa
     let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
     if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+        error!("DisconnectPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::DisconnectPacketValidation);
     }
 
@@ -207,6 +208,7 @@ pub(crate) fn validate_disconnect_packet_outbound_internal(packet: &DisconnectPa
     let disconnect_session_expiry_interval = packet.session_expiry_interval_seconds.unwrap_or(connect_session_expiry_interval);
 
     if connect_session_expiry_interval == 0 && disconnect_session_expiry_interval > 0 {
+        error!("DisconnectPacket Outbound Validation - session expiry interval cannot be non-zero when connect session expiry interval was zero");
         return Err(Mqtt5Error::DisconnectPacketValidation);
     }
 
@@ -217,6 +219,7 @@ pub(crate) fn validate_disconnect_packet_inbound_internal(packet: &DisconnectPac
 
     /* protocol error for the server to send us a session expiry interval property */
     if packet.session_expiry_interval_seconds.is_some() {
+        error!("DisconnectPacket Inbound Validation - session expiry interval is non zero");
         return Err(Mqtt5Error::DisconnectPacketValidation);
     }
 

@@ -315,7 +315,7 @@ macro_rules! define_ack_packet_decode_properties_function {
                     PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
                     PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
                     _ => {
-                        error!("Packet Decode - Invalid {} property type ({})", $packet_type_as_string, property_key);
+                        error!("{}Packet Decode - Invalid property type ({})", $packet_type_as_string, property_key);
                         return Err(Mqtt5Error::MalformedPacket);
                     }
                 }
@@ -332,7 +332,7 @@ macro_rules! define_ack_packet_decode_function {
     ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_as_string: expr, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
         pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
             if first_byte != ($packet_type_value << 4) {
-                error!("Packet Decode - {} with invalid first byte", $packet_type_as_string);
+                error!("{}Packet Decode - invalid first byte", $packet_type_as_string);
                 return Err(Mqtt5Error::MalformedPacket);
             }
 
@@ -355,7 +355,7 @@ macro_rules! define_ack_packet_decode_function {
                 let mut properties_length = 0;
                 mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
                 if properties_length != mutable_body.len() {
-                    error!("Packet Decode - {} property length does not match remaining packet length", $packet_type_as_string);
+                    error!("{}Packet Decode - property length does not match remaining packet length", $packet_type_as_string);
                     return Err(Mqtt5Error::MalformedPacket);
                 }
 
@@ -364,7 +364,7 @@ macro_rules! define_ack_packet_decode_function {
                 return Ok(box_packet)
             }
 
-            panic!("Internal error: ack packet not an ack packet");
+            panic!("{}Packet Decode - Internal error", $packet_type_as_string);
         }
     };
 }

@@ -103,7 +103,7 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
             PROPERTY_KEY_REASON_STRING => { mutable_property_bytes = decode_optional_length_prefixed_string(mutable_property_bytes, &mut packet.reason_string)?; }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
             _ => {
-                error!("Packet Decode - Invalid UnsubackPacket property type ({})", property_key);
+                error!("UnsubackPacket Decode - Invalid property type ({})", property_key);
                 return Err(Mqtt5Error::MalformedPacket);
             }
         }
@@ -115,7 +115,7 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
 pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
     if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
-        error!("Packet Decode - UnsubackPacket with invalid first byte");
+        error!("UnsubackPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -128,7 +128,7 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         let mut properties_length: usize = 0;
         mutable_body = decode_vli_into_mutable(mutable_body, &mut properties_length)?;
         if properties_length > mutable_body.len() {
-            error!("Packet Decode - UnsubackPacket property length exceeds overall packet length");
+            error!("UnsubackPacket Decode - property length exceeds overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
 
@@ -147,10 +147,10 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         return Ok(box_packet);
     }
 
-    panic!("Packet Decode - Internal error: UnsubackPacket not a UnsubackPacket");
+    panic!("UnsubackPacket Decode - Internal error");
 }
 
-validate_ack_inbound_internal!(validate_unsuback_packet_inbound_internal, UnsubackPacket, UnsubackPacketValidation);
+validate_ack_inbound_internal!(validate_unsuback_packet_inbound_internal, UnsubackPacket, UnsubackPacketValidation, "Unsuback");
 
 impl fmt::Display for UnsubackPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -298,6 +298,7 @@ mod tests {
     }
 
     use crate::validate::testing::*;
+    use crate::validate::utils::testing::*;
 
     test_ack_validate_failure_inbound_packet_id_zero!(unsuback_validate_failure_internal_packet_id_zero, Unsuback, create_unsuback_all_properties, UnsubackPacketValidation);
 }

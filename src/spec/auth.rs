@@ -184,7 +184,7 @@ pub(crate) fn validate_auth_packet_outbound(packet: &AuthPacket) -> Mqtt5Result<
     }
 
     validate_optional_string_length(&packet.authentication_method, Mqtt5Error::AuthPacketValidation, "Auth", "authentication_method")?;
-    validate_optional_binary_length!(authentication_data, &packet.authentication_data, AuthPacketValidation);
+    validate_optional_binary_length(&packet.authentication_data, Mqtt5Error::AuthPacketValidation, "Auth", "authentication_data")?;
     validate_optional_string_length(&packet.reason_string, Mqtt5Error::AuthPacketValidation, "Auth", "reason_string")?;
     validate_user_properties(&packet.user_properties, Mqtt5Error::AuthPacketValidation, "Auth")?;
 

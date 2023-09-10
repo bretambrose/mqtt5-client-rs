@@ -51,12 +51,12 @@ define_ack_packet_user_property_accessor!(get_pubrel_packet_user_property, Pubre
 #[rustfmt::skip]
 define_ack_packet_encoding_impl!(write_pubrel_encoding_steps, PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
 
-define_ack_packet_decode_properties_function!(decode_pubrel_properties, PubrelPacket, "PubrelPacket");
-define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, "PubrelPacket", PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
+define_ack_packet_decode_properties_function!(decode_pubrel_properties, PubrelPacket, "Pubrel");
+define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, "Pubrel", PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
 
 validate_ack_outbound!(validate_pubrel_packet_outbound, PubrelPacket, Mqtt5Error::PubrelPacketValidation, "Pubrel");
-validate_ack_outbound_internal!(validate_pubrel_packet_outbound_internal, PubrelPacket, PubrelPacketValidation, compute_pubrel_packet_length_properties);
-validate_ack_inbound_internal!(validate_pubrel_packet_inbound_internal, PubrelPacket, PubrelPacketValidation);
+validate_ack_outbound_internal!(validate_pubrel_packet_outbound_internal, PubrelPacket, PubrelPacketValidation, compute_pubrel_packet_length_properties, "Pubrel");
+validate_ack_inbound_internal!(validate_pubrel_packet_inbound_internal, PubrelPacket, PubrelPacketValidation, "Pubrel");
 
 define_ack_packet_display_trait!(PubrelPacket, "PubrelPacket", pubrel_reason_code_to_str);
 
@@ -193,6 +193,7 @@ mod tests {
     }
 
     use crate::validate::testing::*;
+    use crate::validate::utils::testing::*;
 
     test_ack_validate_success!(pubrel_validate_success, Pubrel, create_pubrel_with_all_properties);
     test_ack_validate_failure_reason_string_length!(pubrel_validate_failure_reason_string_length, Pubrel, create_pubrel_with_all_properties, PubrelPacketValidation);

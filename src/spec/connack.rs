@@ -326,7 +326,7 @@ pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _
         return Err(Mqtt5Error::ConnackPacketValidation);
     }
 
-    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnackPacketValidation);
+    validate_optional_integer_non_zero!(receive_maximum, packet.receive_maximum, ConnackPacketValidation, "Connack", "receive_maximum");
 
     if let Some(maximum_qos) = packet.maximum_qos {
         if maximum_qos == QualityOfService::ExactlyOnce {
@@ -335,7 +335,7 @@ pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _
         }
     }
 
-    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation);
+    validate_optional_integer_non_zero!(maximum_packet_size, packet.maximum_packet_size, ConnackPacketValidation, "Connack", "maximum_packet_size");
 
     Ok(())
 }
