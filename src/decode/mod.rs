@@ -5,6 +5,8 @@
 
 pub(crate) mod utils;
 
+extern crate log;
+
 use crate::*;
 use crate::alias::*;
 use crate::decode::utils::*;
@@ -29,6 +31,8 @@ use crate::spec::suback::*;
 use crate::spec::subscribe::*;
 use crate::spec::unsuback::*;
 use crate::spec::unsubscribe::*;
+
+use log::*;
 
 const DECODE_BUFFER_DEFAULT_SIZE : usize = 16 * 1024;
 
@@ -69,6 +73,8 @@ pub(crate) struct Decoder {
 
 fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
     let packet_type = first_byte >> 4;
+
+    info!("Decoding a packet of type {}", packet_type_to_str(packet_type));
 
     match packet_type {
         PACKET_TYPE_CONNECT => { decode_connect_packet(first_byte, packet_body) }

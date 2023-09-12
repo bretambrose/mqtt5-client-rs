@@ -10,6 +10,7 @@ extern crate log;
 use crate::*;
 use crate::alias::*;
 use crate::encode::utils::*;
+use crate::logging::*;
 use crate::spec::*;
 use crate::spec::auth::*;
 use crate::spec::connack::*;
@@ -37,6 +38,8 @@ pub(crate) struct EncodingContext {
 }
 
 fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
+    log_packet("Writing encode steps for packet: ", &*mqtt_packet);
+
     match mqtt_packet {
         MqttPacket::Connect(packet) => { write_connect_encoding_steps(packet, context, steps) }
         MqttPacket::Connack(packet) => { write_connack_encoding_steps(packet, context, steps) }

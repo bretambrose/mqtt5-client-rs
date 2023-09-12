@@ -445,3 +445,26 @@ pub(crate) fn retain_handling_type_to_str (rht: RetainHandlingType) -> &'static 
         RetainHandlingType::DontSend => { "2 (DontSend)" }
     }
 }
+
+pub(crate) fn packet_type_to_str(packet_type: u8) -> &'static str {
+    match packet_type {
+        PACKET_TYPE_CONNECT => { "Connect" }
+        PACKET_TYPE_CONNACK => { "Connack" }
+        PACKET_TYPE_PUBLISH => { "Publish" }
+        PACKET_TYPE_PUBACK => { "Puback" }
+        PACKET_TYPE_PUBREC => { "Pubrec" }
+        PACKET_TYPE_PUBREL => { "Pubrel" }
+        PACKET_TYPE_PUBCOMP => { "Pubcomp" }
+        PACKET_TYPE_SUBSCRIBE => { "Subscribe" }
+        PACKET_TYPE_SUBACK => { "Suback" }
+        PACKET_TYPE_UNSUBSCRIBE => { "Unsubscribe" }
+        PACKET_TYPE_UNSUBACK => { "Unsuback" }
+        PACKET_TYPE_PINGREQ => { "Pingreq" }
+        PACKET_TYPE_PINGRESP => { "Pingresp" }
+        PACKET_TYPE_DISCONNECT => { "Disconnect" }
+        PACKET_TYPE_AUTH => { "Auth" }
+        _ => {
+            "Unknown"
+        }
+    }
+}
