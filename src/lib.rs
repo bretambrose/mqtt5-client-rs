@@ -3,13 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-extern crate core;
-
 mod alias;
 pub mod client;
 mod decode;
 mod encode;
 mod logging;
+mod operation;
 pub mod spec;
 mod validate;
 
@@ -76,6 +75,7 @@ pub enum Mqtt5Error {
     UnsubackPacketValidation,
     SubscribePacketValidation,
     UnsubscribePacketValidation,
+    InternalStateError
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
