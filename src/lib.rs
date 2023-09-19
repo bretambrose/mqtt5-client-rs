@@ -46,6 +46,8 @@ pub use spec::subscribe::SubscribePacket;
 pub use spec::unsuback::UnsubackPacket;
 pub use spec::unsubscribe::UnsubscribePacket;
 
+pub use client::NegotiatedSettings;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Mqtt5Error {
     Unknown,
@@ -75,7 +77,8 @@ pub enum Mqtt5Error {
     UnsubackPacketValidation,
     SubscribePacketValidation,
     UnsubscribePacketValidation,
-    InternalStateError
+    InternalStateError,
+    ConnectionRejected
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
