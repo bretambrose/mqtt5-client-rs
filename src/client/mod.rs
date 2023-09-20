@@ -81,9 +81,6 @@ pub struct NegotiatedSettings {
     /// The highest value that the server will accept as a Topic Alias sent by the client.
     pub topic_alias_maximum_to_server : u16,
 
-    /// The highest value that the client will accept as a Topic Alias sent by the server.
-    pub topic_alias_maximum_to_client : u16,
-
     /// The amount of time in seconds before the server will disconnect the client for inactivity.
     pub server_keep_alive : u16,
 

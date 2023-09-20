@@ -121,7 +121,7 @@ pub(crate) fn validate_packet_outbound_internal(packet: &MqttPacket, context: &O
 pub(crate) fn validate_packet_inbound_internal(packet: &MqttPacket, context: &InboundValidationContext) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_inbound_internal(auth, context) }
-        MqttPacket::Connack(connack) => { validate_connack_packet_inbound_internal(connack, context) }
+        MqttPacket::Connack(connack) => { validate_connack_packet_inbound_internal(connack) }
         MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_inbound_internal(disconnect, context) }
         MqttPacket::Pingresp(_) => { Ok(()) }
         MqttPacket::Puback(puback) => { validate_puback_packet_inbound_internal(puback, context) }

@@ -319,7 +319,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
     panic!("ConnackPacket Decode - Internal error");
 }
 
-pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
+pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket) -> Mqtt5Result<()> {
 
     if packet.session_present && packet.reason_code != ConnectReasonCode::Success {
         error!("ConnackPacket Inbound Validation - session present on unsuccessful connect");

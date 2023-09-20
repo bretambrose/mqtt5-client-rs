@@ -78,7 +78,9 @@ pub enum Mqtt5Error {
     SubscribePacketValidation,
     UnsubscribePacketValidation,
     InternalStateError,
-    ConnectionRejected
+    ConnectionRejected,
+    ConnackTimeout,
+    PingTimeout,
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
