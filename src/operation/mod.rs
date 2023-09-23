@@ -207,16 +207,13 @@ impl OperationalState {
             if &context.current_time >= ping_timeout {
                 return Err(Mqtt5Error::PingTimeout);
             }
-        }
-
-        if let Some(next_ping) = &self.next_ping_timepoint {
+        } else if let Some(next_ping) = &self.next_ping_timepoint {
             if &context.current_time >= next_ping {
                 let ping = Box::new(MqttPacket::Pingreq(PingreqPacket{}));
                 let ping_op_id = self.create_operation(ping);
 
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
-                self.next_ping_timepoint = None;
                 self.ping_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.ping_timeout_millis as u64));
             }
         }
@@ -260,11 +257,19 @@ impl OperationalState {
     }
 
     fn get_next_service_timepoint_pending_connack(&self, current_time: &Instant) -> Instant {
-        self.connack_timeout_timepoint.unwrap()
+        if self.pending_write_completion {
+            return *current_time + Duration::from_secs(u64::MAX);;
+        }
+
+        min(self.get_operational_queue_service_time(), self.connack_timeout_timepoint.unwrap())
     }
 
     fn get_next_service_timepoint_connected(&self, current_time: &Instant) -> Instant {
         let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
+
+        if let Some(ping_timeout) = &self.ping_timeout_timepoint {
+            next_service_time = min(next_service_time, *ping_timeout);
+        }
 
         if self.pending_write_completion {
             return next_service_time;
@@ -272,10 +277,6 @@ impl OperationalState {
 
         if let Some(next_ping_timepoint) = &self.next_ping_timepoint {
             next_service_time = min(next_service_time, *next_ping_timepoint);
-        }
-
-        if let Some(ping_timeout) = &self.ping_timeout_timepoint {
-            next_service_time = min(next_service_time, *ping_timeout);
         }
 
         next_service_time
@@ -325,6 +326,23 @@ impl OperationalState {
         Ok(())
     }
 
+    fn handle_pingresp(&mut self) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
+                if let Some(ping_timeout) = &self.ping_timeout_timepoint {
+                    self.ping_timeout_timepoint = None;
+                    self.schedule_ping(&self.next_ping_timepoint.unwrap());
+                    Ok(())
+                } else {
+                    Err(Mqtt5Error::ProtocolError)
+                }
+            }
+            _ => {
+                Err(Mqtt5Error::ProtocolError)
+            }
+        }
+    }
+
     fn handle_packet(&mut self, packet: Box<MqttPacket>, current_time: &Instant) -> Mqtt5Result<()> {
         match &*packet {
             MqttPacket::Connack(connack) => { self.handle_connack(connack, current_time) }
@@ -332,7 +350,7 @@ impl OperationalState {
             MqttPacket::Suback(suback) => { Err(Mqtt5Error::Unimplemented) }
             MqttPacket::Unsuback(unsuback) => { Err(Mqtt5Error::Unimplemented) }
             MqttPacket::Puback(puback) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Pingresp(pingresp) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Pingresp(pingresp) => { self.handle_pingresp() }
             MqttPacket::Pubcomp(pubcomp) => { Err(Mqtt5Error::Unimplemented) }
             MqttPacket::Pubrel(pubrel) => { Err(Mqtt5Error::Unimplemented) }
             MqttPacket::Pubrec(pubrel) => { Err(Mqtt5Error::Unimplemented) }
