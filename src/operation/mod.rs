@@ -3,20 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-use std::cmp::min;
+
 use crate::*;
+use crate::alias::*;
 use crate::client::*;
 use crate::client::implementation::*;
 use crate::decode::*;
 use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
+use crate::spec::connack::validate_connack_packet_inbound_internal;
 
+use std::cell::RefCell;
+use std::cmp::min;
 use std::collections::*;
 use std::time::*;
-use crate::alias::{InboundAliasResolver, OutboundAliasResolution, OutboundAliasResolver};
-use crate::spec::connack::validate_connack_packet_inbound_internal;
-use crate::validate::*;
 
 pub(crate) struct MqttOperation {
     id: u64,
@@ -70,7 +71,7 @@ pub(crate) struct OperationalStateConfig {
 
     ping_timeout_millis: u32,
 
-    outbound_resolver_factory_fn: fn () -> Box<dyn OutboundAliasResolver>,
+    outbound_resolver_factory_fn: fn () -> RefCell<Box<dyn OutboundAliasResolver>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -120,12 +121,15 @@ pub(crate) struct OperationalState {
 
     connack_timeout_timepoint: Option<Instant>,
 
-    outbound_alias_resolver: Box<dyn OutboundAliasResolver>,
+    outbound_alias_resolver: RefCell<Box<dyn OutboundAliasResolver>>,
     inbound_alias_resolver: InboundAliasResolver
 }
 
 impl OperationalState {
     pub(crate) fn new(config: OperationalStateConfig) -> OperationalState {
+        let outbound_resolver = (config.outbound_resolver_factory_fn)();
+        let inbound_resolver = InboundAliasResolver::new((&config).connect.topic_alias_maximum.unwrap_or(0));
+
         OperationalState {
             config,
             state: OperationalStateType::Disconnected,
@@ -143,8 +147,8 @@ impl OperationalState {
             next_ping_timepoint: None,
             ping_timeout_timepoint: None,
             connack_timeout_timepoint: None,
-            outbound_alias_resolver: (&config.outbound_resolver_factory_fn)(),
-            inbound_alias_resolver: InboundAliasResolver::new(config.connect.topic_alias_maximum.unwrap_or(0))
+            outbound_alias_resolver: outbound_resolver,
+            inbound_alias_resolver: inbound_resolver
         }
     }
 
@@ -230,9 +234,9 @@ impl OperationalState {
         None
     }
 
-    fn compute_outbound_alias_resolution(&mut self, packet: &MqttPacket) -> OutboundAliasResolution {
+    fn compute_outbound_alias_resolution(&self, packet: &MqttPacket) -> OutboundAliasResolution {
         if let MqttPacket::Publish(publish) = packet {
-            return self.outbound_alias_resolver.resolve_and_apply_topic_alias(&publish.topic_alias, &publish.topic);
+            return self.outbound_alias_resolver.borrow_mut().resolve_and_apply_topic_alias(&publish.topic_alias, &publish.topic);
         }
 
         OutboundAliasResolution{ ..Default::default() }
@@ -381,7 +385,7 @@ impl OperationalState {
     }
 
     fn get_next_service_timepoint_pending_disconnect(&self, current_time: &Instant) -> Instant {
-        let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
+        let next_service_time = *current_time + Duration::from_secs(u64::MAX);
 
         min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
     }
@@ -414,7 +418,7 @@ impl OperationalState {
         self.state = OperationalStateType::Connected;
         self.current_settings = Some(build_negotiated_settings(&self.config, packet, &self.current_settings));
         self.connack_timeout_timepoint = None;
-        self.outbound_alias_resolver.reset_for_new_connection(packet.topic_alias_maximum.unwrap_or(0));
+        self.outbound_alias_resolver.borrow_mut().reset_for_new_connection(packet.topic_alias_maximum.unwrap_or(0));
         self.inbound_alias_resolver.reset_for_new_connection();
 
         self.schedule_ping(current_time);
