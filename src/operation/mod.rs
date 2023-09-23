@@ -14,6 +14,7 @@ use crate::spec::*;
 
 use std::collections::*;
 use std::time::*;
+use crate::alias::{InboundAliasResolver, OutboundAliasResolution, OutboundAliasResolver};
 use crate::spec::connack::validate_connack_packet_inbound_internal;
 use crate::validate::*;
 
@@ -67,7 +68,9 @@ pub(crate) struct OperationalStateConfig {
 
     connack_timeout_millis: u32,
 
-    ping_timeout_millis: u32
+    ping_timeout_millis: u32,
+
+    outbound_resolver_factory_fn: fn () -> Box<dyn OutboundAliasResolver>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -75,6 +78,12 @@ enum OperationalQueueType {
     User,
     Resubmit,
     HighPriority,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum OperationalQueueServiceMode {
+    All,
+    HighPriorityOnly,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -95,6 +104,7 @@ pub(crate) struct OperationalState {
     user_operation_queue: VecDeque<u64>,
     resubmit_operation_queue: VecDeque<u64>,
     high_priority_operation_queue: VecDeque<u64>,
+    current_operation: Option<u64>,
 
     pending_ack_operations: HashMap<u16, u64>,
 
@@ -108,7 +118,10 @@ pub(crate) struct OperationalState {
     next_ping_timepoint: Option<Instant>,
     ping_timeout_timepoint: Option<Instant>,
 
-    connack_timeout_timepoint: Option<Instant>
+    connack_timeout_timepoint: Option<Instant>,
+
+    outbound_alias_resolver: Box<dyn OutboundAliasResolver>,
+    inbound_alias_resolver: InboundAliasResolver
 }
 
 impl OperationalState {
@@ -121,6 +134,7 @@ impl OperationalState {
             user_operation_queue: VecDeque::new(),
             resubmit_operation_queue: VecDeque::new(),
             high_priority_operation_queue: VecDeque::new(),
+            current_operation: None,
             pending_ack_operations: HashMap::new(),
             current_settings: None,
             next_operation_id : 1,
@@ -128,7 +142,9 @@ impl OperationalState {
             decoder: Decoder::new(),
             next_ping_timepoint: None,
             ping_timeout_timepoint: None,
-            connack_timeout_timepoint: None
+            connack_timeout_timepoint: None,
+            outbound_alias_resolver: (&config.outbound_resolver_factory_fn)(),
+            inbound_alias_resolver: InboundAliasResolver::new(config.connect.topic_alias_maximum.unwrap_or(0))
         }
     }
 
@@ -142,7 +158,9 @@ impl OperationalState {
                 }
 
                 self.state = OperationalStateType::PendingConnack;
+                self.current_operation = None;
                 self.pending_write_completion = false;
+                self.decoder.reset_for_new_connection();
 
                 // Queue up a Connect packet
                 let connect = self.create_connect();
@@ -194,10 +212,71 @@ impl OperationalState {
         }
     }
 
+    fn dequeue_operation(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Option<u64> {
+        if !self.high_priority_operation_queue.is_empty() {
+            return Some(self.high_priority_operation_queue.pop_front().unwrap());
+        }
+
+        if mode != OperationalQueueServiceMode::HighPriorityOnly {
+            if !self.resubmit_operation_queue.is_empty() {
+                return Some(self.resubmit_operation_queue.pop_front().unwrap());
+            }
+
+            if !self.user_operation_queue.is_empty() {
+                return Some(self.user_operation_queue.pop_front().unwrap());
+            }
+        }
+
+        None
+    }
+
+    fn compute_outbound_alias_resolution(&mut self, packet: &MqttPacket) -> OutboundAliasResolution {
+        if let MqttPacket::Publish(publish) = packet {
+            return self.outbound_alias_resolver.resolve_and_apply_topic_alias(&publish.topic_alias, &publish.topic);
+        }
+
+        OutboundAliasResolution{ ..Default::default() }
+    }
+
+    fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
+        loop {
+            if self.current_operation.is_none() {
+                self.current_operation = self.dequeue_operation(context, mode);
+                if self.current_operation.is_none() {
+                    return Ok(())
+                }
+
+                let operation_option = self.operations.get(&self.current_operation.unwrap());
+                if let Some(operation) = operation_option {
+                    let packet = &*operation.packet;
+                    let encode_context = EncodingContext {
+                        outbound_alias_resolution: self.compute_outbound_alias_resolution(packet)
+                    };
+
+                    self.encoder.reset(packet, &encode_context)?;
+                } else {
+                    self.current_operation = None;
+                    return Err(Mqtt5Error::InternalStateError);
+                }
+            }
+
+            let packet = &self.operations.get(&self.current_operation.unwrap()).unwrap().packet;
+
+            let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
+            if encode_result == EncodeResult::Complete {
+                self.current_operation = None;
+            } else {
+                return Ok(())
+            }
+        }
+    }
+
     fn service_pending_connack(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
         if context.current_time >= self.connack_timeout_timepoint.unwrap() {
             return Err(Mqtt5Error::ConnackTimeout);
         }
+
+        self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
 
         Ok(())
     }
@@ -224,11 +303,13 @@ impl OperationalState {
     fn service_connected(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
         self.service_keep_alive(context)?;
 
+        self.service_queue(context, OperationalQueueServiceMode::All)?;
+
         Ok(())
     }
 
     fn service_pending_disconnect(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
-        self.service_keep_alive(context)?;
+        self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
 
         Ok(())
     }
@@ -252,16 +333,31 @@ impl OperationalState {
         }
     }
 
+    fn get_next_service_timepoint_operational_queue(&self, current_time: &Instant, mode: OperationalQueueServiceMode) -> Instant {
+        let forever = *current_time + Duration::from_secs(u64::MAX);
+        if self.pending_write_completion {
+            return forever;
+        }
+
+        if !self.high_priority_operation_queue.is_empty() {
+            return *current_time;
+        }
+
+        if mode == OperationalQueueServiceMode::All {
+            if !self.resubmit_operation_queue.is_empty() || !self.user_operation_queue.is_empty() {
+                return *current_time;
+            }
+        }
+
+        forever
+    }
+
     fn get_next_service_timepoint_disconnected(&self, current_time: &Instant) -> Instant {
         *current_time + Duration::from_secs(u64::MAX)
     }
 
     fn get_next_service_timepoint_pending_connack(&self, current_time: &Instant) -> Instant {
-        if self.pending_write_completion {
-            return *current_time + Duration::from_secs(u64::MAX);;
-        }
-
-        min(self.get_operational_queue_service_time(), self.connack_timeout_timepoint.unwrap())
+        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), self.connack_timeout_timepoint.unwrap())
     }
 
     fn get_next_service_timepoint_connected(&self, current_time: &Instant) -> Instant {
@@ -271,6 +367,8 @@ impl OperationalState {
             next_service_time = min(next_service_time, *ping_timeout);
         }
 
+        // TODO simplify?
+
         if self.pending_write_completion {
             return next_service_time;
         }
@@ -279,17 +377,13 @@ impl OperationalState {
             next_service_time = min(next_service_time, *next_ping_timepoint);
         }
 
-        next_service_time
+        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::All), next_service_time)
     }
 
     fn get_next_service_timepoint_pending_disconnect(&self, current_time: &Instant) -> Instant {
         let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
 
-        if self.pending_write_completion {
-            return next_service_time;
-        }
-
-        next_service_time
+        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
     }
 
     pub(crate) fn get_next_service_timepoint(&self, current_time: &Instant) -> Instant {
@@ -320,6 +414,8 @@ impl OperationalState {
         self.state = OperationalStateType::Connected;
         self.current_settings = Some(build_negotiated_settings(&self.config, packet, &self.current_settings));
         self.connack_timeout_timepoint = None;
+        self.outbound_alias_resolver.reset_for_new_connection(packet.topic_alias_maximum.unwrap_or(0));
+        self.inbound_alias_resolver.reset_for_new_connection();
 
         self.schedule_ping(current_time);
 
