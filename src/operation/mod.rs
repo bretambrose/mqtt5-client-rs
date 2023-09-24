@@ -21,7 +21,28 @@ use std::time::*;
 
 pub(crate) struct MqttOperation {
     id: u64,
-    packet: Box<MqttPacket>
+    packet: Box<MqttPacket>,
+    packet_id: Option<u16>,
+}
+
+impl MqttOperation {
+    pub fn bind_packet_id(&mut self, packet_id: u16) -> () {
+        self.packet_id = Some(packet_id);
+        match &mut *self.packet {
+            MqttPacket::Subscribe(subscribe) => {
+                subscribe.packet_id = packet_id;
+            }
+            MqttPacket::Unsubscribe(unsubscribe) => {
+                unsubscribe.packet_id = packet_id;
+            }
+            MqttPacket::Publish(publish) => {
+                publish.packet_id = packet_id;
+            }
+            _ => {
+                panic!("Invalid packet type for packet id binding");
+            }
+        }
+    }
 }
 
 pub(crate) enum NetworkEvent<'a> {
@@ -37,11 +58,10 @@ pub(crate) struct NetworkEventContext<'a> {
 }
 
 pub(crate) enum UserEvent {
-    Start,
-    Stop,
     Publish(PublishOptionsInternal),
     Subscribe(SubscribeOptionsInternal),
-    Unsubscribe(UnsubscribeOptionsInternal)
+    Unsubscribe(UnsubscribeOptionsInternal),
+    Disconnect()
 }
 
 pub(crate) struct UserEventContext {
@@ -71,7 +91,7 @@ pub(crate) struct OperationalStateConfig {
 
     ping_timeout_millis: u32,
 
-    outbound_resolver_factory_fn: fn () -> RefCell<Box<dyn OutboundAliasResolver>>,
+    outbound_resolver_factory_fn: fn () -> Box<dyn OutboundAliasResolver>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -107,11 +127,13 @@ pub(crate) struct OperationalState {
     high_priority_operation_queue: VecDeque<u64>,
     current_operation: Option<u64>,
 
+    allocated_packet_ids: HashMap<u16, u64>,
     pending_ack_operations: HashMap<u16, u64>,
 
     current_settings: Option<NegotiatedSettings>,
 
     next_operation_id: u64,
+    next_packet_id: u16,
 
     encoder: Encoder,
     decoder: Decoder,
@@ -139,15 +161,17 @@ impl OperationalState {
             resubmit_operation_queue: VecDeque::new(),
             high_priority_operation_queue: VecDeque::new(),
             current_operation: None,
+            allocated_packet_ids: HashMap::new(),
             pending_ack_operations: HashMap::new(),
             current_settings: None,
             next_operation_id : 1,
+            next_packet_id : 1,
             encoder: Encoder::new(),
             decoder: Decoder::new(),
             next_ping_timepoint: None,
             ping_timeout_timepoint: None,
             connack_timeout_timepoint: None,
-            outbound_alias_resolver: outbound_resolver,
+            outbound_alias_resolver: RefCell::new(outbound_resolver),
             inbound_alias_resolver: inbound_resolver
         }
     }
@@ -250,18 +274,21 @@ impl OperationalState {
                     return Ok(())
                 }
 
-                let operation_option = self.operations.get(&self.current_operation.unwrap());
-                if let Some(operation) = operation_option {
-                    let packet = &*operation.packet;
-                    let encode_context = EncodingContext {
-                        outbound_alias_resolution: self.compute_outbound_alias_resolution(packet)
-                    };
-
-                    self.encoder.reset(packet, &encode_context)?;
-                } else {
+                let current_operation_id = self.current_operation.unwrap();
+                if !self.operations.contains_key(&current_operation_id) {
                     self.current_operation = None;
-                    return Err(Mqtt5Error::InternalStateError);
+                    continue;
                 }
+
+                self.acquire_packet_id_for_operation(current_operation_id);
+
+                let operation = self.operations.get(&current_operation_id).unwrap();
+                let packet = &*operation.packet;
+                let encode_context = EncodingContext {
+                    outbound_alias_resolution: self.compute_outbound_alias_resolution(packet)
+                };
+
+                self.encoder.reset(packet, &encode_context)?;
             }
 
             let packet = &self.operations.get(&self.current_operation.unwrap()).unwrap().packet;
@@ -497,7 +524,8 @@ impl OperationalState {
 
         let operation = MqttOperation {
             id,
-            packet
+            packet,
+            packet_id: None
         };
 
         self.operations.insert(id, operation);
@@ -517,6 +545,55 @@ impl OperationalState {
         // TODO: session resumption based on config properties
 
         return Box::new(MqttPacket::Connect(connect));
+    }
+
+    fn acquire_packet_id_for_operation(&mut self, operation_id: u64) -> () {
+        let operation = self.operations.get_mut(&operation_id).unwrap();
+
+        if operation.packet_id.is_some() {
+            return;
+        }
+
+        match &*operation.packet {
+            MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => { }
+            MqttPacket::Publish(publish) => {
+                if publish.qos == QualityOfService::AtMostOnce {
+                    return;
+                }
+            }
+            _ => { return; }
+        }
+
+        let start_id = self.next_packet_id;
+        let mut check_id = start_id;
+
+        loop {
+            self.next_packet_id += 1;
+            if self.next_packet_id == 0 {
+                self.next_packet_id = 1;
+            }
+
+            if !self.allocated_packet_ids.contains_key(&check_id) {
+                operation.bind_packet_id(check_id);
+                self.allocated_packet_ids.insert(check_id, operation.id);
+                return;
+            }
+
+            if self.next_packet_id == start_id {
+                panic!("Packet Id space exhausted which should be impossible")
+            }
+
+            check_id = self.next_packet_id;
+        }
+    }
+
+    fn release_packet_id_for_operation(&mut self, operation_id: u64) -> () {
+        let operation = self.operations.get_mut(&operation_id).unwrap();
+
+        if let Some(packet_id) = operation.packet_id {
+            self.allocated_packet_ids.remove(&packet_id);
+            operation.packet_id = None;
+        }
     }
 }
 
