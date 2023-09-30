@@ -19,10 +19,18 @@ use std::cmp::min;
 use std::collections::*;
 use std::time::*;
 
+enum MqttOperationOptions {
+    Publish(PublishOptionsInternal),
+    Subscribe(SubscribeOptionsInternal),
+    Unsubscribe(UnsubscribeOptionsInternal),
+    Disconnect(DisconnectOptionsInternal),
+}
+
 pub(crate) struct MqttOperation {
     id: u64,
     packet: Box<MqttPacket>,
     packet_id: Option<u16>,
+    options: Option<MqttOperationOptions>
 }
 
 impl MqttOperation {
@@ -129,6 +137,8 @@ pub(crate) struct OperationalState {
 
     allocated_packet_ids: HashMap<u16, u64>,
     pending_ack_operations: HashMap<u16, u64>,
+    pending_write_completion_operations: Vec<u64>,
+    pending_publish_count: u16,
 
     current_settings: Option<NegotiatedSettings>,
 
@@ -163,6 +173,8 @@ impl OperationalState {
             current_operation: None,
             allocated_packet_ids: HashMap::new(),
             pending_ack_operations: HashMap::new(),
+            pending_write_completion_operations: Vec::new(),
+            pending_publish_count: 0,
             current_settings: None,
             next_operation_id : 1,
             next_packet_id : 1,
@@ -192,7 +204,7 @@ impl OperationalState {
 
                 // Queue up a Connect packet
                 let connect = self.create_connect();
-                let connect_op_id = self.create_operation(connect);
+                let connect_op_id = self.create_operation(connect, None);
 
                 self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
@@ -266,6 +278,32 @@ impl OperationalState {
         OutboundAliasResolution{ ..Default::default() }
     }
 
+    fn on_current_operation_write_complete(&mut self) -> () {
+        let operation = self.operations.get(&self.current_operation.unwrap()).unwrap();
+        let packet = &*operation.packet;
+        match packet {
+            MqttPacket::Subscribe(subscribe) => {
+                self.pending_ack_operations.insert(subscribe.packet_id, operation.id);
+            }
+            MqttPacket::Unsubscribe(unsubscribe) => {
+                self.pending_ack_operations.insert(unsubscribe.packet_id, operation.id);
+            }
+            MqttPacket::Publish(publish) => {
+                if publish.qos == QualityOfService::AtMostOnce {
+                    self.pending_write_completion_operations.push(operation.id);
+                } else {
+                    self.pending_ack_operations.insert(publish.packet_id, operation.id);
+                    self.pending_publish_count += 1;
+                }
+            }
+            _ => {
+                self.pending_write_completion_operations.push(operation.id);
+            }
+        }
+
+        self.current_operation = None;
+    }
+
     fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
         loop {
             if self.current_operation.is_none() {
@@ -295,7 +333,7 @@ impl OperationalState {
 
             let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
             if encode_result == EncodeResult::Complete {
-                self.current_operation = None;
+                self.on_current_operation_write_complete();
             } else {
                 return Ok(())
             }
@@ -320,7 +358,7 @@ impl OperationalState {
         } else if let Some(next_ping) = &self.next_ping_timepoint {
             if &context.current_time >= next_ping {
                 let ping = Box::new(MqttPacket::Pingreq(PingreqPacket{}));
-                let ping_op_id = self.create_operation(ping);
+                let ping_op_id = self.create_operation(ping, None);
 
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
@@ -470,18 +508,51 @@ impl OperationalState {
         }
     }
 
+    fn advance_operation_by_packet(&self, operation: &MqttOperation, packet: Box<MqttPacket>) -> Mqtt5Result<bool> {
+        if operation.options.is_none() {
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
+        match &operation.options.unwrap() {
+            MqttOperationOptions::Publish(publish_options) => { Ok(true) }
+            MqttOperationOptions::Subscribe(subscribe_options) => { Ok(true) }
+            MqttOperationOptions::Unsubscribe(unsubscribe_options) => { Ok(true) }
+            _ => { Ok(true) }
+        }
+    }
+
+    fn handle_ack(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        let operation_id_option = self.pending_ack_operations.get(&packet_id);
+        if let Some(operation_id) = operation_id_option {
+            let operation_option = self.operations.get(&operation_id);
+            if let Some(operation) = operation_option {
+                let complete = self.advance_operation_by_packet(operation, packet)?;
+                if complete {
+                    self.operations.remove(&operation_id);
+                    self.pending_ack_operations.remove(&packet_id);
+                    self.allocated_packet_ids.remove(&packet_id);
+                }
+                return Ok(())
+            }
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
     fn handle_packet(&mut self, packet: Box<MqttPacket>, current_time: &Instant) -> Mqtt5Result<()> {
+        let id_option = get_ack_packet_id(&packet);
+
         match &*packet {
             MqttPacket::Connack(connack) => { self.handle_connack(connack, current_time) }
-            MqttPacket::Publish(publish) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Suback(suback) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Unsuback(unsuback) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Puback(puback) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Pingresp(pingresp) => { self.handle_pingresp() }
-            MqttPacket::Pubcomp(pubcomp) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Publish(_) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Pingresp(_) => { self.handle_pingresp() }
+            MqttPacket::Disconnect(_) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Suback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Unsuback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Puback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Pubcomp(pubcomp) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
             MqttPacket::Pubrel(pubrel) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Pubrec(pubrel) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Disconnect(disconnect) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Pubrec(pubrec) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
 
             _ => { Err(Mqtt5Error::ProtocolError) }
         }
@@ -518,14 +589,15 @@ impl OperationalState {
     }
 
     // Internal APIs
-    fn create_operation(&mut self, packet: Box<MqttPacket>) -> u64 {
+    fn create_operation(&mut self, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
 
         let operation = MqttOperation {
             id,
             packet,
-            packet_id: None
+            packet_id: None,
+            options,
         };
 
         self.operations.insert(id, operation);
@@ -594,6 +666,18 @@ impl OperationalState {
             self.allocated_packet_ids.remove(&packet_id);
             operation.packet_id = None;
         }
+    }
+}
+
+fn get_ack_packet_id(packet: &MqttPacket) -> Option<u16> {
+    match packet {
+        MqttPacket::Suback(suback) => { Some(suback.packet_id) }
+        MqttPacket::Unsuback(unsuback) => { Some(unsuback.packet_id) }
+        MqttPacket::Puback(puback) => { Some(puback.packet_id) }
+        MqttPacket::Pubcomp(pubcomp) => { Some(pubcomp.packet_id) }
+        MqttPacket::Pubrel(pubrel) => { Some(pubrel.packet_id) }
+        MqttPacket::Pubrec(pubrec) => { Some(pubrec.packet_id) }
+        _ => { None }
     }
 }
 

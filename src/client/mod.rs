@@ -63,6 +63,14 @@ pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;
 
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
+#[derive(Debug, Default)]
+pub struct DisconnectOptions {
+}
+
+pub type DisconnectResult = Mqtt5Result<()>;
+
+pub type DisconnectResultFuture = dyn Future<Output = DisconnectResult>;
+
 #[derive(Default)]
 pub struct NegotiatedSettings {
 
@@ -131,8 +139,8 @@ impl Mqtt5Client {
         client_lifecycle_operation_body!(Start, self)
     }
 
-    pub fn stop(&self) -> Mqtt5Result<()> {
-        client_lifecycle_operation_body!(Stop, self)
+    pub fn stop(&self, packet: &DisconnectPacket, options: DisconnectOptions) -> Pin<Box<DisconnectResultFuture>> {
+        client_mqtt_operation_body!(self, Stop, DisconnectOptionsInternal, packet, Disconnect, options)
     }
 
     pub fn close(&self) -> Mqtt5Result<()> {
