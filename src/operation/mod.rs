@@ -69,7 +69,7 @@ pub(crate) enum UserEvent {
     Publish(PublishOptionsInternal),
     Subscribe(SubscribeOptionsInternal),
     Unsubscribe(UnsubscribeOptionsInternal),
-    Disconnect()
+    Disconnect(DisconnectOptionsInternal)
 }
 
 pub(crate) struct UserEventContext {
