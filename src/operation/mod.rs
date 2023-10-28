@@ -200,6 +200,7 @@ impl OperationalState {
                 self.state = OperationalStateType::PendingConnack;
                 self.current_operation = None;
                 self.pending_write_completion = false;
+                self.pending_publish_count = 0;
                 self.decoder.reset_for_new_connection();
 
                 // Queue up a Connect packet
@@ -221,11 +222,22 @@ impl OperationalState {
                 self.next_ping_timepoint = None;
                 self.ping_timeout_timepoint = None;
 
+                /*
+                  TODO:
+                    write_completion_operations: complete-fail
+                    unacked_operations: apply offline queue policy to subscribe/unsubscribe
+                 */
+
                 Ok(())
             }
 
             NetworkEvent::WriteCompletion => {
                 self.pending_write_completion = false;
+
+                /*
+                  TODO:
+                    write_completion_operations: complete-success
+                 */
 
                 Ok(())
             }
@@ -278,7 +290,7 @@ impl OperationalState {
         OutboundAliasResolution{ ..Default::default() }
     }
 
-    fn on_current_operation_write_complete(&mut self) -> () {
+    fn on_current_operation_fully_written(&mut self) -> () {
         let operation = self.operations.get(&self.current_operation.unwrap()).unwrap();
         let packet = &*operation.packet;
         match packet {
@@ -295,6 +307,9 @@ impl OperationalState {
                     self.pending_ack_operations.insert(publish.packet_id, operation.id);
                     self.pending_publish_count += 1;
                 }
+            }
+            MqttPacket::Pubrel(pubrel) => {
+                self.pending_ack_operations.insert(pubrel.packet_id, operation.id);
             }
             _ => {
                 self.pending_write_completion_operations.push(operation.id);
@@ -333,7 +348,7 @@ impl OperationalState {
 
             let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
             if encode_result == EncodeResult::Complete {
-                self.on_current_operation_write_complete();
+                self.on_current_operation_fully_written();
             } else {
                 return Ok(())
             }
@@ -469,6 +484,26 @@ impl OperationalState {
         self.next_ping_timepoint = Some(*current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
     }
 
+    fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
+        let mut unacked_operations : Vec<(u16, u64)> = self.pending_ack_operations.iter().collect();
+        self.pending_ack_operations.clear();
+
+        unacked_operations.sort_by(|a, b| a.1.cmp(*b.1));
+
+        if session_present {
+            // TODO: unacked operations: qos 1+ publishes, pubrel to resubmit queue maintaining order
+        } else {
+            // TODO: unacked operations: apply offline queue policy
+        }
+
+        /*
+          TODO: unacked operations: remaining to front of user queue maintaining order
+          TODO: user operations: unbind packet ids
+         */
+
+        Ok(())
+    }
+
     fn handle_connack(&mut self, packet: &ConnackPacket, current_time: &Instant) -> Mqtt5Result<()> {
         if self.state != OperationalStateType::PendingConnack {
             return Err(Mqtt5Error::ProtocolError);
@@ -487,6 +522,8 @@ impl OperationalState {
         self.inbound_alias_resolver.reset_for_new_connection();
 
         self.schedule_ping(current_time);
+
+        self.apply_session_present_to_connection(packet.session_present)?;
 
         Ok(())
     }
