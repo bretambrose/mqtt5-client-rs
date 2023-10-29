@@ -81,6 +81,16 @@ pub enum Mqtt5Error {
     ConnectionRejected,
     ConnackTimeout,
     PingTimeout,
+    ConnectionClosed,
+    OfflineQueuePolicyFailed,
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
+
+fn fold_mqtt5_result<T>(base: Mqtt5Result<T>, new_result: Mqtt5Result<T>) -> Mqtt5Result<T> {
+    if let Err(new_error) = new_result {
+        return new_result;
+    }
+
+    base
+}

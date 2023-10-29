@@ -33,7 +33,8 @@ macro_rules! client_mqtt_operation_body {
         let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name.clone()));
         let internal_options = $options_internal_type {
             options : $options_value,
-            response_sender };
+            response_sender : Some(response_sender)
+        };
         let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
         Box::pin(async move {
             match send_result {
@@ -59,22 +60,22 @@ pub(crate) use client_mqtt_operation_body;
 
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
-    pub response_sender: oneshot::Sender<PublishResult>,
+    pub response_sender: Option<oneshot::Sender<PublishResult>>,
 }
 
 pub(crate) struct SubscribeOptionsInternal {
     pub options: SubscribeOptions,
-    pub response_sender: oneshot::Sender<SubscribeResult>,
+    pub response_sender: Option<oneshot::Sender<SubscribeResult>>,
 }
 
 pub(crate) struct UnsubscribeOptionsInternal {
     pub options: UnsubscribeOptions,
-    pub response_sender: oneshot::Sender<UnsubscribeResult>,
+    pub response_sender: Option<oneshot::Sender<UnsubscribeResult>>,
 }
 
 pub(crate) struct DisconnectOptionsInternal {
     pub options: DisconnectOptions,
-    pub response_sender: oneshot::Sender<DisconnectResult>,
+    pub response_sender: Option<oneshot::Sender<DisconnectResult>>,
 }
 
 pub(crate) enum OperationOptions {
@@ -102,17 +103,17 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                             OperationOptions::Publish(_, internal_options) => {
                                 println!("Got a publish!");
                                 let failure_result : PublishResult = Err(Mqtt5Error::Unimplemented);
-                                internal_options.response_sender.send(failure_result).unwrap();
+                                internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
                             OperationOptions::Subscribe(_, internal_options) => {
                                 println!("Got a subscribe!");
                                 let failure_result : SubscribeResult = Err(Mqtt5Error::Unimplemented);
-                                internal_options.response_sender.send(failure_result).unwrap();
+                                internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
                             OperationOptions::Unsubscribe(_, internal_options) => {
                                 println!("Got an unsubscribe!");
                                 let failure_result : UnsubscribeResult = Err(Mqtt5Error::Unimplemented);
-                                internal_options.response_sender.send(failure_result).unwrap();
+                                internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
                             OperationOptions::Start() => {
                                 println!("Received start!");
@@ -120,7 +121,7 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                             OperationOptions::Stop(_, internal_options) => {
                                 println!("Received stop!");
                                 let failure_result : DisconnectResult = Err(Mqtt5Error::Unimplemented);
-                                internal_options.response_sender.send(failure_result).unwrap();
+                                internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
                             OperationOptions::Shutdown() => {
                                 println!("Received shutdown!");

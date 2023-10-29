@@ -17,6 +17,7 @@ use crate::spec::connack::validate_connack_packet_inbound_internal;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::*;
+use std::mem;
 use std::time::*;
 
 enum MqttOperationOptions {
@@ -121,6 +122,13 @@ enum OperationalEnqueuePosition {
     Back
 }
 
+enum OperationResponse {
+    Publish(PublishResponse),
+    Subscribe(SubackPacket),
+    Unsubscribe(UnsubackPacket),
+    Disconnect
+}
+
 pub(crate) struct OperationalState {
     config: OperationalStateConfig,
 
@@ -188,79 +196,192 @@ impl OperationalState {
         }
     }
 
+    fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
+        let operation_option = self.operations.remove(&id);
+        if operation_option.is_none() {
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
+        let operation = operation_option.unwrap();
+        if let Some(packet_id) = operation.packet_id {
+            self.allocated_packet_ids.remove(&packet_id);
+        }
+
+        if operation.options.is_none() {
+            return Ok(())
+        }
+
+        let operation_options = &mut operation.options.unwrap();
+        match operation_options {
+            MqttOperationOptions::Publish(publish_options) => {
+                if let OperationResponse::Publish(publish_result) = completion_result.unwrap() {
+                    let sender = publish_options.response_sender.take().unwrap();
+                    let _ = sender.send(Ok(publish_result));
+                    return Ok(());
+                }
+            }
+            MqttOperationOptions::Subscribe(subscribe_options) => {
+                if let OperationResponse::Subscribe(suback) = completion_result.unwrap() {
+                    let sender = subscribe_options.response_sender.take().unwrap();
+                    let _ = sender.send(Ok(suback));
+                    return Ok(());
+                }
+            }
+            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+                if let OperationResponse::Unsubscribe(unsuback) = completion_result.unwrap() {
+                    let sender = unsubscribe_options.response_sender.take().unwrap();
+                    let _ = sender.send(Ok(unsuback));
+                    return Ok(());
+                }
+            }
+            MqttOperationOptions::Disconnect(disconnect_options) => {
+                let sender = disconnect_options.response_sender.take().unwrap();
+                let _ = sender.send(Ok(()));
+                return Ok(());
+            }
+        }
+
+        Err(Mqtt5Error::InternalStateError)
+    }
+
+    fn complete_operation_as_failure(&mut self, id : u64, error: Mqtt5Error) -> Mqtt5Result<()> {
+        let operation_option = self.operations.remove(&id);
+        if operation_option.is_none() {
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
+        let operation = operation_option.unwrap();
+        if let Some(packet_id) = operation.packet_id {
+            self.allocated_packet_ids.remove(&packet_id);
+        }
+
+        if operation.options.is_none() {
+            return Ok(())
+        }
+
+        let operation_options = &mut operation.options.unwrap();
+        match operation_options {
+            MqttOperationOptions::Publish(publish_options) => {
+                let sender = publish_options.response_sender.take().unwrap();
+                let _ = sender.send(Err(error));
+                Ok(())
+            }
+            MqttOperationOptions::Subscribe(subscribe_options) => {
+                let sender = subscribe_options.response_sender.take().unwrap();
+                let _ = sender.send(Err(error));
+                Ok(())
+            }
+            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+                let sender = unsubscribe_options.response_sender.take().unwrap();
+                let _ = sender.send(Err(error));
+                Ok(())
+            }
+            MqttOperationOptions::Disconnect(disconnect_options) => {
+                let sender = disconnect_options.response_sender.take().unwrap();
+                let _ = sender.send(Err(error));
+                Ok(())
+            }
+        }
+    }
+
+    fn complete_operation_sequence_as_failure<T>(&mut self, iterator: T, error: Mqtt5Error) -> Mqtt5Result<()> where T : Iterator<Item = u64> {
+        iterator.fold(
+            Ok(()),
+            |res, item| {
+                fold_mqtt5_result(res, self.complete_operation_as_failure(item, error))
+            }
+        )
+    }
+
+    fn complete_operation_sequence_as_empty_success<T>(&mut self, iterator: T) -> Mqtt5Result<()> where T : Iterator<Item = u64> {
+        iterator.fold(
+            Ok(()),
+            |res, item| {
+                fold_mqtt5_result(res, self.complete_operation_as_success(item, None))
+            }
+        )
+    }
+
+    fn handle_network_event_connection_opened(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+        if self.state != OperationalStateType::Disconnected {
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
+        self.state = OperationalStateType::PendingConnack;
+        self.current_operation = None;
+        self.pending_write_completion = false;
+        self.pending_publish_count = 0;
+        self.decoder.reset_for_new_connection();
+
+        // Queue up a Connect packet
+        let connect = self.create_connect();
+        let connect_op_id = self.create_operation(connect, None);
+
+        self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
+
+        self.connack_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64));
+
+        Ok(())
+    }
+
+    fn handle_network_event_connection_closed(&mut self) -> Mqtt5Result<()> {
+        self.high_priority_operation_queue.clear();
+        self.state = OperationalStateType::Disconnected;
+
+        self.connack_timeout_timepoint = None;
+        self.next_ping_timepoint = None;
+        self.ping_timeout_timepoint = None;
+
+        let mut completions : Vec<u64> = Vec::new();
+        mem::swap(&mut completions, &mut self.pending_write_completion_operations);
+        let result : Mqtt5Result<()> = self.complete_operation_sequence_as_failure(completions.iter().copied(), Mqtt5Error::ConnectionClosed);
+
+        /*
+          TODO:
+            unacked_operations: apply offline queue policy to subscribe/unsubscribe
+         */
+
+        result
+    }
+
+    fn handle_network_event_write_completion(&mut self) -> Mqtt5Result<()> {
+        self.pending_write_completion = false;
+
+        let mut completions : Vec<u64> = Vec::new();
+        mem::swap(&mut completions, &mut self.pending_write_completion_operations);
+        let result : Mqtt5Result<()> = self.complete_operation_sequence_as_empty_success(completions.iter().copied());
+
+        result
+    }
+
+    fn handle_network_event_incoming_data(&mut self, context: &NetworkEventContext, data: &[u8]) -> Mqtt5Result<()> {
+        if self.state == OperationalStateType::Disconnected {
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
+        let mut decoded_packets = VecDeque::new();
+        let mut decode_context = DecodingContext {
+            maximum_packet_size: self.get_maximum_incoming_packet_size(),
+            decoded_packets: &mut decoded_packets
+        };
+
+        self.decoder.decode_bytes(data, &mut decode_context)?;
+
+        for packet in decoded_packets {
+            self.handle_packet(packet, &context.current_time)?;
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn handle_network_event(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
         let event = &context.event;
 
         match &event {
-            NetworkEvent::ConnectionOpened => {
-                if self.state != OperationalStateType::Disconnected {
-                    return Err(Mqtt5Error::InternalStateError);
-                }
-
-                self.state = OperationalStateType::PendingConnack;
-                self.current_operation = None;
-                self.pending_write_completion = false;
-                self.pending_publish_count = 0;
-                self.decoder.reset_for_new_connection();
-
-                // Queue up a Connect packet
-                let connect = self.create_connect();
-                let connect_op_id = self.create_operation(connect, None);
-
-                self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
-
-                self.connack_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64));
-
-                Ok(())
-            }
-
-            NetworkEvent::ConnectionClosed => {
-                self.high_priority_operation_queue.clear();
-                self.state = OperationalStateType::Disconnected;
-
-                self.connack_timeout_timepoint = None;
-                self.next_ping_timepoint = None;
-                self.ping_timeout_timepoint = None;
-
-                /*
-                  TODO:
-                    write_completion_operations: complete-fail
-                    unacked_operations: apply offline queue policy to subscribe/unsubscribe
-                 */
-
-                Ok(())
-            }
-
-            NetworkEvent::WriteCompletion => {
-                self.pending_write_completion = false;
-
-                /*
-                  TODO:
-                    write_completion_operations: complete-success
-                 */
-
-                Ok(())
-            }
-
-            NetworkEvent::IncomingData(data) => {
-                if self.state == OperationalStateType::Disconnected {
-                    return Err(Mqtt5Error::InternalStateError);
-                }
-
-                let mut decoded_packets = VecDeque::new();
-                let mut decode_context = DecodingContext {
-                    maximum_packet_size: self.get_maximum_incoming_packet_size(),
-                    decoded_packets: &mut decoded_packets
-                };
-
-                self.decoder.decode_bytes(data, &mut decode_context)?;
-
-                for packet in decoded_packets {
-                    self.handle_packet(packet, &context.current_time)?;
-                }
-
-                Ok(())
-            }
+            NetworkEvent::ConnectionOpened => { self.handle_network_event_connection_opened(context) }
+            NetworkEvent::ConnectionClosed => { self.handle_network_event_connection_closed() }
+            NetworkEvent::WriteCompletion => { self.handle_network_event_write_completion() }
+            NetworkEvent::IncomingData(data) => { self.handle_network_event_incoming_data(context, data) }
         }
     }
 
@@ -485,10 +606,10 @@ impl OperationalState {
     }
 
     fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
-        let mut unacked_operations : Vec<(u16, u64)> = self.pending_ack_operations.iter().collect();
+        let mut unacked_operations : Vec<(u16, u64)> = self.pending_ack_operations.iter().map(|(key, val)| (*key, *val)).collect();
         self.pending_ack_operations.clear();
 
-        unacked_operations.sort_by(|a, b| a.1.cmp(*b.1));
+        unacked_operations.sort_by(|a, b| a.1.cmp(&(b.1)));
 
         if session_present {
             // TODO: unacked operations: qos 1+ publishes, pubrel to resubmit queue maintaining order
@@ -550,10 +671,10 @@ impl OperationalState {
             return Err(Mqtt5Error::InternalStateError);
         }
 
-        match &operation.options.unwrap() {
-            MqttOperationOptions::Publish(publish_options) => { Ok(true) }
-            MqttOperationOptions::Subscribe(subscribe_options) => { Ok(true) }
-            MqttOperationOptions::Unsubscribe(unsubscribe_options) => { Ok(true) }
+        match &operation.options {
+            Some(MqttOperationOptions::Publish(publish_options)) => { Ok(true) }
+            Some(MqttOperationOptions::Subscribe(subscribe_options)) => { Ok(true) }
+            Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => { Ok(true) }
             _ => { Ok(true) }
         }
     }
