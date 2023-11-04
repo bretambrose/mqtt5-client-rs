@@ -28,6 +28,7 @@ use crate::spec::unsubscribe::UnsubscribePacket;
 
 #[derive(Debug, Default)]
 pub struct PublishOptions {
+    pub timeout_in_millis: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -49,6 +50,7 @@ pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
 #[derive(Debug, Default)]
 pub struct SubscribeOptions {
+    pub timeout_in_millis: Option<u32>,
 }
 
 pub type SubscribeResult = Mqtt5Result<SubackPacket>;
@@ -57,6 +59,7 @@ pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
 #[derive(Debug, Default)]
 pub struct UnsubscribeOptions {
+    pub timeout_in_millis: Option<u32>,
 }
 
 pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;

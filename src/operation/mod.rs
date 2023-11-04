@@ -31,7 +31,8 @@ pub(crate) struct MqttOperation {
     id: u64,
     packet: Box<MqttPacket>,
     packet_id: Option<u16>,
-    options: Option<MqttOperationOptions>
+    options: Option<MqttOperationOptions>,
+    timeout: Option<Instant>,
 }
 
 impl MqttOperation {
@@ -67,10 +68,10 @@ pub(crate) struct NetworkEventContext<'a> {
 }
 
 pub(crate) enum UserEvent {
-    Publish(PublishOptionsInternal),
-    Subscribe(SubscribeOptionsInternal),
-    Unsubscribe(UnsubscribeOptionsInternal),
-    Disconnect(DisconnectOptionsInternal)
+    Publish(Box<MqttPacket>, PublishOptionsInternal),
+    Subscribe(Box<MqttPacket>, SubscribeOptionsInternal),
+    Unsubscribe(Box<MqttPacket>, UnsubscribeOptionsInternal),
+    Disconnect(Box<MqttPacket>, DisconnectOptionsInternal)
 }
 
 pub(crate) struct UserEventContext {
@@ -528,14 +529,25 @@ impl OperationalState {
         }
     }
 
-    pub(crate) fn handle_user_event(&mut self, context: &UserEventContext) -> Mqtt5Result<()> {
-        let event = &context.event;
+    pub(crate) fn handle_user_event(&mut self, context: UserEventContext) -> Mqtt5Result<()> {
+        let mut op_id = 0;
+        let event = context.event;
         match event {
-            // TODO
-            _ => {
-                Err(Mqtt5Error::Unimplemented)
+            UserEvent::Subscribe(packet, subscribe_options) => {
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)));
+            }
+            UserEvent::Unsubscribe(packet, unsubscribe_options) => {
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)));
+            }
+            UserEvent::Publish(packet, publish_options) => {
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)));
+            }
+            UserEvent::Disconnect(packet, disconnect_options) => {
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)));
             }
         }
+
+        self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back)
     }
 
     fn get_next_service_timepoint_operational_queue(&self, current_time: &Instant, mode: OperationalQueueServiceMode) -> Instant {
@@ -746,16 +758,46 @@ impl OperationalState {
         Ok(())
     }
 
+    fn calculate_operation_timeout_from_options(current_time: Instant, options: &Option<MqttOperationOptions>) -> Option<Instant> {
+        if let Some(operation_options) = options {
+            let mut timeout_duration_millis : Option<u32> = None;
+
+            match operation_options {
+                MqttOperationOptions::Subscribe(subscribe_options) => {
+                    timeout_duration_millis = subscribe_options.options.timeout_in_millis;
+                }
+                MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+                    timeout_duration_millis = unsubscribe_options.options.timeout_in_millis;
+                }
+                MqttOperationOptions::Publish(publish_options) => {
+                    timeout_duration_millis = publish_options.options.timeout_in_millis;
+                }
+                _ => {}
+            }
+
+            if timeout_duration_millis.is_none() {
+                return None;
+            }
+
+            return Some(current_time + Duration::from_millis(timeout_duration_millis.unwrap() as u64));
+        }
+
+        None
+    }
+
     // Internal APIs
-    fn create_operation(&mut self, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
+    fn create_operation(&mut self, current_time: Instant, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
+
+        let timeout = self.calculate_timeout_from_options(current_time, &options);
 
         let operation = MqttOperation {
             id,
             packet,
             packet_id: None,
             options,
+            timeout
         };
 
         self.operations.insert(id, operation);
