@@ -635,7 +635,7 @@ pub struct Subscription {
 /// Algebraic union of all MQTT5 packet types.
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
-pub(crate) enum MqttPacket {
+pub enum MqttPacket {
     Connect(ConnectPacket),
     Connack(ConnackPacket),
     Publish(PublishPacket),

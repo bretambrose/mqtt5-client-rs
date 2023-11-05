@@ -121,8 +121,29 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
 }
 
 #[derive(Default)]
+pub enum OfflineQueuePolicy {
+    #[default]
+    PreserveAll,
+    PreserveAcknowledged,
+    PreserveQos1PlusPublishes,
+    PreserveNothing,
+    Custom(fn(&MqttPacket) -> bool)
+}
+
+#[derive(Default)]
+pub enum RejoinSessionPolicy {
+    #[default]
+    RejoinPostSuccess,
+    RejoinAlways,
+    RejoinNever
+}
+
+#[derive(Default)]
 pub struct Mqtt5ClientOptions {
-    pub connect : Option<Box<ConnectPacket>>
+    pub connect : Option<Box<ConnectPacket>>,
+
+    pub offline_queue_policy: OfflineQueuePolicy,
+    pub rejoin_session_policy: RejoinSessionPolicy
 }
 
 pub struct Mqtt5Client {

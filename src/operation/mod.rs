@@ -167,6 +167,9 @@ pub(crate) struct OperationalState {
 }
 
 impl OperationalState {
+
+    // Crate-public API
+
     pub(crate) fn new(config: OperationalStateConfig) -> OperationalState {
         let outbound_resolver = (config.outbound_resolver_factory_fn)();
         let inbound_resolver = InboundAliasResolver::new((&config).connect.topic_alias_maximum.unwrap_or(0));
@@ -197,6 +200,66 @@ impl OperationalState {
         }
     }
 
+    pub(crate) fn handle_network_event(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+        let event = &context.event;
+
+        match &event {
+            NetworkEvent::ConnectionOpened => { self.handle_network_event_connection_opened(context) }
+            NetworkEvent::ConnectionClosed => { self.handle_network_event_connection_closed() }
+            NetworkEvent::WriteCompletion => { self.handle_network_event_write_completion() }
+            NetworkEvent::IncomingData(data) => { self.handle_network_event_incoming_data(context, data) }
+        }
+    }
+
+    pub(crate) fn service(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected => { Ok(()) }
+            OperationalStateType::PendingConnack => { self.service_pending_connack(context) }
+            OperationalStateType::Connected => { self.service_connected(context) }
+            OperationalStateType::PendingDisconnect => { self.service_pending_disconnect(context) }
+        }
+    }
+
+    pub(crate) fn handle_user_event(&mut self, context: UserEventContext) -> Mqtt5Result<()> {
+        let mut op_id = 0;
+        let event = context.event;
+        match event {
+            UserEvent::Subscribe(packet, subscribe_options) => {
+                op_id = self.create_operation(context.current_time, packet, Some(MqttOperationOptions::Subscribe(subscribe_options)));
+            }
+            UserEvent::Unsubscribe(packet, unsubscribe_options) => {
+                op_id = self.create_operation(context.current_time, packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)));
+            }
+            UserEvent::Publish(packet, publish_options) => {
+                op_id = self.create_operation(context.current_time, packet, Some(MqttOperationOptions::Publish(publish_options)));
+            }
+            UserEvent::Disconnect(packet, disconnect_options) => {
+                op_id = self.create_operation(context.current_time, packet, Some(MqttOperationOptions::Disconnect(disconnect_options)));
+            }
+        }
+
+        self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back)
+    }
+
+    pub(crate) fn get_next_service_timepoint(&self, current_time: &Instant) -> Instant {
+        match self.state {
+            OperationalStateType::Disconnected => { self.get_next_service_timepoint_disconnected(current_time) }
+            OperationalStateType::PendingConnack => { self.get_next_service_timepoint_pending_connack(current_time) }
+            OperationalStateType::Connected => { self.get_next_service_timepoint_connected(current_time) }
+            OperationalStateType::PendingDisconnect => { self.get_next_service_timepoint_pending_disconnect(current_time) }
+        }
+    }
+
+    // Private Implementation
+
+    fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (Vec<u64>, Vec<u64>) {
+        partition_operations_by_queue_policy(queue.into_iter().filter(|id| {
+            self.operations.get(*id).is_some()
+        }).map(|id| {
+            (*id, &*self.operations.get(id).unwrap().packet)
+        }), policy)
+    }
+
     fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
         let operation_option = self.operations.remove(&id);
         if operation_option.is_none() {
@@ -212,37 +275,7 @@ impl OperationalState {
             return Ok(())
         }
 
-        let operation_options = &mut operation.options.unwrap();
-        match operation_options {
-            MqttOperationOptions::Publish(publish_options) => {
-                if let OperationResponse::Publish(publish_result) = completion_result.unwrap() {
-                    let sender = publish_options.response_sender.take().unwrap();
-                    let _ = sender.send(Ok(publish_result));
-                    return Ok(());
-                }
-            }
-            MqttOperationOptions::Subscribe(subscribe_options) => {
-                if let OperationResponse::Subscribe(suback) = completion_result.unwrap() {
-                    let sender = subscribe_options.response_sender.take().unwrap();
-                    let _ = sender.send(Ok(suback));
-                    return Ok(());
-                }
-            }
-            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
-                if let OperationResponse::Unsubscribe(unsuback) = completion_result.unwrap() {
-                    let sender = unsubscribe_options.response_sender.take().unwrap();
-                    let _ = sender.send(Ok(unsuback));
-                    return Ok(());
-                }
-            }
-            MqttOperationOptions::Disconnect(disconnect_options) => {
-                let sender = disconnect_options.response_sender.take().unwrap();
-                let _ = sender.send(Ok(()));
-                return Ok(());
-            }
-        }
-
-        Err(Mqtt5Error::InternalStateError)
+        complete_operation_with_result(&mut operation.options.unwrap(), completion_result)
     }
 
     fn complete_operation_as_failure(&mut self, id : u64, error: Mqtt5Error) -> Mqtt5Result<()> {
@@ -260,29 +293,7 @@ impl OperationalState {
             return Ok(())
         }
 
-        let operation_options = &mut operation.options.unwrap();
-        match operation_options {
-            MqttOperationOptions::Publish(publish_options) => {
-                let sender = publish_options.response_sender.take().unwrap();
-                let _ = sender.send(Err(error));
-                Ok(())
-            }
-            MqttOperationOptions::Subscribe(subscribe_options) => {
-                let sender = subscribe_options.response_sender.take().unwrap();
-                let _ = sender.send(Err(error));
-                Ok(())
-            }
-            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
-                let sender = unsubscribe_options.response_sender.take().unwrap();
-                let _ = sender.send(Err(error));
-                Ok(())
-            }
-            MqttOperationOptions::Disconnect(disconnect_options) => {
-                let sender = disconnect_options.response_sender.take().unwrap();
-                let _ = sender.send(Err(error));
-                Ok(())
-            }
-        }
+        complete_operation_with_error(&mut operation.options.unwrap(), error)
     }
 
     fn complete_operation_sequence_as_failure<T>(&mut self, iterator: T, error: Mqtt5Error) -> Mqtt5Result<()> where T : Iterator<Item = u64> {
@@ -316,7 +327,7 @@ impl OperationalState {
 
         // Queue up a Connect packet
         let connect = self.create_connect();
-        let connect_op_id = self.create_operation(connect, None);
+        let connect_op_id = self.create_operation(context.current_time, connect, None);
 
         self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
@@ -373,17 +384,6 @@ impl OperationalState {
         }
 
         Ok(())
-    }
-
-    pub(crate) fn handle_network_event(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
-        let event = &context.event;
-
-        match &event {
-            NetworkEvent::ConnectionOpened => { self.handle_network_event_connection_opened(context) }
-            NetworkEvent::ConnectionClosed => { self.handle_network_event_connection_closed() }
-            NetworkEvent::WriteCompletion => { self.handle_network_event_write_completion() }
-            NetworkEvent::IncomingData(data) => { self.handle_network_event_incoming_data(context, data) }
-        }
     }
 
     fn dequeue_operation(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Option<u64> {
@@ -495,7 +495,7 @@ impl OperationalState {
         } else if let Some(next_ping) = &self.next_ping_timepoint {
             if &context.current_time >= next_ping {
                 let ping = Box::new(MqttPacket::Pingreq(PingreqPacket{}));
-                let ping_op_id = self.create_operation(ping, None);
+                let ping_op_id = self.create_operation(context.current_time, ping, None);
 
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
@@ -518,36 +518,6 @@ impl OperationalState {
         self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
 
         Ok(())
-    }
-
-    pub(crate) fn service(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
-        match self.state {
-            OperationalStateType::Disconnected => { Ok(()) }
-            OperationalStateType::PendingConnack => { self.service_pending_connack(context) }
-            OperationalStateType::Connected => { self.service_connected(context) }
-            OperationalStateType::PendingDisconnect => { self.service_pending_disconnect(context) }
-        }
-    }
-
-    pub(crate) fn handle_user_event(&mut self, context: UserEventContext) -> Mqtt5Result<()> {
-        let mut op_id = 0;
-        let event = context.event;
-        match event {
-            UserEvent::Subscribe(packet, subscribe_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)));
-            }
-            UserEvent::Unsubscribe(packet, unsubscribe_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)));
-            }
-            UserEvent::Publish(packet, publish_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)));
-            }
-            UserEvent::Disconnect(packet, disconnect_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)));
-            }
-        }
-
-        self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back)
     }
 
     fn get_next_service_timepoint_operational_queue(&self, current_time: &Instant, mode: OperationalQueueServiceMode) -> Instant {
@@ -601,15 +571,6 @@ impl OperationalState {
         let next_service_time = *current_time + Duration::from_secs(u64::MAX);
 
         min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
-    }
-
-    pub(crate) fn get_next_service_timepoint(&self, current_time: &Instant) -> Instant {
-        match self.state {
-            OperationalStateType::Disconnected => { self.get_next_service_timepoint_disconnected(current_time) }
-            OperationalStateType::PendingConnack => { self.get_next_service_timepoint_pending_connack(current_time) }
-            OperationalStateType::Connected => { self.get_next_service_timepoint_connected(current_time) }
-            OperationalStateType::PendingDisconnect => { self.get_next_service_timepoint_pending_disconnect(current_time) }
-        }
     }
 
     fn schedule_ping(&mut self, current_time: &Instant) -> () {
@@ -678,35 +639,70 @@ impl OperationalState {
         }
     }
 
-    fn advance_operation_by_packet(&self, operation: &MqttOperation, packet: Box<MqttPacket>) -> Mqtt5Result<bool> {
-        if operation.options.is_none() {
-            return Err(Mqtt5Error::InternalStateError);
-        }
-
-        match &operation.options {
-            Some(MqttOperationOptions::Publish(publish_options)) => { Ok(true) }
-            Some(MqttOperationOptions::Subscribe(subscribe_options)) => { Ok(true) }
-            Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => { Ok(true) }
-            _ => { Ok(true) }
-        }
-    }
-
-    fn handle_ack(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+    fn handle_suback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
         let operation_id_option = self.pending_ack_operations.get(&packet_id);
         if let Some(operation_id) = operation_id_option {
-            let operation_option = self.operations.get(&operation_id);
-            if let Some(operation) = operation_option {
-                let complete = self.advance_operation_by_packet(operation, packet)?;
-                if complete {
-                    self.operations.remove(&operation_id);
-                    self.pending_ack_operations.remove(&packet_id);
-                    self.allocated_packet_ids.remove(&packet_id);
+            if let MqttPacket::Suback(suback) = *packet {
+                let operation_option = self.operations.remove(&operation_id);
+                if let Some(mut operation) = operation_option {
+                    if let MqttOperationOptions::Subscribe(mut subscribe_options) = operation.options.unwrap() {
+                        let response_channel = subscribe_options.response_sender.take();
+                        if response_channel.unwrap().send(Ok(suback)).is_err() {
+                            return Err(Mqtt5Error::OperationChannelSendError);
+                        }
+
+                        self.pending_ack_operations.remove(&packet_id);
+                        self.allocated_packet_ids.remove(&packet_id);
+                        return Ok(());
+                    }
                 }
-                return Ok(())
+
+                return Err(Mqtt5Error::InternalStateError);
             }
         }
 
         Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_unsuback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        let operation_id_option = self.pending_ack_operations.get(&packet_id);
+        if let Some(operation_id) = operation_id_option {
+            if let MqttPacket::Unsuback(unsuback) = *packet {
+                let operation_option = self.operations.remove(&operation_id);
+                if let Some(mut operation) = operation_option {
+                    if let MqttOperationOptions::Unsubscribe(mut unsubscribe_options) = operation.options.unwrap() {
+                        let response_channel = unsubscribe_options.response_sender.take();
+                        if response_channel.unwrap().send(Ok(unsuback)).is_err() {
+                            return Err(Mqtt5Error::OperationChannelSendError);
+                        }
+
+                        self.pending_ack_operations.remove(&packet_id);
+                        self.allocated_packet_ids.remove(&packet_id);
+                        return Ok(());
+                    }
+                }
+
+                return Err(Mqtt5Error::InternalStateError);
+            }
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_puback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        Err(Mqtt5Error::Unimplemented)
+    }
+
+    fn handle_pubrec(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        Err(Mqtt5Error::Unimplemented)
+    }
+
+    fn handle_pubrel(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        Err(Mqtt5Error::Unimplemented)
+    }
+
+    fn handle_pubcomp(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        Err(Mqtt5Error::Unimplemented)
     }
 
     fn handle_packet(&mut self, packet: Box<MqttPacket>, current_time: &Instant) -> Mqtt5Result<()> {
@@ -716,13 +712,13 @@ impl OperationalState {
             MqttPacket::Connack(connack) => { self.handle_connack(connack, current_time) }
             MqttPacket::Publish(_) => { Err(Mqtt5Error::Unimplemented) }
             MqttPacket::Pingresp(_) => { self.handle_pingresp() }
-            MqttPacket::Disconnect(_) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Suback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Unsuback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Puback(_) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Pubcomp(pubcomp) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Pubrel(pubrel) => { Err(Mqtt5Error::Unimplemented) }
-            MqttPacket::Pubrec(pubrec) => { self.handle_ack(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Disconnect(_) => { Err(Mqtt5Error::ServerSideDisconnect) }
+            MqttPacket::Suback(_) => { self.handle_suback(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Unsuback(_) => { self.handle_unsuback(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Puback(_) => { self.handle_puback(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet, id_option.unwrap_or(0)) }
 
             _ => { Err(Mqtt5Error::ProtocolError) }
         }
@@ -758,39 +754,12 @@ impl OperationalState {
         Ok(())
     }
 
-    fn calculate_operation_timeout_from_options(current_time: Instant, options: &Option<MqttOperationOptions>) -> Option<Instant> {
-        if let Some(operation_options) = options {
-            let mut timeout_duration_millis : Option<u32> = None;
-
-            match operation_options {
-                MqttOperationOptions::Subscribe(subscribe_options) => {
-                    timeout_duration_millis = subscribe_options.options.timeout_in_millis;
-                }
-                MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
-                    timeout_duration_millis = unsubscribe_options.options.timeout_in_millis;
-                }
-                MqttOperationOptions::Publish(publish_options) => {
-                    timeout_duration_millis = publish_options.options.timeout_in_millis;
-                }
-                _ => {}
-            }
-
-            if timeout_duration_millis.is_none() {
-                return None;
-            }
-
-            return Some(current_time + Duration::from_millis(timeout_duration_millis.unwrap() as u64));
-        }
-
-        None
-    }
-
     // Internal APIs
     fn create_operation(&mut self, current_time: Instant, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
 
-        let timeout = self.calculate_timeout_from_options(current_time, &options);
+        let timeout = calculate_operation_timeout_from_options(current_time, &options);
 
         let operation = MqttOperation {
             id,
@@ -899,4 +868,125 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
         rejoined_session : packet.session_present,
         client_id : final_client_id_ref.clone()
     }
+}
+
+fn calculate_operation_timeout_from_options(current_time: Instant, options: &Option<MqttOperationOptions>) -> Option<Instant> {
+    if let Some(operation_options) = options {
+        let mut timeout_duration_millis : Option<u32> = None;
+
+        match operation_options {
+            MqttOperationOptions::Subscribe(subscribe_options) => {
+                timeout_duration_millis = subscribe_options.options.timeout_in_millis;
+            }
+            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+                timeout_duration_millis = unsubscribe_options.options.timeout_in_millis;
+            }
+            MqttOperationOptions::Publish(publish_options) => {
+                timeout_duration_millis = publish_options.options.timeout_in_millis;
+            }
+            _ => {}
+        }
+
+        if timeout_duration_millis.is_none() {
+            return None;
+        }
+
+        return Some(current_time + Duration::from_millis(timeout_duration_millis.unwrap() as u64));
+    }
+
+    None
+}
+
+fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
+    match operation_options {
+        MqttOperationOptions::Publish(publish_options) => {
+            if let OperationResponse::Publish(publish_result) = completion_result.unwrap() {
+                let sender = publish_options.response_sender.take().unwrap();
+                let _ = sender.send(Ok(publish_result));
+                return Ok(());
+            }
+        }
+        MqttOperationOptions::Subscribe(subscribe_options) => {
+            if let OperationResponse::Subscribe(suback) = completion_result.unwrap() {
+                let sender = subscribe_options.response_sender.take().unwrap();
+                let _ = sender.send(Ok(suback));
+                return Ok(());
+            }
+        }
+        MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+            if let OperationResponse::Unsubscribe(unsuback) = completion_result.unwrap() {
+                let sender = unsubscribe_options.response_sender.take().unwrap();
+                let _ = sender.send(Ok(unsuback));
+                return Ok(());
+            }
+        }
+        MqttOperationOptions::Disconnect(disconnect_options) => {
+            let sender = disconnect_options.response_sender.take().unwrap();
+            let _ = sender.send(Ok(()));
+            return Ok(());
+        }
+    }
+
+    Err(Mqtt5Error::InternalStateError)
+}
+
+fn complete_operation_with_error(operation_options: &mut MqttOperationOptions, error: Mqtt5Error) ->Mqtt5Result<()> {
+    match operation_options {
+        MqttOperationOptions::Publish(publish_options) => {
+            let sender = publish_options.response_sender.take().unwrap();
+            let _ = sender.send(Err(error));
+        }
+        MqttOperationOptions::Subscribe(subscribe_options) => {
+            let sender = subscribe_options.response_sender.take().unwrap();
+            let _ = sender.send(Err(error));
+        }
+        MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
+            let sender = unsubscribe_options.response_sender.take().unwrap();
+            let _ = sender.send(Err(error));
+        }
+        MqttOperationOptions::Disconnect(disconnect_options) => {
+            let sender = disconnect_options.response_sender.take().unwrap();
+            let _ = sender.send(Err(error));
+        }
+    }
+
+    Ok(())
+}
+
+fn does_packet_pass_offline_queue_policy(packet: &MqttPacket, policy: &OfflineQueuePolicy) -> bool {
+    match packet {
+        MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
+            match policy {
+                OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveNothing => { false }
+                OfflineQueuePolicy::Custom(predicate) => { predicate(packet) }
+                _ => { true }
+            }
+        }
+        MqttPacket::Publish(publish) => {
+            match policy {
+                OfflineQueuePolicy::PreserveNothing => { false }
+                OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveAcknowledged => {
+                    publish.qos != QualityOfService::AtMostOnce
+                }
+                OfflineQueuePolicy::Custom(predicate) => { predicate(packet) }
+                _ => { true }
+            }
+        }
+        _ => { true }
+    }
+}
+
+fn partition_operations_by_queue_policy<'a, T>(iterator: T, policy: &OfflineQueuePolicy) -> (Vec<u64>, Vec<u64>) where T : Iterator<Item = (u64, &'a MqttPacket)> {
+    let mut retained : Vec<u64> = Vec::new();
+    let mut filtered : Vec<u64> = Vec::new();
+
+    iterator.for_each(|(id, packet)| {
+        if does_packet_pass_offline_queue_policy(packet, policy) {
+            retained.push(id);
+        } else {
+            filtered.push(id);
+        }
+    });
+
+    (retained, filtered)
 }

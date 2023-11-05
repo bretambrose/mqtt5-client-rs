@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.start().unwrap();
 
     let result = client
-        .publish( &PublishPacket { ..Default::default() } , client::PublishOptions {})
+        .publish( &PublishPacket { ..Default::default() } , client::PublishOptions { ..Default::default() })
         .await;
     match result {
         Ok(_) => {
