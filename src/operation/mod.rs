@@ -144,6 +144,7 @@ pub(crate) struct OperationalState {
     high_priority_operation_queue: VecDeque<u64>,
     current_operation: Option<u64>,
 
+    qos2_incomplete_incoming_publishes: HashSet<u16>,
     allocated_packet_ids: HashMap<u16, u64>,
     pending_ack_operations: HashMap<u16, u64>,
     pending_write_completion_operations: Vec<u64>,
@@ -183,6 +184,7 @@ impl OperationalState {
             resubmit_operation_queue: VecDeque::new(),
             high_priority_operation_queue: VecDeque::new(),
             current_operation: None,
+            qos2_incomplete_incoming_publishes: HashSet::new(),
             allocated_packet_ids: HashMap::new(),
             pending_ack_operations: HashMap::new(),
             pending_write_completion_operations: Vec::new(),
@@ -588,6 +590,8 @@ impl OperationalState {
             // TODO: unacked operations: qos 1+ publishes, pubrel to resubmit queue maintaining order
         } else {
             // TODO: unacked operations: apply offline queue policy
+
+            self.qos2_incomplete_incoming_publishes.clear();
         }
 
         /*
@@ -640,6 +644,13 @@ impl OperationalState {
     }
 
     fn handle_suback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
         let operation_id_option = self.pending_ack_operations.get(&packet_id);
         if let Some(operation_id) = operation_id_option {
             if let MqttPacket::Suback(suback) = *packet {
@@ -657,14 +668,23 @@ impl OperationalState {
                     }
                 }
 
+                // No operation or invalid subscribe options
                 return Err(Mqtt5Error::InternalStateError);
             }
         }
 
+        // No record of the packet id or associated operation wasn't a Subscribe
         Err(Mqtt5Error::ProtocolError)
     }
 
     fn handle_unsuback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
         let operation_id_option = self.pending_ack_operations.get(&packet_id);
         if let Some(operation_id) = operation_id_option {
             if let MqttPacket::Unsuback(unsuback) = *packet {
@@ -682,27 +702,208 @@ impl OperationalState {
                     }
                 }
 
+                // No operation or invalid unsubscribe options
                 return Err(Mqtt5Error::InternalStateError);
+            }
+        }
+
+        // No record of the packet id or associated operation wasn't an Unsubscribe
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_puback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
+        if let MqttPacket::Puback(puback) = *packet {
+            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            if let Some(operation_id) = operation_id_option {
+                let operation_option = self.operations.remove(&operation_id);
+                if let Some(mut operation) = operation_option {
+                    if let MqttPacket::Publish(publish) = &*operation.packet {
+                        if publish.qos == QualityOfService::AtLeastOnce {
+                            if let MqttOperationOptions::Publish(mut publish_options) = operation.options.unwrap() {
+                                let response_channel = publish_options.response_sender.take();
+                                if response_channel.unwrap().send(Ok(PublishResponse::Qos1(puback))).is_err() {
+                                    return Err(Mqtt5Error::OperationChannelSendError);
+                                }
+
+                                self.pending_ack_operations.remove(&packet_id);
+                                self.allocated_packet_ids.remove(&packet_id);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
             }
         }
 
         Err(Mqtt5Error::ProtocolError)
     }
 
-    fn handle_puback(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
-        Err(Mqtt5Error::Unimplemented)
+    fn handle_pubrec(&mut self, packet: Box<MqttPacket>, packet_id: u16, current_time: &Instant) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
+        if let MqttPacket::Pubrec(pubrec) = *packet {
+            let operation_id_option = self.pending_ack_operations.remove(&packet_id);
+            if let Some(operation_id) = operation_id_option {
+                let operation_option = self.operations.remove(&operation_id);
+                if let Some(mut operation) = operation_option {
+                    if let MqttPacket::Publish(publish) = &*operation.packet {
+                        if publish.qos == QualityOfService::ExactlyOnce {
+                            if pubrec.reason_code as u8 >= 128 {
+                                if let MqttOperationOptions::Publish(mut publish_options) = operation.options.unwrap() {
+                                    let response_channel = publish_options.response_sender.take();
+                                    let response = PublishResponse::Qos2(Qos2Response::Pubrec(pubrec));
+                                    if response_channel.unwrap().send(Ok(response)).is_err() {
+                                        return Err(Mqtt5Error::OperationChannelSendError);
+                                    }
+
+                                    self.allocated_packet_ids.remove(&packet_id);
+                                    return Ok(());
+                                }
+                            } else {
+                                let pubrel = Box::new(MqttPacket::Pubrel(PubrelPacket{
+                                    packet_id: pubrec.packet_id,
+                                    ..Default::default()
+                                }));
+                                let pubrel_op_id = self.create_operation(*current_time, pubrel, None);
+
+                                self.enqueue_operation(pubrel_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubrec(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
-        Err(Mqtt5Error::Unimplemented)
-    }
+    fn handle_pubrel(&mut self, packet: Box<MqttPacket>, packet_id: u16, current_time: &Instant) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
 
-    fn handle_pubrel(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
-        Err(Mqtt5Error::Unimplemented)
+        if let MqttPacket::Pubrel(pubrel) = &*packet {
+            self.qos2_incomplete_incoming_publishes.remove(&pubrel.packet_id);
+
+            let pubcomp = Box::new(MqttPacket::Pubcomp(PubcompPacket{
+                packet_id: pubrel.packet_id,
+                ..Default::default()
+            }));
+            let pubcomp_op_id = self.create_operation(*current_time, pubcomp, None);
+
+            self.enqueue_operation(pubcomp_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::InternalStateError)
     }
 
     fn handle_pubcomp(&mut self, packet: Box<MqttPacket>, packet_id: u16) -> Mqtt5Result<()> {
-        Err(Mqtt5Error::Unimplemented)
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
+        if let MqttPacket::Pubcomp(pubcomp) = *packet {
+            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            if let Some(operation_id) = operation_id_option {
+                let operation_option = self.operations.remove(&operation_id);
+                if let Some(mut operation) = operation_option {
+                    if let MqttPacket::Publish(publish) = &*operation.packet {
+                        if publish.qos == QualityOfService::ExactlyOnce {
+                            if let MqttOperationOptions::Publish(mut publish_options) = operation.options.unwrap() {
+                                let response_channel = publish_options.response_sender.take();
+                                let response = PublishResponse::Qos2(Qos2Response::Pubcomp(pubcomp));
+                                if response_channel.unwrap().send(Ok(response)).is_err() {
+                                    return Err(Mqtt5Error::OperationChannelSendError);
+                                }
+
+                                self.pending_ack_operations.remove(&packet_id);
+                                self.allocated_packet_ids.remove(&packet_id);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn publish_received_callback_stub(&self, publish: &PublishPacket) {
+        // TODO, possibly wait until we refactor MqttPacket again =/
+    }
+
+    fn handle_publish(&mut self, packet: Box<MqttPacket>, current_time: &Instant) -> Mqtt5Result<()> {
+        match self.state {
+            OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
+                return Err(Mqtt5Error::ProtocolError);
+            }
+            _ => {}
+        }
+
+        if let MqttPacket::Publish(publish) = &*packet {
+            match publish.qos {
+                QualityOfService::AtMostOnce => {
+                    self.publish_received_callback_stub(publish);
+                    return Ok(());
+                }
+
+                QualityOfService::AtLeastOnce => {
+                    self.publish_received_callback_stub(publish);
+
+                    let puback = Box::new(MqttPacket::Puback(PubackPacket{
+                        packet_id: publish.packet_id,
+                        ..Default::default()
+                    }));
+                    let puback_op_id = self.create_operation(*current_time, puback, None);
+
+                    self.enqueue_operation(puback_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+
+                    return Ok(());
+                }
+
+                QualityOfService::ExactlyOnce => {
+                    if !self.qos2_incomplete_incoming_publishes.contains(&publish.packet_id) {
+                        self.publish_received_callback_stub(publish);
+                        self.qos2_incomplete_incoming_publishes.insert(publish.packet_id);
+                    }
+
+                    let pubrec = Box::new(MqttPacket::Pubrec(PubrecPacket{
+                        packet_id: publish.packet_id,
+                        ..Default::default()
+                    }));
+                    let pubrec_op_id = self.create_operation(*current_time, pubrec, None);
+
+                    self.enqueue_operation(pubrec_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(Mqtt5Error::InternalStateError)
     }
 
     fn handle_packet(&mut self, packet: Box<MqttPacket>, current_time: &Instant) -> Mqtt5Result<()> {
@@ -710,15 +911,15 @@ impl OperationalState {
 
         match &*packet {
             MqttPacket::Connack(connack) => { self.handle_connack(connack, current_time) }
-            MqttPacket::Publish(_) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Publish(_) => { self.handle_publish(packet, current_time) }
             MqttPacket::Pingresp(_) => { self.handle_pingresp() }
             MqttPacket::Disconnect(_) => { Err(Mqtt5Error::ServerSideDisconnect) }
             MqttPacket::Suback(_) => { self.handle_suback(packet, id_option.unwrap_or(0)) }
             MqttPacket::Unsuback(_) => { self.handle_unsuback(packet, id_option.unwrap_or(0)) }
             MqttPacket::Puback(_) => { self.handle_puback(packet, id_option.unwrap_or(0)) }
             MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet, id_option.unwrap_or(0)) }
-            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet, id_option.unwrap_or(0)) }
+            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet, id_option.unwrap_or(0), current_time) }
+            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet, id_option.unwrap_or(0), current_time) }
 
             _ => { Err(Mqtt5Error::ProtocolError) }
         }
