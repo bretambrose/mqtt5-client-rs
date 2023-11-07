@@ -13,8 +13,10 @@ use crate::spec::*;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use tokio::runtime;
 use tokio::sync::oneshot;
+use crate::alias::OutboundAliasResolver;
 
 use crate::spec::connect::ConnectPacket;
 use crate::spec::puback::PubackPacket;
@@ -138,32 +140,76 @@ pub enum RejoinSessionPolicy {
     RejoinNever
 }
 
+pub struct ConnectionAttemptEvent {}
+
+pub struct ConnectionSuccessEvent {
+    pub connack: ConnackPacket,
+    pub settings: NegotiatedSettings
+}
+
+pub struct ConnectionFailureEvent {
+    pub error: Mqtt5Error,
+    pub connack: Option<ConnackPacket>,
+}
+
+pub struct DisconnectionEvent {
+    pub error: Mqtt5Error,
+    pub disconnect: Option<DisconnectPacket>,
+}
+
+pub struct StoppedEvent {}
+
+pub struct PublishReceivedEvent {
+    pub publish: PublishPacket
+}
+
+pub enum ClientEvent {
+    ConnectionAttempt(ConnectionAttemptEvent),
+    ConnectionSuccess(ConnectionSuccessEvent),
+    ConnectionFailure(ConnectionFailureEvent),
+    Disconnection(DisconnectionEvent),
+    Stopped(StoppedEvent),
+    PublishReceived(PublishReceivedEvent),
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
     pub connect : Option<Box<ConnectPacket>>,
 
     pub offline_queue_policy: OfflineQueuePolicy,
-    pub rejoin_session_policy: RejoinSessionPolicy
+    pub rejoin_session_policy: RejoinSessionPolicy,
+
+    pub connack_timeout_millis: u32,
+    pub ping_timeout_millis: u32,
+
+    pub event_channel: Option<std::sync::mpsc::Sender<Arc<ClientEvent>>>,
+
+    pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
 }
 
 pub struct Mqtt5Client {
     operation_sender: tokio::sync::mpsc::Sender<OperationOptions>,
+
+    listener_id_allocator: Mutex<u64>,
 }
 
 impl Mqtt5Client {
-    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
+    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Arc<Mqtt5Client> {
         let (operation_sender, operation_receiver) = tokio::sync::mpsc::channel(100);
 
         spawn_client_impl(config, operation_receiver, &runtime_handle);
 
-        Mqtt5Client { operation_sender }
+        Arc::new(Mqtt5Client {
+            operation_sender,
+            listener_id_allocator: Mutex::new(1),
+        })
     }
 
     pub fn start(&self) -> Mqtt5Result<()> {
         client_lifecycle_operation_body!(Start, self)
     }
 
-    pub fn stop(&self, packet: &DisconnectPacket, options: DisconnectOptions) -> Pin<Box<DisconnectResultFuture>> {
+    pub fn stop(&self, packet: DisconnectPacket, options: DisconnectOptions) -> Pin<Box<DisconnectResultFuture>> {
         client_mqtt_operation_body!(self, Stop, DisconnectOptionsInternal, packet, Disconnect, options)
     }
 
@@ -171,15 +217,36 @@ impl Mqtt5Client {
         client_lifecycle_operation_body!(Shutdown, self)
     }
 
-    pub fn publish(&self, packet: &PublishPacket, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
+    pub fn publish(&self, packet: PublishPacket, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
         client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, packet, Publish, options)
     }
 
-    pub fn subscribe(&self, packet: &SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
+    pub fn subscribe(&self, packet: SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
         client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
     }
 
-    pub fn unsubscribe(&self, packet: &UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
+    pub fn unsubscribe(&self, packet: UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
         client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, Unsubscribe, options)
+    }
+
+    pub fn add_event_listener(&self, channel: std::sync::mpsc::Sender<Arc<ClientEvent>>) -> Mqtt5Result<u64> {
+        let mut listener_id : u64 = 1;
+        let mut current_id = self.listener_id_allocator.lock().unwrap();
+        listener_id = *current_id;
+        *current_id += 1;
+
+        match self.operation_sender.try_send(OperationOptions::AddListener(listener_id, channel))
+        {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
+            _ => Ok(listener_id),
+        }
+    }
+
+    pub fn remove_event_listener(&self, listener_id: u64) -> Mqtt5Result<()> {
+        match self.operation_sender.try_send(OperationOptions::RemoveListener(listener_id))
+        {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
+            _ => Ok(()),
+        }
     }
 }

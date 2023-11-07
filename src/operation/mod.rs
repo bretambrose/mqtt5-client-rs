@@ -93,15 +93,17 @@ enum OperationalStateType {
 }
 
 pub(crate) struct OperationalStateConfig {
-    connect: Box<ConnectPacket>,
+    pub connect: Box<ConnectPacket>,
 
-    base_timestamp: Instant,
+    pub base_timestamp: Instant,
 
-    connack_timeout_millis: u32,
+    pub offline_queue_policy: OfflineQueuePolicy,
+    pub rejoin_session_policy: RejoinSessionPolicy,
 
-    ping_timeout_millis: u32,
+    pub connack_timeout_millis: u32,
+    pub ping_timeout_millis: u32,
 
-    outbound_resolver_factory_fn: fn () -> Box<dyn OutboundAliasResolver>,
+    pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -171,8 +173,8 @@ impl OperationalState {
 
     // Crate-public API
 
-    pub(crate) fn new(config: OperationalStateConfig) -> OperationalState {
-        let outbound_resolver = (config.outbound_resolver_factory_fn)();
+    pub(crate) fn new(mut config: OperationalStateConfig) -> OperationalState {
+        let outbound_resolver = config.outbound_resolver.take().unwrap_or(Box::new(NullOutboundAliasResolver::new()));
         let inbound_resolver = InboundAliasResolver::new((&config).connect.topic_alias_maximum.unwrap_or(0));
 
         OperationalState {
@@ -955,7 +957,6 @@ impl OperationalState {
         Ok(())
     }
 
-    // Internal APIs
     fn create_operation(&mut self, current_time: Instant, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
         let id = self.next_operation_id;
         self.next_operation_id += 1;

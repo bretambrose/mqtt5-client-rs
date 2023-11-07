@@ -5,8 +5,12 @@
 
 extern crate tokio;
 
+use std::collections::HashMap;
+use std::time::Instant;
 use crate::*;
+use crate::alias::*;
 use crate::client::*;
+use crate::operation::*;
 use crate::spec::*;
 
 use tokio::runtime;
@@ -30,7 +34,7 @@ pub(crate) use client_lifecycle_operation_body;
 macro_rules! client_mqtt_operation_body {
     ($self:ident, $operation_type:ident, $options_internal_type: ident, $packet_name: ident, $packet_type: ident, $options_value: expr) => ({
         let (response_sender, rx) = oneshot::channel();
-        let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name.clone()));
+        let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name));
         let internal_options = $options_internal_type {
             options : $options_value,
             response_sender : Some(response_sender)
@@ -57,6 +61,20 @@ macro_rules! client_mqtt_operation_body {
 }
 
 pub(crate) use client_mqtt_operation_body;
+
+macro_rules! client_listener_operation_body {
+    ($listener_operation:ident, $self:ident) => {{
+        match $self
+            .operation_sender
+            .try_send(OperationOptions::$listener_operation())
+        {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
+            _ => Ok(()),
+        }
+    }};
+}
+
+pub(crate) use client_listener_operation_body;
 
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
@@ -85,11 +103,14 @@ pub(crate) enum OperationOptions {
     Start(),
     Stop(Box<MqttPacket>, DisconnectOptionsInternal),
     Shutdown(),
+    AddListener(u64, std::sync::mpsc::Sender<Arc<ClientEvent>>),
+    RemoveListener(u64)
 }
 
 struct Mqtt5ClientImpl {
-    config: Mqtt5ClientOptions,
+    state: OperationalState,
     operation_receiver: mpsc::Receiver<OperationOptions>,
+    listeners: HashMap<u64, std::sync::mpsc::Sender<Arc<ClientEvent>>>,
 }
 
 async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
@@ -127,6 +148,12 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                                 println!("Received shutdown!");
                                 done = true;
                             }
+                            OperationOptions::AddListener(id, channel) => {
+                                println!("Received AddListener!");
+                            }
+                            OperationOptions::RemoveListener(id) => {
+                                println!("Received RemoveListener!");
+                            }
                         }
                     }
                     _ => {
@@ -138,14 +165,32 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
 }
 
 pub(crate) fn spawn_client_impl(
-    config: Mqtt5ClientOptions,
+    mut config: Mqtt5ClientOptions,
     operation_receiver: mpsc::Receiver<OperationOptions>,
     runtime_handle: &runtime::Handle,
 ) {
-    let mut client_impl = Mqtt5ClientImpl {
-        config,
-        operation_receiver,
+    let connect = config.connect.take().unwrap_or(Box::new(ConnectPacket{ ..Default::default() }));
+
+    let state_config = OperationalStateConfig {
+        connect,
+        base_timestamp: Instant::now(),
+        offline_queue_policy: config.offline_queue_policy,
+        rejoin_session_policy: config.rejoin_session_policy,
+        connack_timeout_millis: config.connack_timeout_millis,
+        ping_timeout_millis: config.ping_timeout_millis,
+        outbound_resolver: config.outbound_resolver.take(),
     };
+
+    let mut client_impl = Mqtt5ClientImpl {
+        state: OperationalState::new(state_config),
+        operation_receiver,
+        listeners: HashMap::new()
+    };
+
+    if let Some(channel) = config.event_channel {
+        client_impl.listeners.insert(0, channel);
+    }
+
     runtime_handle.spawn(async move {
         client_event_loop(&mut client_impl).await;
     });

@@ -21,7 +21,7 @@ pub struct OutboundAliasResolution {
     pub alias : Option<u16>,
 }
 
-pub trait OutboundAliasResolver {
+pub trait OutboundAliasResolver : Send {
     fn get_maximum_alias_value(&self) -> u16;
 
     fn reset_for_new_connection(&mut self, max_aliases : u16);
