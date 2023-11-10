@@ -257,7 +257,7 @@ impl OperationalState {
     // Private Implementation
 
     fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (Vec<u64>, Vec<u64>) {
-        partition_operations_by_queue_policy(queue.into_iter().filter(|id| {
+        partition_operations_by_queue_policy(queue.iter().filter(|id| {
             self.operations.get(*id).is_some()
         }).map(|id| {
             (*id, &*self.operations.get(id).unwrap().packet)
@@ -1160,7 +1160,6 @@ fn does_packet_pass_offline_queue_policy(packet: &MqttPacket, policy: &OfflineQu
         MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
             match policy {
                 OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveNothing => { false }
-                OfflineQueuePolicy::Custom(predicate) => { predicate(packet) }
                 _ => { true }
             }
         }
@@ -1170,7 +1169,6 @@ fn does_packet_pass_offline_queue_policy(packet: &MqttPacket, policy: &OfflineQu
                 OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveAcknowledged => {
                     publish.qos != QualityOfService::AtMostOnce
                 }
-                OfflineQueuePolicy::Custom(predicate) => { predicate(packet) }
                 _ => { true }
             }
         }

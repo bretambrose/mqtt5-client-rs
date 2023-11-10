@@ -46,7 +46,7 @@ pub use spec::subscribe::SubscribePacket;
 pub use spec::unsuback::UnsubackPacket;
 pub use spec::unsubscribe::UnsubscribePacket;
 
-pub use client::NegotiatedSettings;
+pub use client::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Mqtt5Error {

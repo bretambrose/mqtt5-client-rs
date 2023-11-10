@@ -129,7 +129,6 @@ pub enum OfflineQueuePolicy {
     PreserveAcknowledged,
     PreserveQos1PlusPublishes,
     PreserveNothing,
-    Custom(fn(&MqttPacket) -> bool)
 }
 
 #[derive(Default)]
@@ -172,6 +171,11 @@ pub enum ClientEvent {
     PublishReceived(PublishReceivedEvent),
 }
 
+pub enum ClientEventListener {
+    Channel(std::sync::mpsc::Sender<Arc<ClientEvent>>),
+    Callback(Arc<dyn Fn(Arc<ClientEvent>) -> () + Send + Sync>)
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
     pub connect : Option<Box<ConnectPacket>>,
@@ -182,7 +186,7 @@ pub struct Mqtt5ClientOptions {
     pub connack_timeout_millis: u32,
     pub ping_timeout_millis: u32,
 
-    pub event_channel: Option<std::sync::mpsc::Sender<Arc<ClientEvent>>>,
+    pub default_event_listener: Option<ClientEventListener>,
 
     pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
 }
@@ -229,13 +233,13 @@ impl Mqtt5Client {
         client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, Unsubscribe, options)
     }
 
-    pub fn add_event_listener(&self, channel: std::sync::mpsc::Sender<Arc<ClientEvent>>) -> Mqtt5Result<u64> {
+    pub fn add_event_listener(&self, listener: ClientEventListener) -> Mqtt5Result<u64> {
         let mut listener_id : u64 = 1;
         let mut current_id = self.listener_id_allocator.lock().unwrap();
         listener_id = *current_id;
         *current_id += 1;
 
-        match self.operation_sender.try_send(OperationOptions::AddListener(listener_id, channel))
+        match self.operation_sender.try_send(OperationOptions::AddListener(listener_id, listener))
         {
             Err(_) => Err(Mqtt5Error::OperationChannelSendError),
             _ => Ok(listener_id),

@@ -103,14 +103,37 @@ pub(crate) enum OperationOptions {
     Start(),
     Stop(Box<MqttPacket>, DisconnectOptionsInternal),
     Shutdown(),
-    AddListener(u64, std::sync::mpsc::Sender<Arc<ClientEvent>>),
+    AddListener(u64, ClientEventListener),
     RemoveListener(u64)
 }
 
 struct Mqtt5ClientImpl {
     state: OperationalState,
     operation_receiver: mpsc::Receiver<OperationOptions>,
-    listeners: HashMap<u64, std::sync::mpsc::Sender<Arc<ClientEvent>>>,
+    listeners: HashMap<u64, ClientEventListener>,
+}
+
+impl Mqtt5ClientImpl {
+    pub(crate) fn add_listener(&mut self, id: u64, listener: ClientEventListener) {
+        self.listeners.insert(id, listener);
+    }
+
+    pub(crate) fn remove_listener(&mut self, id: u64) {
+        self.listeners.remove(&id);
+    }
+
+    pub(crate) fn broadcast_event(&self, event: Arc<ClientEvent>) {
+        for (id, listener) in &self.listeners {
+            match listener {
+                ClientEventListener::Channel(channel) => {
+                    channel.send(event.clone()).unwrap();
+                }
+                ClientEventListener::Callback(callback) => {
+                    callback(event.clone());
+                }
+            }
+        }
+    }
 }
 
 async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
@@ -123,6 +146,11 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                         match value {
                             OperationOptions::Publish(_, internal_options) => {
                                 println!("Got a publish!");
+                                println!("Raising a client event to test callbacks");
+
+                                let event = Arc::new(ClientEvent::ConnectionAttempt(ConnectionAttemptEvent{}));
+                                client_impl.broadcast_event(event);
+
                                 let failure_result : PublishResult = Err(Mqtt5Error::Unimplemented);
                                 internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
@@ -148,11 +176,11 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                                 println!("Received shutdown!");
                                 done = true;
                             }
-                            OperationOptions::AddListener(id, channel) => {
-                                println!("Received AddListener!");
+                            OperationOptions::AddListener(id, listener) => {
+                                client_impl.add_listener(id, listener);
                             }
                             OperationOptions::RemoveListener(id) => {
-                                println!("Received RemoveListener!");
+                                client_impl.remove_listener(id);
                             }
                         }
                     }
@@ -187,8 +215,8 @@ pub(crate) fn spawn_client_impl(
         listeners: HashMap::new()
     };
 
-    if let Some(channel) = config.event_channel {
-        client_impl.listeners.insert(0, channel);
+    if let Some(listener) = config.default_event_listener {
+        client_impl.listeners.insert(0, listener);
     }
 
     runtime_handle.spawn(async move {
