@@ -173,7 +173,7 @@ pub enum ClientEvent {
 
 pub enum ClientEventListener {
     Channel(std::sync::mpsc::Sender<Arc<ClientEvent>>),
-    Callback(Arc<dyn Fn(Arc<ClientEvent>) -> () + Send + Sync>)
+    Callback(Box<dyn Fn(Arc<ClientEvent>) -> () + Send + Sync>)
 }
 
 #[derive(Default)]

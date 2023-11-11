@@ -20,7 +20,7 @@ fn test_callback(event: Arc<ClientEvent>) {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let function = |event|{test_callback(event)} ;
-    let dyn_function = Arc::new(function); // as dyn Fn(Arc<ClientEvent>) -> ();
+    let dyn_function = Box::new(function);
     let callback = ClientEventListener::Callback(dyn_function);
 
     let config = client::Mqtt5ClientOptions {

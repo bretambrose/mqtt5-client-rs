@@ -149,7 +149,7 @@ pub(crate) struct OperationalState {
     qos2_incomplete_incoming_publishes: HashSet<u16>,
     allocated_packet_ids: HashMap<u16, u64>,
     pending_ack_operations: HashMap<u16, u64>,
-    pending_write_completion_operations: Vec<u64>,
+    pending_write_completion_operations: VecDeque<u64>,
     pending_publish_count: u16,
 
     current_settings: Option<NegotiatedSettings>,
@@ -189,7 +189,7 @@ impl OperationalState {
             qos2_incomplete_incoming_publishes: HashSet::new(),
             allocated_packet_ids: HashMap::new(),
             pending_ack_operations: HashMap::new(),
-            pending_write_completion_operations: Vec::new(),
+            pending_write_completion_operations: VecDeque::new(),
             pending_publish_count: 0,
             current_settings: None,
             next_operation_id : 1,
@@ -256,12 +256,63 @@ impl OperationalState {
 
     // Private Implementation
 
-    fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (Vec<u64>, Vec<u64>) {
+    fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (VecDeque<u64>, VecDeque<u64>) {
         partition_operations_by_queue_policy(queue.iter().filter(|id| {
             self.operations.get(*id).is_some()
         }).map(|id| {
             (*id, &*self.operations.get(id).unwrap().packet)
         }), policy)
+    }
+
+    fn should_retain_high_priority_operation(&self, id: u64) -> bool {
+        if let Some(operation) = self.operations.get(&id) {
+            if let MqttPacket::Pubrel(packet) = &*operation.packet {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn partition_high_priority_queue_for_disconnect<T>(&self, iterator: T) -> (VecDeque<u64>, VecDeque<u64>) where T : Iterator<Item = u64> {
+        let mut retained = VecDeque::new();
+        let mut rejected = VecDeque::new();
+
+        iterator.for_each(|id| {
+            if self.should_retain_high_priority_operation(id) {
+                retained.push_back(id);
+            } else {
+                rejected.push_back(id);
+            }
+        });
+
+        (retained, rejected)
+    }
+
+    fn should_resubmit_post_disconnection(&self, id: u64) -> bool {
+        if let Some(operation) = self.operations.get(&id) {
+            match &*operation.packet {
+                MqttPacket::Publish(_) | MqttPacket::Pubrel(_) => { return true; }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    fn partition_unacked_operations_for_disconnect<T>(&self, iterator: T) -> (VecDeque<u64>, VecDeque<u64>) where T : Iterator<Item = u64> {
+        let mut resubmit = VecDeque::new();
+        let mut offline = VecDeque::new();
+
+        iterator.for_each(|id| {
+            if self.should_resubmit_post_disconnection(id) {
+                resubmit.push_back(id);
+            } else {
+                offline.push_back(id);
+            }
+        });
+
+        (resubmit, offline)
     }
 
     fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
@@ -341,21 +392,62 @@ impl OperationalState {
     }
 
     fn handle_network_event_connection_closed(&mut self) -> Mqtt5Result<()> {
-        self.high_priority_operation_queue.clear();
         self.state = OperationalStateType::Disconnected;
 
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
         self.ping_timeout_timepoint = None;
 
-        let mut completions : Vec<u64> = Vec::new();
-        mem::swap(&mut completions, &mut self.pending_write_completion_operations);
-        let result : Mqtt5Result<()> = self.complete_operation_sequence_as_failure(completions.iter().copied(), Mqtt5Error::ConnectionClosed);
+        let mut result : Mqtt5Result<()> = Ok(());
+        let mut completions : VecDeque<u64> = VecDeque::new();
 
         /*
-          TODO:
-            unacked_operations: apply offline queue policy to subscribe/unsubscribe
+         * high priority operations are processed as follows:
+         *
+         *   puback, pingreq, pubrec, pubcomp, disconnect can all be failed without consequence
+         *
+         *   pubrel is moved to the resubmit queue
          */
+        mem::swap(&mut completions, &mut self.high_priority_operation_queue);
+        let (mut pubrels, mut failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
+
+        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(failures.into_iter(), Mqtt5Error::ConnectionClosed));
+        self.resubmit_operation_queue.append(&mut pubrels);
+
+        /*
+         * write completion pending operations can be processed immediately and either failed
+         * if they fail the offline queue policy or re-queued
+         */
+        let mut completions : VecDeque<u64> = VecDeque::new();
+        mem::swap(&mut completions, &mut self.pending_write_completion_operations);
+
+        let (mut retained, mut rejected) = self.partition_operation_queue_by_queue_policy(&completions, &self.config.offline_queue_policy);
+
+        /* keep the ones that pass policy (qos 0 publish under once case) */
+        self.user_operation_queue.append(&mut retained);
+
+        /* fail everything else */
+        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected.into_iter(), Mqtt5Error::ConnectionClosed));
+
+        /*
+         * unacked operations are processed as follows:
+         *
+         *   subscribes and unsubscribes have the offline queue policy applied.  If they fail, the
+         *   operation is failed, otherwise it gets put back in the user queue
+         *
+         *   publish and pubrel get moved to the resubmit queue.  They'll be re-checked on the
+         *   next successful connection and either have the offline queue policy applied (if no
+         *   session is found) or stay in the resubmit queue.
+         */
+        let mut unacked_table = HashMap::new();
+        mem::swap(&mut unacked_table, &mut self.pending_ack_operations);
+
+        let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(key, val)| { val }));
+        self.resubmit_operation_queue.append(&mut resubmit);
+
+        let (mut retained_unacked, mut rejected_unacked) = self.partition_operation_queue_by_queue_policy(&offline, &self.config.offline_queue_policy);
+        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected_unacked.into_iter(), Mqtt5Error::ConnectionClosed));
+        self.user_operation_queue.append(&mut retained_unacked);
 
         result
     }
@@ -363,7 +455,7 @@ impl OperationalState {
     fn handle_network_event_write_completion(&mut self) -> Mqtt5Result<()> {
         self.pending_write_completion = false;
 
-        let mut completions : Vec<u64> = Vec::new();
+        let mut completions : VecDeque<u64> = VecDeque::new();
         mem::swap(&mut completions, &mut self.pending_write_completion_operations);
         let result : Mqtt5Result<()> = self.complete_operation_sequence_as_empty_success(completions.iter().copied());
 
@@ -428,7 +520,7 @@ impl OperationalState {
             }
             MqttPacket::Publish(publish) => {
                 if publish.qos == QualityOfService::AtMostOnce {
-                    self.pending_write_completion_operations.push(operation.id);
+                    self.pending_write_completion_operations.push_back(operation.id);
                 } else {
                     self.pending_ack_operations.insert(publish.packet_id, operation.id);
                     self.pending_publish_count += 1;
@@ -438,7 +530,7 @@ impl OperationalState {
                 self.pending_ack_operations.insert(pubrel.packet_id, operation.id);
             }
             _ => {
-                self.pending_write_completion_operations.push(operation.id);
+                self.pending_write_completion_operations.push_back(operation.id);
             }
         }
 
@@ -582,26 +674,64 @@ impl OperationalState {
         self.next_ping_timepoint = Some(*current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
     }
 
+    fn unbind_operation_packet_id(&mut self, id: u64) {
+        if let Some(operation) = self.operations.get_mut(&id) {
+            if let Some(packet_id) = operation.packet_id {
+                self.allocated_packet_ids.remove(&packet_id);
+                operation.packet_id = None;
+
+                match &mut *operation.packet {
+                    MqttPacket::Subscribe(subscribe) => {
+                        subscribe.packet_id = 0;
+                    }
+                    MqttPacket::Unsubscribe(unsubscribe) => {
+                        unsubscribe.packet_id = 0;
+                    }
+                    MqttPacket::Publish(publish) => {
+                        publish.packet_id = 0;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
-        let mut unacked_operations : Vec<(u16, u64)> = self.pending_ack_operations.iter().map(|(key, val)| (*key, *val)).collect();
-        self.pending_ack_operations.clear();
+        let mut result = Ok(());
 
-        unacked_operations.sort_by(|a, b| a.1.cmp(&(b.1)));
+        if !session_present {
+            /*
+             * No session.  Everything in the resubmit queue should be checked against the offline
+             * policy and either failed or moved to the user queue.
+             */
+            let mut resubmit = VecDeque::new();
+            std::mem::swap(&mut resubmit, &mut self.resubmit_operation_queue);
 
-        if session_present {
-            // TODO: unacked operations: qos 1+ publishes, pubrel to resubmit queue maintaining order
-        } else {
-            // TODO: unacked operations: apply offline queue policy
+            let (mut retained, mut rejected) = self.partition_operation_queue_by_queue_policy(&resubmit, &self.config.offline_queue_policy);
+
+            /* keep the ones that pass policy */
+            self.user_operation_queue.append(&mut retained);
+
+            /* fail everything else */
+            result = self.complete_operation_sequence_as_failure(rejected.into_iter(), Mqtt5Error::OfflineQueuePolicyFailed);
 
             self.qos2_incomplete_incoming_publishes.clear();
+            self.allocated_packet_ids.clear();
         }
 
-        /*
-          TODO: unacked operations: remaining to front of user queue maintaining order
-          TODO: user operations: unbind packet ids
-         */
+        let mut user_queue = VecDeque::new();
+        std::mem::swap(&mut user_queue, &mut self.user_operation_queue);
+        user_queue.iter().for_each(|id| { self.unbind_operation_packet_id(*id)});
+        self.user_operation_queue = user_queue;
 
-        Ok(())
+        sort_operation_deque(&mut self.resubmit_operation_queue);
+        sort_operation_deque(&mut self.user_operation_queue);
+
+        assert!(self.high_priority_operation_queue.is_empty());
+        assert!(self.pending_ack_operations.is_empty());
+        assert!(self.pending_write_completion_operations.is_empty());
+
+        result
     }
 
     fn handle_connack(&mut self, packet: &ConnackPacket, current_time: &Instant) -> Mqtt5Result<()> {
@@ -1172,21 +1302,26 @@ fn does_packet_pass_offline_queue_policy(packet: &MqttPacket, policy: &OfflineQu
                 _ => { true }
             }
         }
-        _ => { true }
+        _ => { false }
     }
 }
 
-fn partition_operations_by_queue_policy<'a, T>(iterator: T, policy: &OfflineQueuePolicy) -> (Vec<u64>, Vec<u64>) where T : Iterator<Item = (u64, &'a MqttPacket)> {
-    let mut retained : Vec<u64> = Vec::new();
-    let mut filtered : Vec<u64> = Vec::new();
+fn partition_operations_by_queue_policy<'a, T>(iterator: T, policy: &OfflineQueuePolicy) -> (VecDeque<u64>, VecDeque<u64>) where T : Iterator<Item = (u64, &'a MqttPacket)> {
+    let mut retained : VecDeque<u64> = VecDeque::new();
+    let mut filtered : VecDeque<u64> = VecDeque::new();
 
     iterator.for_each(|(id, packet)| {
         if does_packet_pass_offline_queue_policy(packet, policy) {
-            retained.push(id);
+            retained.push_back(id);
         } else {
-            filtered.push(id);
+            filtered.push_back(id);
         }
     });
 
     (retained, filtered)
+}
+
+fn sort_operation_deque(operations: &mut VecDeque<u64>) {
+    operations.rotate_right(operations.as_slices().1.len());
+    operations.as_mut_slices().0.sort();
 }
