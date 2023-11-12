@@ -75,7 +75,7 @@ fn get_suback_packet_user_property(packet: &MqttPacket, index: usize) -> &UserPr
 pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, suback_property_length) = compute_suback_packet_length_properties(packet)?;
 
-    encode_integral_expression!(steps, Uint8, PACKET_TYPE_SUBACK << 4);
+    encode_integral_expression!(steps, Uint8, SUBACK_FIRST_BYTE);
     encode_integral_expression!(steps, Vli, total_remaining_length);
 
     encode_integral_expression!(steps, Uint16, packet.packet_id);
@@ -113,7 +113,7 @@ fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -
 }
 
 pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
-    if first_byte != (PACKET_TYPE_SUBACK << 4) {
+    if first_byte != SUBACK_FIRST_BYTE {
         error!("SubackPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }

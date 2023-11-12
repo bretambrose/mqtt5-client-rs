@@ -49,10 +49,10 @@ define_ack_packet_reason_string_accessor!(get_pubrel_packet_reason_string, Pubre
 define_ack_packet_user_property_accessor!(get_pubrel_packet_user_property, Pubrel);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(write_pubrel_encoding_steps, PubrelPacket, PubrelReasonCode, PACKET_TYPE_PUBREL, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubrel_encoding_steps, PubrelPacket, PubrelReasonCode, PUBREL_FIRST_BYTE, compute_pubrel_packet_length_properties, get_pubrel_packet_reason_string, get_pubrel_packet_user_property);
 
 define_ack_packet_decode_properties_function!(decode_pubrel_properties, PubrelPacket, "Pubrel");
-define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, "Pubrel", PACKET_TYPE_PUBREL, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
+define_ack_packet_decode_function!(decode_pubrel_packet, Pubrel, PubrelPacket, "Pubrel", PUBREL_FIRST_BYTE, convert_u8_to_pubrel_reason_code, decode_pubrel_properties);
 
 validate_ack_outbound!(validate_pubrel_packet_outbound, PubrelPacket, Mqtt5Error::PubrelPacketValidation, "Pubrel");
 validate_ack_outbound_internal!(validate_pubrel_packet_outbound_internal, PubrelPacket, PubrelPacketValidation, compute_pubrel_packet_length_properties, "Pubrel");

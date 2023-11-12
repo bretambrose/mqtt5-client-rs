@@ -329,9 +329,9 @@ macro_rules! define_ack_packet_decode_properties_function {
 pub(crate) use define_ack_packet_decode_properties_function;
 
 macro_rules! define_ack_packet_decode_function {
-    ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_as_string: expr, $packet_type_value: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
+    ($function_name: ident, $mqtt_packet_type:ident, $packet_type: ident, $packet_type_as_string: expr, $first_byte: expr, $reason_code_converter_function_name: ident, $decode_properties_function_name: ident) => {
         pub(crate) fn $function_name(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
-            if first_byte != ($packet_type_value << 4) {
+            if first_byte != $first_byte {
                 error!("{}Packet Decode - invalid first byte", $packet_type_as_string);
                 return Err(Mqtt5Error::MalformedPacket);
             }
