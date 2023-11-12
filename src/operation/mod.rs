@@ -65,7 +65,7 @@ pub(crate) enum NetworkEvent<'a> {
 pub(crate) struct NetworkEventContext<'a> {
     event: NetworkEvent<'a>,
     current_time: Instant,
-    connection_packets: &'a mut VecDeque<Box<MqttPacket>>,
+    events: &'a mut VecDeque<Arc<ClientEvent>>,
 }
 
 pub(crate) enum UserEvent {
@@ -345,6 +345,12 @@ impl OperationalState {
         }
 
         let operation = operation_option.unwrap();
+        if let MqttPacket::Publish(publish) = &*operation.packet {
+            if publish.qos != QualityOfService::AtMostOnce {
+                self.pending_publish_count -= 1;
+            }
+        }
+
         if let Some(packet_id) = operation.packet_id {
             self.allocated_packet_ids.remove(&packet_id);
             self.pending_ack_operations.remove(&packet_id);
@@ -469,6 +475,7 @@ impl OperationalState {
         self.operation_ack_timeouts.clear();
 
         let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(key, val)| { val }));
+        resubmit.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, true) });
         self.resubmit_operation_queue.append(&mut resubmit);
 
         let (mut retained_unacked, mut rejected_unacked) = self.partition_operation_queue_by_queue_policy(&offline, &self.config.offline_queue_policy);
@@ -800,6 +807,14 @@ impl OperationalState {
         }
     }
 
+    fn set_publish_duplicate_flag(&mut self, id: u64, value: bool) {
+        if let Some(operation) = self.operations.get_mut(&id) {
+            if let MqttPacket::Publish(publish) = &mut *operation.packet {
+                publish.duplicate = value;
+            }
+        }
+    }
+
     fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
         let mut result = Ok(());
 
@@ -814,6 +829,7 @@ impl OperationalState {
             let (mut retained, mut rejected) = self.partition_operation_queue_by_queue_policy(&resubmit, &self.config.offline_queue_policy);
 
             /* keep the ones that pass policy */
+            retained.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, false) });
             self.user_operation_queue.append(&mut retained);
 
             /* fail everything else */
@@ -840,20 +856,23 @@ impl OperationalState {
     }
 
     fn handle_connack(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
-        if let MqttPacket::Connack(connack) = &*packet {
+        if let MqttPacket::Connack(connack) = *packet {
             if self.state != OperationalStateType::PendingConnack {
                 return Err(Mqtt5Error::ProtocolError);
             }
 
             if connack.reason_code != ConnectReasonCode::Success {
-                context.connection_packets.push_back(packet);
+                context.events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
+                    error: Mqtt5Error::ConnectionRejected,
+                    connack: Some(connack)
+                })));
                 return Err(Mqtt5Error::ConnectionRejected);
             }
 
-            validate_connack_packet_inbound_internal(connack)?;
+            validate_connack_packet_inbound_internal(&connack)?;
 
             self.state = OperationalStateType::Connected;
-            self.current_settings = Some(build_negotiated_settings(&self.config, connack, &self.current_settings));
+            self.current_settings = Some(build_negotiated_settings(&self.config, &connack, &self.current_settings));
             self.connack_timeout_timepoint = None;
             self.outbound_alias_resolver.borrow_mut().reset_for_new_connection(connack.topic_alias_maximum.unwrap_or(0));
             self.inbound_alias_resolver.reset_for_new_connection();
@@ -862,7 +881,11 @@ impl OperationalState {
 
             self.apply_session_present_to_connection(connack.session_present)?;
 
-            context.connection_packets.push_back(packet);
+            context.events.push_back(Arc::new(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
+                connack,
+                settings: self.current_settings.as_ref().unwrap().clone()
+            })));
+
             return Ok(());
         }
 
@@ -1028,11 +1051,11 @@ impl OperationalState {
         Err(Mqtt5Error::ProtocolError)
     }
 
-    fn publish_received_callback_stub(&self, publish: Arc<PublishPacket>) {
+    fn publish_received_callback_stub(&self, publish: Box<PublishPacket>) {
         // TODO, possibly wait until we refactor MqttPacket again =/
     }
 
-    fn handle_publish(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_publish(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -1041,17 +1064,20 @@ impl OperationalState {
         }
 
         if let MqttPacket::Publish(publish) = *packet {
-            let arc_publish = Arc::new(publish);
-            let packet_id = arc_publish.packet_id;
-            let qos = arc_publish.qos;
+            let packet_id = publish.packet_id;
+            let qos = publish.qos;
             match qos {
                 QualityOfService::AtMostOnce => {
-                    self.publish_received_callback_stub(arc_publish);
+                    context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                        publish
+                    })));
                     return Ok(());
                 }
 
                 QualityOfService::AtLeastOnce => {
-                    self.publish_received_callback_stub(arc_publish);
+                    context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                        publish
+                    })));
 
                     let puback = Box::new(MqttPacket::Puback(PubackPacket{
                         packet_id,
@@ -1066,7 +1092,9 @@ impl OperationalState {
 
                 QualityOfService::ExactlyOnce => {
                     if !self.qos2_incomplete_incoming_publishes.contains(&packet_id) {
-                        self.publish_received_callback_stub(arc_publish);
+                        context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                            publish
+                        })));
                         self.qos2_incomplete_incoming_publishes.insert(packet_id);
                     }
 
@@ -1087,8 +1115,11 @@ impl OperationalState {
     }
 
     fn handle_disconnect(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
-        if let MqttPacket::Disconnect(disconnect) = &*packet {
-            context.connection_packets.push_back(packet);
+        if let MqttPacket::Disconnect(disconnect) = *packet {
+            context.events.push_back(Arc::new(ClientEvent::Disconnection(DisconnectionEvent{
+                error: Mqtt5Error::ServerSideDisconnect,
+                disconnect: Some(disconnect)
+            })));
 
             return Err(Mqtt5Error::ServerSideDisconnect);
         }
@@ -1099,7 +1130,7 @@ impl OperationalState {
     fn handle_packet(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match &*packet {
             MqttPacket::Connack(_) => { self.handle_connack(packet, context) }
-            MqttPacket::Publish(_) => { self.handle_publish(packet) }
+            MqttPacket::Publish(_) => { self.handle_publish(packet, context) }
             MqttPacket::Pingresp(_) => { self.handle_pingresp() }
             MqttPacket::Disconnect(_) => { self.handle_disconnect(packet, context) }
             MqttPacket::Suback(_) => { self.handle_suback(packet) }
