@@ -15,7 +15,7 @@ use crate::spec::*;
 use crate::spec::connack::validate_connack_packet_inbound_internal;
 
 use std::cell::RefCell;
-use std::cmp::min;
+use std::cmp::{min, Ordering, Reverse};
 use std::collections::*;
 use std::mem;
 use std::time::*;
@@ -132,6 +132,24 @@ enum OperationResponse {
     Disconnect
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct OperationTimeoutRecord {
+    id: u64,
+    timeout: Instant
+}
+
+impl PartialOrd for OperationTimeoutRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.timeout.cmp(&other.timeout))
+    }    
+}
+
+impl Ord for OperationTimeoutRecord {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timeout.cmp(&other.timeout)
+    }
+}
+
 pub(crate) struct OperationalState {
     config: OperationalStateConfig,
 
@@ -140,6 +158,8 @@ pub(crate) struct OperationalState {
     pending_write_completion: bool,
 
     operations: HashMap<u64, MqttOperation>,
+
+    operation_ack_timeouts: BinaryHeap<Reverse<OperationTimeoutRecord>>,
 
     user_operation_queue: VecDeque<u64>,
     resubmit_operation_queue: VecDeque<u64>,
@@ -182,6 +202,7 @@ impl OperationalState {
             state: OperationalStateType::Disconnected,
             pending_write_completion : false,
             operations: HashMap::new(),
+            operation_ack_timeouts: BinaryHeap::new(),
             user_operation_queue: VecDeque::new(),
             resubmit_operation_queue: VecDeque::new(),
             high_priority_operation_queue: VecDeque::new(),
@@ -342,6 +363,7 @@ impl OperationalState {
         let operation = operation_option.unwrap();
         if let Some(packet_id) = operation.packet_id {
             self.allocated_packet_ids.remove(&packet_id);
+            self.pending_ack_operations.remove(&packet_id);
         }
 
         if operation.options.is_none() {
@@ -441,6 +463,7 @@ impl OperationalState {
          */
         let mut unacked_table = HashMap::new();
         mem::swap(&mut unacked_table, &mut self.pending_ack_operations);
+        self.operation_ack_timeouts.clear();
 
         let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(key, val)| { val }));
         self.resubmit_operation_queue.append(&mut resubmit);
@@ -508,7 +531,82 @@ impl OperationalState {
         OutboundAliasResolution{ ..Default::default() }
     }
 
-    fn on_current_operation_fully_written(&mut self) -> () {
+    fn get_next_ack_timeout(&mut self, now: Instant) -> Option<Option<u64>> {
+        if let Some(reverse_record) = self.operation_ack_timeouts.peek() {
+            if reverse_record.0.timeout <= now {
+                let record = self.operation_ack_timeouts.pop().unwrap().0;
+                if let Some(operation) = self.operations.get(&record.id) {
+                    if operation.timeout == Some(record.timeout) {
+                        return Some(Some(record.id));
+                    }
+                }
+
+                return Some(None);
+            }
+        }
+
+        None
+    }
+
+    fn process_ack_timeouts(&mut self, now: Instant) -> Mqtt5Result<()> {
+        let mut result = Ok(());
+
+        while let Some(id_option) = self.get_next_ack_timeout(now) {
+            if let Some(id) = id_option {
+                result = fold_mqtt5_result(result, self.complete_operation_as_failure(id, Mqtt5Error::AckTimeout));
+            }
+        }
+
+        result
+    }
+
+    fn get_operation_timeout_duration(&self, operation: &MqttOperation, now: Instant) -> Option<Duration> {
+        match &operation.options {
+            Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => {
+                if let Some(timeout) = unsubscribe_options.options.timeout_in_millis {
+                    return Some(Duration::from_millis(timeout as u64));
+                }
+            }
+            Some(MqttOperationOptions::Subscribe(subscribe_options)) => {
+                if let Some(timeout) = subscribe_options.options.timeout_in_millis {
+                    return Some(Duration::from_millis(timeout as u64));
+                }
+            }
+            Some(MqttOperationOptions::Publish(publish_options)) => {
+                if let Some(timeout) = publish_options.options.timeout_in_millis {
+                    return Some(Duration::from_millis(timeout as u64));
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn start_operation_ack_timeout(&mut self, id: u64, now: Instant) {
+        let mut timeout_duration_option : Option<Duration> = None;
+        if let Some(operation) = self.operations.get(&id) {
+            timeout_duration_option = self.get_operation_timeout_duration(operation, now);
+        }
+
+        if let Some(operation) = self.operations.get_mut(&id) {
+            operation.timeout = None;
+
+            if let Some(timeout_duration) = timeout_duration_option {
+                let timeout = now + timeout_duration;
+                operation.timeout = Some(timeout);
+
+                let timeout_record = OperationTimeoutRecord {
+                    id,
+                    timeout
+                };
+
+                self.operation_ack_timeouts.push(Reverse(timeout_record));
+            }
+        }
+    }
+
+    fn on_current_operation_fully_written(&mut self, now: Instant) -> () {
         let operation = self.operations.get(&self.current_operation.unwrap()).unwrap();
         let packet = &*operation.packet;
         match packet {
@@ -533,6 +631,9 @@ impl OperationalState {
                 self.pending_write_completion_operations.push_back(operation.id);
             }
         }
+
+        let id = operation.id;
+        self.start_operation_ack_timeout(id, now);
 
         self.current_operation = None;
     }
@@ -566,7 +667,7 @@ impl OperationalState {
 
             let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
             if encode_result == EncodeResult::Complete {
-                self.on_current_operation_fully_written();
+                self.on_current_operation_fully_written(context.current_time);
             } else {
                 return Ok(())
             }
@@ -607,11 +708,14 @@ impl OperationalState {
 
         self.service_queue(context, OperationalQueueServiceMode::All)?;
 
+        self.process_ack_timeouts(context.current_time)?;
+
         Ok(())
     }
 
     fn service_pending_disconnect(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
         self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
+        self.process_ack_timeouts(context.current_time)?;
 
         Ok(())
     }
@@ -650,6 +754,10 @@ impl OperationalState {
             next_service_time = min(next_service_time, *ping_timeout);
         }
 
+        if let Some(ack_timeout) = self.operation_ack_timeouts.peek() {
+            next_service_time = min(next_service_time, ack_timeout.0.timeout);
+        }
+
         // TODO simplify?
 
         if self.pending_write_completion {
@@ -664,7 +772,11 @@ impl OperationalState {
     }
 
     fn get_next_service_timepoint_pending_disconnect(&self, current_time: &Instant) -> Instant {
-        let next_service_time = *current_time + Duration::from_secs(u64::MAX);
+        let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
+
+        if let Some(ack_timeout) = self.operation_ack_timeouts.peek() {
+            next_service_time = min(next_service_time, ack_timeout.0.timeout);
+        }
 
         min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
     }
@@ -729,6 +841,7 @@ impl OperationalState {
 
         assert!(self.high_priority_operation_queue.is_empty());
         assert!(self.pending_ack_operations.is_empty());
+        assert!(self.operation_ack_timeouts.is_empty());
         assert!(self.pending_write_completion_operations.is_empty());
 
         result

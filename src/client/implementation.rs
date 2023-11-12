@@ -62,20 +62,6 @@ macro_rules! client_mqtt_operation_body {
 
 pub(crate) use client_mqtt_operation_body;
 
-macro_rules! client_listener_operation_body {
-    ($listener_operation:ident, $self:ident) => {{
-        match $self
-            .operation_sender
-            .try_send(OperationOptions::$listener_operation())
-        {
-            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
-            _ => Ok(()),
-        }
-    }};
-}
-
-pub(crate) use client_listener_operation_body;
-
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
     pub response_sender: Option<oneshot::Sender<PublishResult>>,
