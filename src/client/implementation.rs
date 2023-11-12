@@ -8,7 +8,6 @@ extern crate tokio;
 use std::collections::HashMap;
 use std::time::Instant;
 use crate::*;
-use crate::alias::*;
 use crate::client::*;
 use crate::operation::*;
 use crate::spec::*;
@@ -109,7 +108,7 @@ impl Mqtt5ClientImpl {
     }
 
     pub(crate) fn broadcast_event(&self, event: Arc<ClientEvent>) {
-        for (id, listener) in &self.listeners {
+        for (_, listener) in &self.listeners {
             match listener {
                 ClientEventListener::Channel(channel) => {
                     channel.send(event.clone()).unwrap();

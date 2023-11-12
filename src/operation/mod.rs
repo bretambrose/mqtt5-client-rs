@@ -32,7 +32,6 @@ pub(crate) struct MqttOperation {
     packet: Box<MqttPacket>,
     packet_id: Option<u16>,
     options: Option<MqttOperationOptions>,
-    timeout: Option<Instant>,
 }
 
 impl MqttOperation {
@@ -65,6 +64,7 @@ pub(crate) enum NetworkEvent<'a> {
 pub(crate) struct NetworkEventContext<'a> {
     event: NetworkEvent<'a>,
     current_time: Instant,
+    connection_packets: &'a mut VecDeque<Box<MqttPacket>>,
 }
 
 pub(crate) enum UserEvent {
@@ -536,9 +536,7 @@ impl OperationalState {
             if reverse_record.0.timeout <= now {
                 let record = self.operation_ack_timeouts.pop().unwrap().0;
                 if let Some(operation) = self.operations.get(&record.id) {
-                    if operation.timeout == Some(record.timeout) {
-                        return Some(Some(record.id));
-                    }
+                    return Some(Some(record.id));
                 }
 
                 return Some(None);
@@ -590,11 +588,8 @@ impl OperationalState {
         }
 
         if let Some(operation) = self.operations.get_mut(&id) {
-            operation.timeout = None;
-
             if let Some(timeout_duration) = timeout_duration_option {
                 let timeout = now + timeout_duration;
-                operation.timeout = Some(timeout);
 
                 let timeout_record = OperationTimeoutRecord {
                     id,
@@ -1204,14 +1199,11 @@ impl OperationalState {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
 
-        let timeout = calculate_operation_timeout_from_options(current_time, &options);
-
         let operation = MqttOperation {
             id,
             packet,
             packet_id: None,
-            options,
-            timeout
+            options
         };
 
         self.operations.insert(id, operation);
@@ -1313,33 +1305,6 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
         rejoined_session : packet.session_present,
         client_id : final_client_id_ref.clone()
     }
-}
-
-fn calculate_operation_timeout_from_options(current_time: Instant, options: &Option<MqttOperationOptions>) -> Option<Instant> {
-    if let Some(operation_options) = options {
-        let mut timeout_duration_millis : Option<u32> = None;
-
-        match operation_options {
-            MqttOperationOptions::Subscribe(subscribe_options) => {
-                timeout_duration_millis = subscribe_options.options.timeout_in_millis;
-            }
-            MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
-                timeout_duration_millis = unsubscribe_options.options.timeout_in_millis;
-            }
-            MqttOperationOptions::Publish(publish_options) => {
-                timeout_duration_millis = publish_options.options.timeout_in_millis;
-            }
-            _ => {}
-        }
-
-        if timeout_duration_millis.is_none() {
-            return None;
-        }
-
-        return Some(current_time + Duration::from_millis(timeout_duration_millis.unwrap() as u64));
-    }
-
-    None
 }
 
 fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
