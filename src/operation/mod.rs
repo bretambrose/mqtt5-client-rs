@@ -515,6 +515,22 @@ impl OperationalState {
         Ok(())
     }
 
+    fn does_operation_pass_receive_maximum_flow_control(&self, id: u64) -> bool {
+        if let Some(settings) = &self.current_settings {
+            if self.pending_publish_count >= settings.receive_maximum_from_server {
+                if let Some(operation) = self.operations.get(&id) {
+                    if let MqttPacket::Publish(publish) = &*operation.packet {
+                        if publish.qos != QualityOfService::AtMostOnce {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
     fn dequeue_operation(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Option<u64> {
         if !self.high_priority_operation_queue.is_empty() {
             return Some(self.high_priority_operation_queue.pop_front().unwrap());
@@ -522,11 +538,19 @@ impl OperationalState {
 
         if mode != OperationalQueueServiceMode::HighPriorityOnly {
             if !self.resubmit_operation_queue.is_empty() {
-                return Some(self.resubmit_operation_queue.pop_front().unwrap());
+                if self.does_operation_pass_receive_maximum_flow_control(*self.resubmit_operation_queue.front().unwrap()) {
+                    return Some(self.resubmit_operation_queue.pop_front().unwrap());
+                } else {
+                    return None;
+                }
             }
 
             if !self.user_operation_queue.is_empty() {
-                return Some(self.user_operation_queue.pop_front().unwrap());
+                if self.does_operation_pass_receive_maximum_flow_control(*self.user_operation_queue.front().unwrap()) {
+                    return Some(self.user_operation_queue.pop_front().unwrap());
+                } else {
+                    return None;
+                }
             }
         }
 
@@ -730,6 +754,26 @@ impl OperationalState {
         }
 
         if mode == OperationalQueueServiceMode::All {
+            /* receive_maximum flow control check */
+            if let Some(settings) = &self.current_settings {
+                if self.pending_publish_count >= settings.receive_maximum_from_server {
+                    let mut head = self.resubmit_operation_queue.front();
+                    if head.is_none() {
+                        head = self.user_operation_queue.front();
+                    }
+
+                    if let Some(head_id) = head {
+                        if let Some(operation) = self.operations.get(head_id) {
+                            if let MqttPacket::Publish(publish) = &*operation.packet {
+                                if publish.qos != QualityOfService::AtMostOnce {
+                                    return forever;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if !self.resubmit_operation_queue.is_empty() || !self.user_operation_queue.is_empty() {
                 return *current_time;
             }
