@@ -14,6 +14,8 @@ use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::connack::validate_connack_packet_inbound_internal;
 
+use log::*;
+
 use std::cell::RefCell;
 use std::cmp::{min, Ordering, Reverse};
 use std::collections::*;
@@ -289,7 +291,7 @@ impl OperationalState {
 
     fn should_retain_high_priority_operation(&self, id: u64) -> bool {
         if let Some(operation) = self.operations.get(&id) {
-            if let MqttPacket::Pubrel(packet) = &*operation.packet {
+            if let MqttPacket::Pubrel(_) = &*operation.packet {
                 return true;
             }
         }
@@ -440,7 +442,7 @@ impl OperationalState {
          *   pubrel is moved to the resubmit queue
          */
         mem::swap(&mut completions, &mut self.high_priority_operation_queue);
-        let (mut pubrels, mut failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
+        let (mut pubrels, failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
 
         result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(failures.into_iter(), Mqtt5Error::ConnectionClosed));
         self.resubmit_operation_queue.append(&mut pubrels);
@@ -452,7 +454,7 @@ impl OperationalState {
         let mut completions : VecDeque<u64> = VecDeque::new();
         mem::swap(&mut completions, &mut self.pending_write_completion_operations);
 
-        let (mut retained, mut rejected) = self.partition_operation_queue_by_queue_policy(&completions, &self.config.offline_queue_policy);
+        let (mut retained, rejected) = self.partition_operation_queue_by_queue_policy(&completions, &self.config.offline_queue_policy);
 
         /* keep the ones that pass policy (qos 0 publish under once case) */
         self.user_operation_queue.append(&mut retained);
@@ -474,11 +476,11 @@ impl OperationalState {
         mem::swap(&mut unacked_table, &mut self.pending_ack_operations);
         self.operation_ack_timeouts.clear();
 
-        let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(key, val)| { val }));
+        let (mut resubmit, offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(_, val)| { val }));
         resubmit.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, true) });
         self.resubmit_operation_queue.append(&mut resubmit);
 
-        let (mut retained_unacked, mut rejected_unacked) = self.partition_operation_queue_by_queue_policy(&offline, &self.config.offline_queue_policy);
+        let (mut retained_unacked, rejected_unacked) = self.partition_operation_queue_by_queue_policy(&offline, &self.config.offline_queue_policy);
         result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected_unacked.into_iter(), Mqtt5Error::ConnectionClosed));
         self.user_operation_queue.append(&mut retained_unacked);
 
@@ -531,7 +533,7 @@ impl OperationalState {
         true
     }
 
-    fn dequeue_operation(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Option<u64> {
+    fn dequeue_operation(&mut self, mode: OperationalQueueServiceMode) -> Option<u64> {
         if !self.high_priority_operation_queue.is_empty() {
             return Some(self.high_priority_operation_queue.pop_front().unwrap());
         }
@@ -586,7 +588,7 @@ impl OperationalState {
         result
     }
 
-    fn get_operation_timeout_duration(&self, operation: &MqttOperation, now: Instant) -> Option<Duration> {
+    fn get_operation_timeout_duration(&self, operation: &MqttOperation) -> Option<Duration> {
         match &operation.options {
             Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => {
                 if let Some(timeout) = unsubscribe_options.options.timeout_in_millis {
@@ -612,20 +614,18 @@ impl OperationalState {
     fn start_operation_ack_timeout(&mut self, id: u64, now: Instant) {
         let mut timeout_duration_option : Option<Duration> = None;
         if let Some(operation) = self.operations.get(&id) {
-            timeout_duration_option = self.get_operation_timeout_duration(operation, now);
+            timeout_duration_option = self.get_operation_timeout_duration(operation);
         }
 
-        if let Some(operation) = self.operations.get_mut(&id) {
-            if let Some(timeout_duration) = timeout_duration_option {
-                let timeout = now + timeout_duration;
+        if let Some(timeout_duration) = timeout_duration_option {
+            let timeout = now + timeout_duration;
 
-                let timeout_record = OperationTimeoutRecord {
-                    id,
-                    timeout
-                };
+            let timeout_record = OperationTimeoutRecord {
+                id,
+                timeout
+            };
 
-                self.operation_ack_timeouts.push(Reverse(timeout_record));
-            }
+            self.operation_ack_timeouts.push(Reverse(timeout_record));
         }
     }
 
@@ -664,7 +664,7 @@ impl OperationalState {
     fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
         loop {
             if self.current_operation.is_none() {
-                self.current_operation = self.dequeue_operation(context, mode);
+                self.current_operation = self.dequeue_operation(mode);
                 if self.current_operation.is_none() {
                     return Ok(())
                 }
@@ -870,7 +870,7 @@ impl OperationalState {
             let mut resubmit = VecDeque::new();
             std::mem::swap(&mut resubmit, &mut self.resubmit_operation_queue);
 
-            let (mut retained, mut rejected) = self.partition_operation_queue_by_queue_policy(&resubmit, &self.config.offline_queue_policy);
+            let (mut retained, rejected) = self.partition_operation_queue_by_queue_policy(&resubmit, &self.config.offline_queue_policy);
 
             /* keep the ones that pass policy */
             retained.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, false) });
@@ -939,7 +939,7 @@ impl OperationalState {
     fn handle_pingresp(&mut self) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
-                if let Some(ping_timeout) = &self.ping_timeout_timepoint {
+                if let Some(_) = &self.ping_timeout_timepoint {
                     self.ping_timeout_timepoint = None;
                     self.schedule_ping(&self.next_ping_timepoint.unwrap());
                     Ok(())
@@ -1093,10 +1093,6 @@ impl OperationalState {
         }
 
         Err(Mqtt5Error::ProtocolError)
-    }
-
-    fn publish_received_callback_stub(&self, publish: Box<PublishPacket>) {
-        // TODO, possibly wait until we refactor MqttPacket again =/
     }
 
     fn handle_publish(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
