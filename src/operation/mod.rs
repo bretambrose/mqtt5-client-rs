@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate log;
 
 use crate::*;
 use crate::alias::*;
@@ -13,12 +14,14 @@ use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::connack::validate_connack_packet_inbound_internal;
+use crate::spec::utils::*;
 
 use log::*;
 
 use std::cell::RefCell;
 use std::cmp::{min, Ordering, Reverse};
 use std::collections::*;
+use std::fmt::*;
 use std::mem;
 use std::sync::Arc;
 use std::time::*;
@@ -42,16 +45,40 @@ impl MqttOperation {
         self.packet_id = Some(packet_id);
         match &mut *self.packet {
             MqttPacket::Subscribe(subscribe) => {
+                debug!("Subscribe operation {} binding to packet id {}", self.id, packet_id);
                 subscribe.packet_id = packet_id;
             }
             MqttPacket::Unsubscribe(unsubscribe) => {
+                debug!("Unsubscribe operation {} binding to packet id {}", self.id, packet_id);
                 unsubscribe.packet_id = packet_id;
             }
             MqttPacket::Publish(publish) => {
+                debug!("Publish operation {} binding to packet id {}", self.id, packet_id);
                 publish.packet_id = packet_id;
             }
             _ => {
                 panic!("Invalid packet type for packet id binding");
+            }
+        }
+    }
+
+    pub fn unbind_packet_id(&mut self) -> () {
+        self.packet_id = None;
+        match &mut *self.packet {
+            MqttPacket::Subscribe(subscribe) => {
+                debug!("Subscribe operation {} unbinding packet id", self.id);
+                subscribe.packet_id = 0;
+            }
+            MqttPacket::Unsubscribe(unsubscribe) => {
+                debug!("Unsubscribe operation {} unbinding packet id", self.id);
+                unsubscribe.packet_id = 0;
+            }
+            MqttPacket::Publish(publish) => {
+                debug!("Publish operation {} unbinding packet id", self.id);
+                publish.packet_id = 0;
+            }
+            _ => {
+                panic!("Invalid packet type for packet id unbinding");
             }
         }
     }
@@ -87,12 +114,23 @@ pub(crate) struct ServiceContext<'a> {
     current_time: Instant,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum OperationalStateType {
     Disconnected,
     PendingConnack,
     Connected,
     PendingDisconnect,
+}
+
+impl Display for OperationalStateType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            OperationalStateType::Disconnected => { write!(f, "Disconnected") }
+            OperationalStateType::PendingConnack => { write!(f, "PendingConnack") }
+            OperationalStateType::Connected => { write!(f, "Connected") }
+            OperationalStateType::PendingDisconnect => { write!(f, "PendingDisconnect") }
+        }
+    }
 }
 
 pub(crate) struct OperationalStateConfig {
@@ -109,11 +147,21 @@ pub(crate) struct OperationalStateConfig {
     pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum OperationalQueueType {
     User,
     Resubmit,
     HighPriority,
+}
+
+impl Display for OperationalQueueType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            OperationalQueueType::User => { write!(f, "User") }
+            OperationalQueueType::Resubmit => { write!(f, "Resubmit") }
+            OperationalQueueType::HighPriority => { write!(f, "HighPriority") }
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -122,10 +170,19 @@ enum OperationalQueueServiceMode {
     HighPriorityOnly,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum OperationalEnqueuePosition {
     Front,
     Back
+}
+
+impl Display for OperationalEnqueuePosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperationalEnqueuePosition::Front => { write!(f, "Front") }
+            OperationalEnqueuePosition::Back => { write!(f, "Back") }
+        }
+    }
 }
 
 enum OperationResponse {
@@ -157,6 +214,9 @@ pub(crate) struct OperationalState {
     config: OperationalStateConfig,
 
     state: OperationalStateType,
+
+    current_time: Instant,
+    elapsed_time_ms: u128,
 
     pending_write_completion: bool,
 
@@ -192,6 +252,23 @@ pub(crate) struct OperationalState {
     inbound_alias_resolver: InboundAliasResolver
 }
 
+impl fmt::Display for OperationalState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let level = log::max_level();
+        match level {
+            LevelFilter::Debug => {
+                return self.log_debug(f);
+            }
+            LevelFilter::Trace => {
+                return self.log_trace(f);
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
+
 impl OperationalState {
 
     // Crate-public API
@@ -199,10 +276,13 @@ impl OperationalState {
     pub(crate) fn new(mut config: OperationalStateConfig) -> OperationalState {
         let outbound_resolver = config.outbound_resolver.take().unwrap_or(Box::new(NullOutboundAliasResolver::new()));
         let inbound_resolver = InboundAliasResolver::new((&config).connect.topic_alias_maximum.unwrap_or(0));
+        let base_time = config.base_timestamp.clone();
 
         OperationalState {
             config,
             state: OperationalStateType::Disconnected,
+            current_time: base_time,
+            elapsed_time_ms: 0,
             pending_write_completion : false,
             operations: HashMap::new(),
             operation_ack_timeouts: BinaryHeap::new(),
@@ -229,19 +309,22 @@ impl OperationalState {
     }
 
     pub(crate) fn handle_network_event(&mut self, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
-        let event = &context.event;
+        self.update_internal_clock(&context.current_time);
 
+        let event = &context.event;
         match &event {
             NetworkEvent::ConnectionOpened => { self.handle_network_event_connection_opened(context) }
-            NetworkEvent::ConnectionClosed => { self.handle_network_event_connection_closed() }
-            NetworkEvent::WriteCompletion => { self.handle_network_event_write_completion() }
+            NetworkEvent::ConnectionClosed => { self.handle_network_event_connection_closed(context) }
+            NetworkEvent::WriteCompletion => { self.handle_network_event_write_completion(context) }
             NetworkEvent::IncomingData(data) => { self.handle_network_event_incoming_data(context, data) }
         }
     }
 
     pub(crate) fn service(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+        self.update_internal_clock(&context.current_time);
+
         match self.state {
-            OperationalStateType::Disconnected => { Ok(()) }
+            OperationalStateType::Disconnected => { self.service_disconnected(context) }
             OperationalStateType::PendingConnack => { self.service_pending_connack(context) }
             OperationalStateType::Connected => { self.service_connected(context) }
             OperationalStateType::PendingDisconnect => { self.service_pending_disconnect(context) }
@@ -249,37 +332,64 @@ impl OperationalState {
     }
 
     pub(crate) fn handle_user_event(&mut self, context: UserEventContext) -> Mqtt5Result<()> {
+        self.update_internal_clock(&context.current_time);
+
         let event = context.event;
-        let op_id = match event {
+        let mut op_id = 0;
+        match event {
             UserEvent::Subscribe(packet, subscribe_options) => {
-                self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)))
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)));
             }
             UserEvent::Unsubscribe(packet, unsubscribe_options) => {
-                self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)))
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)));
             }
             UserEvent::Publish(packet, publish_options) => {
-                self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)))
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)));
             }
             UserEvent::Disconnect(packet, disconnect_options) => {
-                self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)))
+                op_id = self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)));
             }
         };
 
         assert_ne!(op_id, 0);
 
+        debug!("[{} ms] handle_user_event - queuing operation with id {}", self.elapsed_time_ms, op_id);
         self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back)
     }
 
-    pub(crate) fn get_next_service_timepoint(&self, current_time: &Instant) -> Instant {
-        match self.state {
-            OperationalStateType::Disconnected => { self.get_next_service_timepoint_disconnected(current_time) }
-            OperationalStateType::PendingConnack => { self.get_next_service_timepoint_pending_connack(current_time) }
-            OperationalStateType::Connected => { self.get_next_service_timepoint_connected(current_time) }
-            OperationalStateType::PendingDisconnect => { self.get_next_service_timepoint_pending_disconnect(current_time) }
-        }
+    pub(crate) fn get_next_service_timepoint(&mut self, current_time: &Instant) -> Instant {
+        self.update_internal_clock(current_time);
+
+        let next_service_time =
+            match self.state {
+                OperationalStateType::Disconnected => { self.get_next_service_timepoint_disconnected() }
+                OperationalStateType::PendingConnack => { self.get_next_service_timepoint_pending_connack() }
+                OperationalStateType::Connected => { self.get_next_service_timepoint_connected() }
+                OperationalStateType::PendingDisconnect => { self.get_next_service_timepoint_pending_disconnect() }
+            };
+
+        debug!("[{} ms] get_next_service_timepoint - state {}, target_elapsed_time: {} ms", self.elapsed_time_ms, self.state, self.get_elapsed_millis(&next_service_time));
+        next_service_time
     }
 
     // Private Implementation
+
+    fn log_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+
+    fn log_trace(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+
+    fn update_internal_clock(&mut self, current_time: &Instant) {
+        self.current_time = current_time.clone();
+        self.elapsed_time_ms = (*current_time - self.config.base_timestamp).as_millis();
+    }
+
+    fn get_elapsed_millis(&self, timepoint: &Instant) -> u128 {
+        return (*timepoint - self.config.base_timestamp).as_millis();
+    }
 
     fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (VecDeque<u64>, VecDeque<u64>) {
         partition_operations_by_queue_policy(queue.iter().filter(|id| {
@@ -343,7 +453,8 @@ impl OperationalState {
     fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
         let operation_option = self.operations.remove(&id);
         if operation_option.is_none() {
-            return Err(Mqtt5Error::InternalStateError);
+            warn!("[{} ms] complete_operation_as_success - operation id {} does not exist", self.elapsed_time_ms, id);
+            return Ok(())
         }
 
         let operation = operation_option.unwrap();
@@ -359,15 +470,18 @@ impl OperationalState {
         }
 
         if operation.options.is_none() {
+            info!("[{} ms] complete_operation_as_success - internal {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
             return Ok(())
         }
 
+        info!("[{} ms] complete_operation_as_success - user {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
         complete_operation_with_result(&mut operation.options.unwrap(), completion_result)
     }
 
     fn complete_operation_as_failure(&mut self, id : u64, error: Mqtt5Error) -> Mqtt5Result<()> {
         let operation_option = self.operations.remove(&id);
         if operation_option.is_none() {
+            warn!("[{} ms] complete_operation_as_failure ({}) - operation id {} does not exist", self.elapsed_time_ms, error, id);
             return Ok(())
         }
 
@@ -378,9 +492,11 @@ impl OperationalState {
         }
 
         if operation.options.is_none() {
+            info!("[{} ms] complete_operation_as_failure ({}) - internal {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&*operation.packet), id);
             return Ok(())
         }
 
+        info!("[{} ms] complete_operation_as_failure ({}) - user {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&*operation.packet), id);
         complete_operation_with_error(&mut operation.options.unwrap(), error)
     }
 
@@ -402,11 +518,17 @@ impl OperationalState {
         )
     }
 
+    fn log_operational_state(&self) {
+
+    }
+
     fn handle_network_event_connection_opened(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
         if self.state != OperationalStateType::Disconnected {
+            error!("[{} ms] handle_network_event_connection_opened - called in invalid state", self.elapsed_time_ms);
             return Err(Mqtt5Error::InternalStateError);
         }
 
+        info!("[{} ms] handle_network_event_connection_opened - transitioning to PendingConnack state", self.elapsed_time_ms);
         self.state = OperationalStateType::PendingConnack;
         self.current_operation = None;
         self.pending_write_completion = false;
@@ -419,14 +541,22 @@ impl OperationalState {
 
         self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
-        self.connack_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64));
+        let connack_timeout = context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64);
+
+        debug!("[{} ms] handle_network_event_connection_opened - setting connack timeout to {} ms", self.elapsed_time_ms, self.get_elapsed_millis(&connack_timeout));
+        self.connack_timeout_timepoint = Some(connack_timeout);
 
         Ok(())
     }
 
-    fn handle_network_event_connection_closed(&mut self) -> Mqtt5Result<()> {
-        self.state = OperationalStateType::Disconnected;
+    fn handle_network_event_connection_closed(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+        if self.state == OperationalStateType::Disconnected {
+            error!("[{} ms] handle_network_event_connection_closed - called in invalid state", self.elapsed_time_ms);
+            return Err(Mqtt5Error::InternalStateError);
+        }
 
+        info!("[{} ms] handle_network_event - connection closed, transitioning to Disconnected state", self.elapsed_time_ms);
+        self.state = OperationalStateType::Disconnected;
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
         self.ping_timeout_timepoint = None;
@@ -484,10 +614,14 @@ impl OperationalState {
         result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected_unacked.into_iter(), Mqtt5Error::ConnectionClosed));
         self.user_operation_queue.append(&mut retained_unacked);
 
+        self.log_operational_state();
+
         result
     }
 
-    fn handle_network_event_write_completion(&mut self) -> Mqtt5Result<()> {
+    fn handle_network_event_write_completion(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+        debug!("[{} ms] handle_network_event - write completion", self.elapsed_time_ms);
+
         self.pending_write_completion = false;
 
         let mut completions : VecDeque<u64> = VecDeque::new();
@@ -498,6 +632,7 @@ impl OperationalState {
     }
 
     fn handle_network_event_incoming_data(&mut self, context: &mut NetworkEventContext, data: &[u8]) -> Mqtt5Result<()> {
+        debug!("[{} ms] handle_network_event - incoming data", self.elapsed_time_ms);
         if self.state == OperationalStateType::Disconnected {
             return Err(Mqtt5Error::InternalStateError);
         }
@@ -567,10 +702,10 @@ impl OperationalState {
         OutboundAliasResolution{ ..Default::default() }
     }
 
-    fn get_next_ack_timeout(&mut self, now: Instant) -> Option<u64> {
+    fn get_next_ack_timeout(&mut self) -> Option<u64> {
         if let Some(reverse_record) = self.operation_ack_timeouts.peek() {
             let record = &reverse_record.0;
-            if record.timeout <= now {
+            if record.timeout <= self.current_time {
                 return Some(record.id);
             }
         }
@@ -578,10 +713,10 @@ impl OperationalState {
         None
     }
 
-    fn process_ack_timeouts(&mut self, now: Instant) -> Mqtt5Result<()> {
+    fn process_ack_timeouts(&mut self) -> Mqtt5Result<()> {
         let mut result = Ok(());
 
-        while let Some(id) = self.get_next_ack_timeout(now) {
+        while let Some(id) = self.get_next_ack_timeout() {
             result = fold_mqtt5_result(result, self.complete_operation_as_failure(id, Mqtt5Error::AckTimeout));
         }
 
@@ -661,6 +796,12 @@ impl OperationalState {
         self.current_operation = None;
     }
 
+    fn service_disconnected(&mut self, _: &mut ServiceContext) -> Mqtt5Result<()> {
+        info!("[{} ms] service_disconnected", self.elapsed_time_ms);
+
+        Ok(())
+    }
+
     fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
         loop {
             if self.current_operation.is_none() {
@@ -698,6 +839,8 @@ impl OperationalState {
     }
 
     fn service_pending_connack(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+        info!("[{} ms] service_pending_connack", self.elapsed_time_ms);
+
         if context.current_time >= self.connack_timeout_timepoint.unwrap() {
             return Err(Mqtt5Error::ConnackTimeout);
         }
@@ -727,30 +870,32 @@ impl OperationalState {
     }
 
     fn service_connected(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+        info!("[{} ms] service_connected", self.elapsed_time_ms);
+
         self.service_keep_alive(context)?;
-
         self.service_queue(context, OperationalQueueServiceMode::All)?;
-
-        self.process_ack_timeouts(context.current_time)?;
+        self.process_ack_timeouts()?;
 
         Ok(())
     }
 
     fn service_pending_disconnect(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+        info!("[{} ms] service_pending_disconnect", self.elapsed_time_ms);
+
         self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
-        self.process_ack_timeouts(context.current_time)?;
+        self.process_ack_timeouts()?;
 
         Ok(())
     }
 
-    fn get_next_service_timepoint_operational_queue(&self, current_time: &Instant, mode: OperationalQueueServiceMode) -> Instant {
-        let forever = *current_time + Duration::from_secs(u64::MAX);
+    fn get_next_service_timepoint_operational_queue(&self, mode: OperationalQueueServiceMode) -> Instant {
+        let forever = self.current_time + Duration::from_secs(u64::MAX);
         if self.pending_write_completion {
             return forever;
         }
 
         if !self.high_priority_operation_queue.is_empty() {
-            return *current_time;
+            return self.current_time;
         }
 
         if mode == OperationalQueueServiceMode::All {
@@ -775,23 +920,23 @@ impl OperationalState {
             }
 
             if !self.resubmit_operation_queue.is_empty() || !self.user_operation_queue.is_empty() {
-                return *current_time;
+                return self.current_time;
             }
         }
 
         forever
     }
 
-    fn get_next_service_timepoint_disconnected(&self, current_time: &Instant) -> Instant {
-        *current_time + Duration::from_secs(u64::MAX)
+    fn get_next_service_timepoint_disconnected(&self) -> Instant {
+        self.current_time + Duration::from_secs(u64::MAX)
     }
 
-    fn get_next_service_timepoint_pending_connack(&self, current_time: &Instant) -> Instant {
-        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), self.connack_timeout_timepoint.unwrap())
+    fn get_next_service_timepoint_pending_connack(&self) -> Instant {
+        min(self.get_next_service_timepoint_operational_queue(OperationalQueueServiceMode::HighPriorityOnly), self.connack_timeout_timepoint.unwrap())
     }
 
-    fn get_next_service_timepoint_connected(&self, current_time: &Instant) -> Instant {
-        let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
+    fn get_next_service_timepoint_connected(&self) -> Instant {
+        let mut next_service_time = self.current_time + Duration::from_secs(u64::MAX);
 
         if let Some(ping_timeout) = &self.ping_timeout_timepoint {
             next_service_time = min(next_service_time, *ping_timeout);
@@ -811,42 +956,29 @@ impl OperationalState {
             next_service_time = min(next_service_time, *next_ping_timepoint);
         }
 
-        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::All), next_service_time)
+        min(self.get_next_service_timepoint_operational_queue( OperationalQueueServiceMode::All), next_service_time)
     }
 
-    fn get_next_service_timepoint_pending_disconnect(&self, current_time: &Instant) -> Instant {
-        let mut next_service_time = *current_time + Duration::from_secs(u64::MAX);
+    fn get_next_service_timepoint_pending_disconnect(&self) -> Instant {
+        let mut next_service_time = self.current_time + Duration::from_secs(u64::MAX);
 
         if let Some(ack_timeout) = self.operation_ack_timeouts.peek() {
             next_service_time = min(next_service_time, ack_timeout.0.timeout);
         }
 
-        min(self.get_next_service_timepoint_operational_queue(current_time, OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
+        min(self.get_next_service_timepoint_operational_queue(OperationalQueueServiceMode::HighPriorityOnly), next_service_time)
     }
 
-    fn schedule_ping(&mut self, current_time: &Instant) -> () {
+    fn schedule_ping(&mut self, base_timepoint: &Instant) -> () {
         self.ping_timeout_timepoint = None;
-        self.next_ping_timepoint = Some(*current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
+        self.next_ping_timepoint = Some(*base_timepoint + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
     }
 
     fn unbind_operation_packet_id(&mut self, id: u64) {
         if let Some(operation) = self.operations.get_mut(&id) {
             if let Some(packet_id) = operation.packet_id {
                 self.allocated_packet_ids.remove(&packet_id);
-                operation.packet_id = None;
-
-                match &mut *operation.packet {
-                    MqttPacket::Subscribe(subscribe) => {
-                        subscribe.packet_id = 0;
-                    }
-                    MqttPacket::Unsubscribe(unsubscribe) => {
-                        unsubscribe.packet_id = 0;
-                    }
-                    MqttPacket::Publish(publish) => {
-                        publish.packet_id = 0;
-                    }
-                    _ => {}
-                }
+                operation.unbind_packet_id();
             }
         }
     }
@@ -859,7 +991,7 @@ impl OperationalState {
         }
     }
 
-    fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
+    fn apply_session_present_to_connection(&mut self, session_present: bool, current_time: &Instant) -> Mqtt5Result<()> {
         let mut result = Ok(());
 
         if !session_present {
@@ -923,7 +1055,7 @@ impl OperationalState {
 
             self.schedule_ping(&context.current_time);
 
-            self.apply_session_present_to_connection(connack.session_present)?;
+            self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
 
             context.events.push_back(Arc::new(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
                 connack,
@@ -936,7 +1068,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pingresp(&mut self) -> Mqtt5Result<()> {
+    fn handle_pingresp(&mut self, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
                 if let Some(_) = &self.ping_timeout_timepoint {
@@ -953,7 +1085,7 @@ impl OperationalState {
         }
     }
 
-    fn handle_suback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_suback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -973,7 +1105,7 @@ impl OperationalState {
         Err(Mqtt5Error::ProtocolError)
     }
 
-    fn handle_unsuback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_unsuback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -993,7 +1125,7 @@ impl OperationalState {
         Err(Mqtt5Error::ProtocolError)
     }
 
-    fn handle_puback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_puback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -1012,7 +1144,7 @@ impl OperationalState {
         Err(Mqtt5Error::ProtocolError)
     }
 
-    fn handle_pubrec(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_pubrec(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -1051,7 +1183,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubrel(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_pubrel(&mut self, packet: Box<MqttPacket>, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -1076,7 +1208,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubcomp(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
+    fn handle_pubcomp(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
                 return Err(Mqtt5Error::ProtocolError);
@@ -1167,19 +1299,23 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
+    fn handle_auth(&mut self, _: Box<MqttPacket>, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
+        Err(Mqtt5Error::Unimplemented)
+    }
+
     fn handle_packet(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         match &*packet {
             MqttPacket::Connack(_) => { self.handle_connack(packet, context) }
             MqttPacket::Publish(_) => { self.handle_publish(packet, context) }
-            MqttPacket::Pingresp(_) => { self.handle_pingresp() }
+            MqttPacket::Pingresp(_) => { self.handle_pingresp(context) }
             MqttPacket::Disconnect(_) => { self.handle_disconnect(packet, context) }
-            MqttPacket::Suback(_) => { self.handle_suback(packet) }
-            MqttPacket::Unsuback(_) => { self.handle_unsuback(packet) }
-            MqttPacket::Puback(_) => { self.handle_puback(packet) }
-            MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet) }
-            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet) }
-            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet) }
-            MqttPacket::Auth(_) => { Err(Mqtt5Error::Unimplemented) }
+            MqttPacket::Suback(_) => { self.handle_suback(packet, context) }
+            MqttPacket::Unsuback(_) => { self.handle_unsuback(packet, context) }
+            MqttPacket::Puback(_) => { self.handle_puback(packet, context) }
+            MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet, context) }
+            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet, context) }
+            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet, context) }
+            MqttPacket::Auth(_) => { self.handle_auth(packet, context) }
             _ => { Err(Mqtt5Error::ProtocolError) }
         }
     }
@@ -1202,9 +1338,11 @@ impl OperationalState {
 
     fn enqueue_operation(&mut self, id: u64, queue_type: OperationalQueueType, position: OperationalEnqueuePosition) -> Mqtt5Result<()> {
         if !self.operations.contains_key(&id) {
+            error!("[{} ms] enqueue_operation - operation {} does not exist", self.elapsed_time_ms, id);
             return Err(Mqtt5Error::InternalStateError);
         }
 
+        debug!("[{} ms] enqueue_operation - operation {} added to {} of queue {} ", self.elapsed_time_ms, id, position, queue_type);
         let queue = self.get_queue(queue_type);
         match position {
             OperationalEnqueuePosition::Front => { queue.push_front(id); }
@@ -1217,6 +1355,9 @@ impl OperationalState {
     fn create_operation(&mut self, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
+
+        info!("[{} ms] create_operation - building {} operation with id {}", self.elapsed_time_ms, mqtt_packet_to_str(&*packet), id);
+        debug!("[{} ms] create_operation - operation {}:\n{}", self.elapsed_time_ms, id, &*packet);
 
         let operation = MqttOperation {
             id,

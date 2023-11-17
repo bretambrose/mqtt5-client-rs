@@ -474,3 +474,23 @@ pub(crate) fn packet_type_to_str(packet_type: u8) -> &'static str {
         }
     }
 }
+
+pub(crate) fn mqtt_packet_to_str(packet: &MqttPacket) -> &'static str {
+    match packet {
+        MqttPacket::Connect(_) => { "CONNECT" }
+        MqttPacket::Connack(_) => { "CONNACK" }
+        MqttPacket::Publish(_) => { "PUBLISH" }
+        MqttPacket::Puback(_) => { "PUBACK" }
+        MqttPacket::Pubrec(_) => { "PUBREC" }
+        MqttPacket::Pubrel(_) => { "PUBREL" }
+        MqttPacket::Pubcomp(_) => { "PUBCOMP" }
+        MqttPacket::Subscribe(_) => { "SUBSCRIBE" }
+        MqttPacket::Suback(_) => { "SUBACK" }
+        MqttPacket::Unsubscribe(_) => { "UNSUBSCRIBE" }
+        MqttPacket::Unsuback(_) => { "UNSUBACK" }
+        MqttPacket::Pingreq(_) => { "PINGREQ" }
+        MqttPacket::Pingresp(_) => { "PINGRESP" }
+        MqttPacket::Disconnect(_) => { "DISCONNECT" }
+        MqttPacket::Auth(_) => { "AUTH" }
+    }
+}

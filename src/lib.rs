@@ -48,6 +48,8 @@ pub use spec::unsubscribe::UnsubscribePacket;
 
 pub use client::*;
 
+use std::fmt;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Mqtt5Error {
     Unknown,
@@ -85,6 +87,48 @@ pub enum Mqtt5Error {
     OfflineQueuePolicyFailed,
     ServerSideDisconnect,
     AckTimeout
+}
+
+impl fmt::Display for Mqtt5Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Mqtt5Error::Unknown => { write!(f, "Unknown") }
+            Mqtt5Error::Unimplemented => { write!(f, "Unimplemented") }
+            Mqtt5Error::OperationChannelReceiveError => { write!(f, "OperationChannelReceiveError") }
+            Mqtt5Error::OperationChannelSendError => { write!(f, "OperationChannelSendError") }
+            Mqtt5Error::VariableLengthIntegerMaximumExceeded => { write!(f, "VariableLengthIntegerMaximumExceeded") }
+            Mqtt5Error::EncodeBufferTooSmall => { write!(f, "EncodeBufferTooSmall") }
+            Mqtt5Error::DecoderInvalidVli => { write!(f, "DecoderInvalidVli") }
+            Mqtt5Error::MalformedPacket => { write!(f, "MalformedPacket") }
+            Mqtt5Error::ProtocolError => { write!(f, "ProtocolError") }
+            Mqtt5Error::InboundTopicAliasNotAllowed => { write!(f, "InboundTopicAliasNotAllowed") }
+            Mqtt5Error::InboundTopicAliasNotValid => { write!(f, "InboundTopicAliasNotValid") }
+            Mqtt5Error::OutboundTopicAliasNotAllowed => { write!(f, "OutboundTopicAliasNotAllowed") }
+            Mqtt5Error::OutboundTopicAliasInvalid => { write!(f, "OutboundTopicAliasInvalid") }
+            Mqtt5Error::UserPropertyValidation => { write!(f, "UserPropertyValidation") }
+            Mqtt5Error::AuthPacketValidation => { write!(f, "AuthPacketValidation") }
+            Mqtt5Error::ConnackPacketValidation => { write!(f, "ConnackPacketValidation") }
+            Mqtt5Error::ConnectPacketValidation => { write!(f, "ConnectPacketValidation") }
+            Mqtt5Error::DisconnectPacketValidation => { write!(f, "DisconnectPacketValidation") }
+            Mqtt5Error::PubackPacketValidation => { write!(f, "PubackPacketValidation") }
+            Mqtt5Error::PubcompPacketValidation => { write!(f, "PubcompPacketValidation") }
+            Mqtt5Error::PubrecPacketValidation => { write!(f, "PubrecPacketValidation") }
+            Mqtt5Error::PubrelPacketValidation => { write!(f, "PubrelPacketValidation") }
+            Mqtt5Error::PublishPacketValidation => { write!(f, "PublishPacketValidation") }
+            Mqtt5Error::SubackPacketValidation => { write!(f, "SubackPacketValidation") }
+            Mqtt5Error::UnsubackPacketValidation => { write!(f, "UnsubackPacketValidation") }
+            Mqtt5Error::SubscribePacketValidation => { write!(f, "SubscribePacketValidation") }
+            Mqtt5Error::UnsubscribePacketValidation => { write!(f, "UnsubscribePacketValidation") }
+            Mqtt5Error::InternalStateError => { write!(f, "InternalStateError") }
+            Mqtt5Error::ConnectionRejected => { write!(f, "ConnectionRejected") }
+            Mqtt5Error::ConnackTimeout => { write!(f, "ConnackTimeout") }
+            Mqtt5Error::PingTimeout => { write!(f, "PingTimeout") }
+            Mqtt5Error::ConnectionClosed => { write!(f, "ConnectionClosed") }
+            Mqtt5Error::OfflineQueuePolicyFailed => { write!(f, "OfflineQueuePolicyFailed") }
+            Mqtt5Error::ServerSideDisconnect => { write!(f, "ServerSideDisconnect") }
+            Mqtt5Error::AckTimeout => { write!(f, "AckTimeout") }
+        }
+    }
 }
 
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
