@@ -10,6 +10,7 @@ extern crate tokio;
 use crate::*;
 use crate::client::implementation::*;
 use crate::spec::*;
+use crate::spec::utils::*;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -114,6 +115,25 @@ pub struct NegotiatedSettings {
 
     /// Client id in use for the current connection
     pub client_id : String
+}
+
+impl fmt::Display for NegotiatedSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "  maximum_qos: {}", quality_of_service_to_str(self.maximum_qos))?;
+        write!(f, "  session_expiry_interval: {}", self.session_expiry_interval)?;
+        write!(f, "  receive_maximum_from_server: {}", self.receive_maximum_from_server)?;
+        write!(f, "  maximum_packet_size_to_server: {}", self.maximum_packet_size_to_server)?;
+        write!(f, "  topic_alias_maximum_to_server: {}", self.topic_alias_maximum_to_server)?;
+        write!(f, "  server_keep_alive: {}", self.server_keep_alive)?;
+        write!(f, "  retain_available: {}", self.retain_available)?;
+        write!(f, "  wildcard_subscriptions_available: {}", self.wildcard_subscriptions_available)?;
+        write!(f, "  subscription_identifiers_available: {}", self.subscription_identifiers_available)?;
+        write!(f, "  shared_subscriptions_available: {}", self.shared_subscriptions_available)?;
+        write!(f, "  rejoined_session: {}", self.rejoined_session)?;
+        write!(f, "  client_id: {}", self.client_id)?;
+
+        Ok(())
+    }
 }
 
 impl From<oneshot::error::RecvError> for Mqtt5Error {
