@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub(crate) mod testing;
+
 extern crate log;
 
 use crate::*;
@@ -694,6 +696,11 @@ impl OperationalState {
     }
 
     fn handle_network_event_write_completion(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+        if self.state == OperationalStateType::Disconnected {
+            error!("[{} ms] handle_network_event_write_completion - called in invalid state", self.elapsed_time_ms);
+            return Err(Mqtt5Error::InternalStateError);
+        }
+
         debug!("[{} ms] handle_network_event - write completion", self.elapsed_time_ms);
 
         self.pending_write_completion = false;
