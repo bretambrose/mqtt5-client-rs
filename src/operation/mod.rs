@@ -1872,9 +1872,160 @@ mod tests {
 
     #[test]
     fn build_negotiated_settings_max_connect_max_connack() {
+        let config = build_operational_state_config_for_settings_test(
+            Box::new(ConnectPacket {
+                keep_alive_interval_seconds: 1200,
+                clean_start: true,
+                client_id: Some("connect_client_id".to_string()),
+                session_expiry_interval_seconds: Some(3600),
+                receive_maximum: Some(20),
+                topic_alias_maximum: Some(5),
+                maximum_packet_size_bytes: Some(128 * 1024),
+                ..Default::default()
+            }));
+
+        let connack = ConnackPacket {
+            session_present: true,
+            session_expiry_interval: Some(1800),
+            receive_maximum: Some(40),
+            maximum_qos: Some(QualityOfService::AtMostOnce),
+            retain_available: Some(true),
+            maximum_packet_size: Some(48 * 1024),
+            assigned_client_identifier: Some("assigned_client_id".to_string()),
+            topic_alias_maximum: Some(30),
+            wildcard_subscriptions_available: Some(false),
+            subscription_identifiers_available: Some(true),
+            shared_subscriptions_available: Some(false),
+            server_keep_alive: Some(900),
+            ..Default::default()
+        };
+
+        let actual_settings = build_negotiated_settings(&config, &connack, &None);
+        let expected_settings = NegotiatedSettings {
+            maximum_qos : QualityOfService::AtMostOnce,
+            session_expiry_interval : 1800,
+            receive_maximum_from_server : 40,
+            maximum_packet_size_to_server : 48 * 1024,
+            topic_alias_maximum_to_server : 30,
+            server_keep_alive : 900,
+            retain_available : true,
+            wildcard_subscriptions_available : false,
+            subscription_identifiers_available : true,
+            shared_subscriptions_available : false,
+            rejoined_session : true,
+            client_id : "assigned_client_id".to_string()
+        };
+
+        assert_eq!(expected_settings, actual_settings);
     }
 
     #[test]
     fn build_negotiated_settings_existing_client_id() {
+        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+
+        let connack = ConnackPacket {
+            ..Default::default()
+        };
+
+        let existing_settings = NegotiatedSettings {
+            client_id: "existing_client_id".to_string(),
+            ..Default::default()
+        };
+
+        let actual_settings = build_negotiated_settings(&config, &connack, &Some(existing_settings));
+        let expected_settings = NegotiatedSettings {
+            maximum_qos : QualityOfService::ExactlyOnce,
+            session_expiry_interval : 0,
+            receive_maximum_from_server : 65535,
+            maximum_packet_size_to_server : MAXIMUM_VARIABLE_LENGTH_INTEGER as u32,
+            topic_alias_maximum_to_server : 0,
+            server_keep_alive : 0,
+            retain_available : true,
+            wildcard_subscriptions_available : true,
+            subscription_identifiers_available : true,
+            shared_subscriptions_available : true,
+            rejoined_session : false,
+            client_id : "existing_client_id".to_string()
+        };
+
+        assert_eq!(expected_settings, actual_settings);
+    }
+
+    fn build_partition_operation_sequence() -> Vec<(u64, MqttPacket)> {
+        return vec!(
+            (666, MqttPacket::Pubrel(PubrelPacket {
+                ..Default::default()
+            })),
+            (5, MqttPacket::Pingreq(PingreqPacket{})),
+            (1023, MqttPacket::Publish(PublishPacket{
+                qos : QualityOfService::AtLeastOnce,
+                ..Default::default()
+            })),
+            (43, MqttPacket::Publish(PublishPacket {
+                qos : QualityOfService::AtMostOnce,
+                ..Default::default()
+            })),
+            (17, MqttPacket::Subscribe(SubscribePacket{ ..Default::default() })),
+            (23, MqttPacket::Unsubscribe(UnsubscribePacket{ ..Default::default() })),
+            (1024, MqttPacket::Publish(PublishPacket{
+                qos : QualityOfService::ExactlyOnce,
+                ..Default::default()
+            })),
+            (3, MqttPacket::Disconnect(DisconnectPacket{ ..Default::default() }))
+        );
+    }
+
+    fn do_partition_operation_by_queue_policy_test(policy: OfflineQueuePolicy, expected_retain: Vec<u64>, expected_reject: Vec<u64>) {
+        let operation_sequence = build_partition_operation_sequence();
+        let sequence_iter = operation_sequence.iter().map(|(id, packet)| {
+            (*id, packet)
+        });
+
+        let (mut retain, mut reject) = partition_operations_by_queue_policy(sequence_iter, &policy);
+
+        sort_operation_deque(&mut retain);
+        sort_operation_deque(&mut reject);
+
+        let retain_vector : Vec<u64> = retain.into_iter().collect();
+        let reject_vector : Vec<u64> = reject.into_iter().collect();
+
+        assert_eq!(expected_retain, retain_vector);
+        assert_eq!(expected_reject, reject_vector);
+    }
+
+    #[test]
+    fn partition_operations_by_queue_policy_preserve_all() {
+        do_partition_operation_by_queue_policy_test(
+            OfflineQueuePolicy::PreserveAll,
+            vec!(17, 23, 43, 1023, 1024),
+            vec!(3, 5, 666)
+        );
+    }
+
+    #[test]
+    fn partition_operations_by_queue_policy_preserve_acknowledged() {
+        do_partition_operation_by_queue_policy_test(
+            OfflineQueuePolicy::PreserveAcknowledged,
+            vec!(17, 23, 1023, 1024),
+            vec!(3, 5, 43, 666)
+        );
+    }
+
+    #[test]
+    fn partition_operations_by_queue_policy_preserve_qos1plus() {
+        do_partition_operation_by_queue_policy_test(
+            OfflineQueuePolicy::PreserveQos1PlusPublishes,
+            vec!(1023, 1024),
+            vec!(3, 5, 17, 23, 43, 666)
+        );
+    }
+
+    #[test]
+    fn partition_operations_by_queue_policy_preserve_nothing() {
+        do_partition_operation_by_queue_policy_test(
+            OfflineQueuePolicy::PreserveNothing,
+            vec!(),
+            vec!(3, 5, 17, 23, 43, 666, 1023, 1024)
+        );
     }
 }
