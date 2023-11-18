@@ -1614,7 +1614,17 @@ fn get_ack_packet_id(packet: &MqttPacket) -> Option<u16> {
 
 fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPacket, existing_settings: &Option<NegotiatedSettings>) -> NegotiatedSettings {
     let connect = &*config.connect;
-    let final_client_id_ref = packet.assigned_client_identifier.as_ref().unwrap_or(connect.client_id.as_ref().unwrap_or(&existing_settings.as_ref().unwrap().client_id));
+
+    let final_client_id =
+        if packet.assigned_client_identifier.is_some() {
+            packet.assigned_client_identifier.as_ref().unwrap().clone()
+        } else if connect.client_id.is_some() {
+            connect.client_id.as_ref().unwrap().clone()
+        } else if let Some(settings) = &*existing_settings {
+            settings.client_id.clone()
+        } else {
+            panic!("");
+        };
 
     NegotiatedSettings {
         maximum_qos : packet.maximum_qos.unwrap_or(QualityOfService::ExactlyOnce),
@@ -1628,7 +1638,7 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
         subscription_identifiers_available : packet.subscription_identifiers_available.unwrap_or(true),
         shared_subscriptions_available : packet.shared_subscriptions_available.unwrap_or(true),
         rejoined_session : packet.session_present,
-        client_id : final_client_id_ref.clone()
+        client_id : final_client_id
     }
 }
 
@@ -1738,4 +1748,133 @@ fn partition_operations_by_queue_policy<'a, T>(iterator: T, policy: &OfflineQueu
 fn sort_operation_deque(operations: &mut VecDeque<u64>) {
     operations.rotate_right(operations.as_slices().1.len());
     operations.as_mut_slices().0.sort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_operational_state_config_for_settings_test(connect: Box<ConnectPacket>) -> OperationalStateConfig {
+        OperationalStateConfig {
+            connect,
+            base_timestamp: Instant::now(),
+            offline_queue_policy: OfflineQueuePolicy::PreserveAll,
+            rejoin_session_policy: RejoinSessionPolicy::RejoinAlways,
+            connack_timeout_millis: 30,
+            ping_timeout_millis: 30000,
+            outbound_resolver: None,
+        }
+    }
+
+    #[test]
+    fn build_negotiated_settings_min_connect_min_connack() {
+        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+
+        let connack = ConnackPacket {
+            assigned_client_identifier: Some("client".to_string()),
+            ..Default::default()
+        };
+
+        let actual_settings = build_negotiated_settings(&config, &connack, &None);
+        let expected_settings = NegotiatedSettings {
+            maximum_qos : QualityOfService::ExactlyOnce,
+            session_expiry_interval : 0,
+            receive_maximum_from_server : 65535,
+            maximum_packet_size_to_server : MAXIMUM_VARIABLE_LENGTH_INTEGER as u32,
+            topic_alias_maximum_to_server : 0,
+            server_keep_alive : 0,
+            retain_available : true,
+            wildcard_subscriptions_available : true,
+            subscription_identifiers_available : true,
+            shared_subscriptions_available : true,
+            rejoined_session : false,
+            client_id : "client".to_string()
+        };
+
+        assert_eq!(expected_settings, actual_settings);
+    }
+
+    #[test]
+    fn build_negotiated_settings_max_connect_min_connack() {
+        let config = build_operational_state_config_for_settings_test(
+            Box::new(ConnectPacket {
+                keep_alive_interval_seconds: 1200,
+                clean_start: true,
+                client_id: Some("connect_client_id".to_string()),
+                session_expiry_interval_seconds: Some(3600),
+                receive_maximum: Some(20),
+                topic_alias_maximum: Some(5),
+                maximum_packet_size_bytes: Some(128 * 1024),
+                ..Default::default()
+            }));
+
+        let connack = ConnackPacket {
+            ..Default::default()
+        };
+
+        let actual_settings = build_negotiated_settings(&config, &connack, &None);
+        let expected_settings = NegotiatedSettings {
+            maximum_qos : QualityOfService::ExactlyOnce,
+            session_expiry_interval : 3600,
+            receive_maximum_from_server : 65535,
+            maximum_packet_size_to_server : MAXIMUM_VARIABLE_LENGTH_INTEGER as u32,
+            topic_alias_maximum_to_server : 0,
+            server_keep_alive : 1200,
+            retain_available : true,
+            wildcard_subscriptions_available : true,
+            subscription_identifiers_available : true,
+            shared_subscriptions_available : true,
+            rejoined_session : false,
+            client_id : "connect_client_id".to_string()
+        };
+
+        assert_eq!(expected_settings, actual_settings);
+    }
+
+    #[test]
+    fn build_negotiated_settings_min_connect_max_connack() {
+        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+
+        let connack = ConnackPacket {
+            session_present: true,
+            session_expiry_interval: Some(7200),
+            receive_maximum: Some(50),
+            maximum_qos: Some(QualityOfService::AtLeastOnce),
+            retain_available: Some(false),
+            maximum_packet_size: Some(65536),
+            assigned_client_identifier: Some("assigned_client_id".to_string()),
+            topic_alias_maximum: Some(20),
+            wildcard_subscriptions_available: Some(false),
+            subscription_identifiers_available: Some(false),
+            shared_subscriptions_available: Some(false),
+            server_keep_alive: Some(600),
+            ..Default::default()
+        };
+
+        let actual_settings = build_negotiated_settings(&config, &connack, &None);
+        let expected_settings = NegotiatedSettings {
+            maximum_qos : QualityOfService::AtLeastOnce,
+            session_expiry_interval : 7200,
+            receive_maximum_from_server : 50,
+            maximum_packet_size_to_server : 65536,
+            topic_alias_maximum_to_server : 20,
+            server_keep_alive : 600,
+            retain_available : false,
+            wildcard_subscriptions_available : false,
+            subscription_identifiers_available : false,
+            shared_subscriptions_available : false,
+            rejoined_session : true,
+            client_id : "assigned_client_id".to_string()
+        };
+
+        assert_eq!(expected_settings, actual_settings);
+    }
+
+    #[test]
+    fn build_negotiated_settings_max_connect_max_connack() {
+    }
+
+    #[test]
+    fn build_negotiated_settings_existing_client_id() {
+    }
 }

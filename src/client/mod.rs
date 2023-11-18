@@ -77,7 +77,7 @@ pub type DisconnectResult = Mqtt5Result<()>;
 
 pub type DisconnectResultFuture = dyn Future<Output = DisconnectResult>;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct NegotiatedSettings {
 
     /// The maximum QoS allowed between the server and client.
