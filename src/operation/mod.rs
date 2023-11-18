@@ -239,6 +239,7 @@ pub(crate) struct OperationalState {
 
     next_operation_id: u64,
     next_packet_id: u16,
+    has_connected_successfully: bool,
 
     encoder: Encoder,
     decoder: Decoder,
@@ -296,6 +297,7 @@ impl OperationalState {
             current_settings: None,
             next_operation_id : 1,
             next_packet_id : 1,
+            has_connected_successfully: false,
             encoder: Encoder::new(),
             decoder: Decoder::new(),
             next_ping_timepoint: None,
@@ -1137,6 +1139,7 @@ impl OperationalState {
             validate_connack_packet_inbound_internal(&connack)?;
 
             self.state = OperationalStateType::Connected;
+            self.has_connected_successfully = true;
 
             let settings = build_negotiated_settings(&self.config, &connack, &self.current_settings);
             debug!("[{} ms] handle_connack - negotiated settings: {}", self.elapsed_time_ms, &settings);
@@ -1529,7 +1532,18 @@ impl OperationalState {
             }
         }
 
-        // TODO: session resumption based on config properties
+        match self.config.rejoin_session_policy {
+            RejoinSessionPolicy::RejoinPostSuccess => {
+                connect.clean_start = self.has_connected_successfully;
+            }
+            RejoinSessionPolicy::RejoinAlways => {
+                connect.clean_start = false;
+            }
+            RejoinSessionPolicy::RejoinNever => {
+                connect.clean_start = true;
+            }
+        }
+
 
         return Box::new(MqttPacket::Connect(connect));
     }
