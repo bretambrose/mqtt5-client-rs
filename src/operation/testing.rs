@@ -419,7 +419,7 @@ mod operational_state_tests {
         }
     }
 
-    fn find_nth_packet_of_type<'a, T>(packet_sequence : T, packet_type : PacketType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<usize> where T : Iterator<Item = &'a Box<MqttPacket>> {
+    fn find_nth_packet_of_type<'a, T>(packet_sequence : T, packet_type : PacketType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<(usize, &'a Box<MqttPacket>)> where T : Iterator<Item = &'a Box<MqttPacket>> {
         let start = start_position.unwrap_or(0);
         let mut index = start;
         let mut seen = 0;
@@ -428,7 +428,7 @@ mod operational_state_tests {
             if mqtt_packet_to_packet_type(&*packet) == packet_type {
                 seen += 1;
                 if seen == count {
-                    return Some(index);
+                    return Some((index, packet));
                 }
             }
 
@@ -455,7 +455,7 @@ mod operational_state_tests {
         assert!(expected_sequence.eq(packet_sequence.skip(start)));
     }
 
-    fn find_nth_client_event_of_type<'a, T>(client_event_sequence : T, event_type : ClientEventType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<usize> where T : Iterator<Item = &'a Arc<ClientEvent>> {
+    fn find_nth_client_event_of_type<'a, T>(client_event_sequence : T, event_type : ClientEventType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<(usize, &'a Arc<ClientEvent>)> where T : Iterator<Item = &'a Arc<ClientEvent>> {
         let start = start_position.unwrap_or(0);
         let mut index = start;
         let mut seen = 0;
@@ -464,7 +464,7 @@ mod operational_state_tests {
             if client_event_to_client_event_type(&**event) == event_type {
                 seen += 1;
                 if seen == count {
-                    return Some(index);
+                    return Some((index, event));
                 }
             }
 
