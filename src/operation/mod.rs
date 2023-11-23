@@ -96,7 +96,7 @@ pub(crate) enum NetworkEvent<'a> {
 pub(crate) struct NetworkEventContext<'a> {
     event: NetworkEvent<'a>,
     current_time: Instant,
-    events: &'a mut VecDeque<Arc<ClientEvent>>,
+    client_events: &'a mut VecDeque<Arc<ClientEvent>>,
 }
 
 pub(crate) enum UserEvent {
@@ -696,7 +696,7 @@ impl OperationalState {
     }
 
     fn handle_network_event_write_completion(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
-        if self.state == OperationalStateType::Disconnected {
+        if self.state == OperationalStateType::Disconnected || !self.pending_write_completion {
             error!("[{} ms] handle_network_event_write_completion - called in invalid state", self.elapsed_time_ms);
             return Err(Mqtt5Error::InternalStateError);
         }
@@ -884,6 +884,8 @@ impl OperationalState {
     }
 
     fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
+        let to_socket_length = context.to_socket.len();
+
         loop {
             if self.current_operation.is_none() {
                 self.current_operation = self.dequeue_operation(mode);
@@ -914,7 +916,12 @@ impl OperationalState {
 
             let packet = &self.operations.get(&self.current_operation.unwrap()).unwrap().packet;
 
+
             let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
+            if context.to_socket.len() != to_socket_length {
+                self.pending_write_completion = true;
+            }
+
             if encode_result == EncodeResult::Complete {
                 debug!("[{} ms] service_queue - operation {} encoding complete", self.elapsed_time_ms, self.current_operation.unwrap());
                 self.on_current_operation_fully_written(context.current_time);
@@ -1136,7 +1143,7 @@ impl OperationalState {
 
             if connack.reason_code != ConnectReasonCode::Success {
                 error!("[{} ms] handle_connack - connection rejected with reason code {}", self.elapsed_time_ms, connect_reason_code_to_str(connack.reason_code));
-                context.events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
+                context.client_events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
                     error: Mqtt5Error::ConnectionRejected,
                     connack: Some(connack)
                 })));
@@ -1160,7 +1167,7 @@ impl OperationalState {
 
             self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
 
-            context.events.push_back(Arc::new(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
+            context.client_events.push_back(Arc::new(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
                 connack,
                 settings: self.current_settings.as_ref().unwrap().clone()
             })));
@@ -1383,14 +1390,14 @@ impl OperationalState {
             let qos = publish.qos;
             match qos {
                 QualityOfService::AtMostOnce => {
-                    context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                    context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
                         publish
                     })));
                     return Ok(());
                 }
 
                 QualityOfService::AtLeastOnce => {
-                    context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                    context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
                         publish
                     })));
 
@@ -1407,7 +1414,7 @@ impl OperationalState {
 
                 QualityOfService::ExactlyOnce => {
                     if !self.qos2_incomplete_incoming_publishes.contains(&packet_id) {
-                        context.events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
+                        context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
                             publish
                         })));
                         self.qos2_incomplete_incoming_publishes.insert(packet_id);
@@ -1442,7 +1449,7 @@ impl OperationalState {
         }
 
         if let MqttPacket::Disconnect(disconnect) = *packet {
-            context.events.push_back(Arc::new(ClientEvent::Disconnection(DisconnectionEvent{
+            context.client_events.push_back(Arc::new(ClientEvent::Disconnection(DisconnectionEvent{
                 error: Mqtt5Error::ServerSideDisconnect,
                 disconnect: Some(disconnect)
             })));
@@ -1604,6 +1611,11 @@ impl OperationalState {
             self.allocated_packet_ids.remove(&packet_id);
             operation.packet_id = None;
         }
+    }
+
+    // Test accessors
+    pub(crate) fn get_negotiated_settings(&self) -> &Option<NegotiatedSettings> {
+        &self.current_settings
     }
 }
 

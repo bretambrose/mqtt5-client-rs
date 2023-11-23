@@ -452,6 +452,45 @@ pub(crate) fn retain_handling_type_to_str (rht: RetainHandlingType) -> &'static 
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum PacketType {
+    Connect,
+    Connack,
+    Publish,
+    Puback,
+    Pubrec,
+    Pubrel,
+    Pubcomp,
+    Subscribe,
+    Suback,
+    Unsubscribe,
+    Unsuback,
+    Pingreq,
+    Pingresp,
+    Disconnect,
+    Auth,
+}
+
+pub(crate) fn mqtt_packet_to_packet_type(packet: &MqttPacket) -> PacketType {
+    match packet {
+        MqttPacket::Connect(_) => { PacketType::Connect }
+        MqttPacket::Connack(_) => { PacketType::Connack }
+        MqttPacket::Publish(_) => { PacketType::Publish}
+        MqttPacket::Puback(_) => { PacketType::Puback }
+        MqttPacket::Pubrec(_) => { PacketType::Pubrec }
+        MqttPacket::Pubrel(_) => { PacketType::Pubrel }
+        MqttPacket::Pubcomp(_) => { PacketType::Pubcomp }
+        MqttPacket::Subscribe(_) => { PacketType::Subscribe }
+        MqttPacket::Suback(_) => { PacketType::Suback }
+        MqttPacket::Unsubscribe(_) => { PacketType::Unsubscribe }
+        MqttPacket::Unsuback(_) => { PacketType::Unsuback }
+        MqttPacket::Pingreq(_) => { PacketType::Pingreq }
+        MqttPacket::Pingresp(_) => { PacketType::Pingresp }
+        MqttPacket::Disconnect(_) => { PacketType::Disconnect }
+        MqttPacket::Auth(_) => { PacketType::Auth }
+    }
+}
+
 pub(crate) fn packet_type_to_str(packet_type: u8) -> &'static str {
     match packet_type {
         PACKET_TYPE_CONNECT => { "Connect" }

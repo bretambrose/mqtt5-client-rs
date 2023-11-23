@@ -159,29 +159,36 @@ pub enum RejoinSessionPolicy {
     RejoinNever
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct ConnectionAttemptEvent {}
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct ConnectionSuccessEvent {
     pub connack: ConnackPacket,
     pub settings: NegotiatedSettings
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct ConnectionFailureEvent {
     pub error: Mqtt5Error,
     pub connack: Option<ConnackPacket>,
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct DisconnectionEvent {
     pub error: Mqtt5Error,
     pub disconnect: Option<DisconnectPacket>,
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct StoppedEvent {}
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub struct PublishReceivedEvent {
     pub publish: PublishPacket
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum ClientEvent {
     ConnectionAttempt(ConnectionAttemptEvent),
     ConnectionSuccess(ConnectionSuccessEvent),
