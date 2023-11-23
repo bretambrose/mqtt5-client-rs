@@ -189,6 +189,16 @@ pub struct PublishReceivedEvent {
 }
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
+pub(crate) enum ClientEventType {
+    ConnectionAttempt,
+    ConnectionSuccess,
+    ConnectionFailure,
+    Disconnection,
+    Stopped,
+    PublishReceived,
+}
+
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum ClientEvent {
     ConnectionAttempt(ConnectionAttemptEvent),
     ConnectionSuccess(ConnectionSuccessEvent),
@@ -196,6 +206,17 @@ pub enum ClientEvent {
     Disconnection(DisconnectionEvent),
     Stopped(StoppedEvent),
     PublishReceived(PublishReceivedEvent),
+}
+
+pub(crate) fn client_event_to_client_event_type(event: &ClientEvent) -> ClientEventType {
+    match event {
+        ClientEvent::ConnectionAttempt(_) => { ClientEventType::ConnectionAttempt },
+        ClientEvent::ConnectionSuccess(_) => { ClientEventType::ConnectionSuccess },
+        ClientEvent::ConnectionFailure(_) => { ClientEventType::ConnectionFailure },
+        ClientEvent::Disconnection(_) => { ClientEventType::Disconnection },
+        ClientEvent::Stopped(_) => { ClientEventType::Stopped },
+        ClientEvent::PublishReceived(_) => { ClientEventType::PublishReceived },
+    }
 }
 
 pub enum ClientEventListener {

@@ -419,6 +419,78 @@ mod operational_state_tests {
         }
     }
 
+    fn find_nth_packet_of_type<'a, T>(packet_sequence : T, packet_type : PacketType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<usize> where T : Iterator<Item = &'a Box<MqttPacket>> {
+        let start = start_position.unwrap_or(0);
+        let mut index = start;
+        let mut seen = 0;
+
+        for packet in packet_sequence.skip(start) {
+            if mqtt_packet_to_packet_type(&*packet) == packet_type {
+                seen += 1;
+                if seen == count {
+                    return Some(index);
+                }
+            }
+
+            index += 1;
+            if let Some(end) = end_position {
+                if index >= end {
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+
+    fn verify_packet_type_sequence<'a, T, U>(packet_sequence : T, expected_sequence : U, start_position : Option<usize>) where T : Iterator<Item = &'a Box<MqttPacket>>, U : Iterator<Item = PacketType> {
+        let start = start_position.unwrap_or(0);
+        let type_sequence = packet_sequence.skip(start).map(|packet|{ mqtt_packet_to_packet_type(packet) });
+
+        assert!(expected_sequence.eq(type_sequence));
+    }
+
+    fn verify_packet_sequence<'a, T>(packet_sequence : T, expected_sequence : T, start_position : Option<usize>) where T : Iterator<Item = &'a Box<MqttPacket>> {
+        let start = start_position.unwrap_or(0);
+        assert!(expected_sequence.eq(packet_sequence.skip(start)));
+    }
+
+    fn find_nth_client_event_of_type<'a, T>(client_event_sequence : T, event_type : ClientEventType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<usize> where T : Iterator<Item = &'a Arc<ClientEvent>> {
+        let start = start_position.unwrap_or(0);
+        let mut index = start;
+        let mut seen = 0;
+
+        for event in client_event_sequence.skip(start) {
+            if client_event_to_client_event_type(&**event) == event_type {
+                seen += 1;
+                if seen == count {
+                    return Some(index);
+                }
+            }
+
+            index += 1;
+            if let Some(end) = end_position {
+                if index >= end {
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+
+    fn verify_client_event_type_sequence<'a, T, U>(client_event_sequence : T, expected_sequence : U, start_position : Option<usize>) where T : Iterator<Item = &'a Arc<ClientEvent>>, U : Iterator<Item = ClientEventType> {
+        let start = start_position.unwrap_or(0);
+        let type_sequence = client_event_sequence.skip(start).map(|event|{ client_event_to_client_event_type(event) });
+
+        assert!(expected_sequence.eq(type_sequence));
+    }
+
+    fn verify_client_event_sequence<'a, T>(client_event_sequence : T, expected_sequence : T, start_position : Option<usize>) where T : Iterator<Item = &'a Arc<ClientEventType>> {
+        let start = start_position.unwrap_or(0);
+        assert!(expected_sequence.eq(client_event_sequence.skip(start)));
+    }
+
     #[test]
     fn network_event_handler_fails_while_disconnected() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
