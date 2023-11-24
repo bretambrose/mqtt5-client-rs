@@ -276,7 +276,6 @@ mod operational_state_tests {
             let mut service_context = ServiceContext {
                 to_socket: &mut to_socket,
                 current_time,
-                client_events: &mut self.client_event_stream
             };
 
             self.client_state.service(&mut service_context)
@@ -294,7 +293,6 @@ mod operational_state_tests {
                 let mut service_context = ServiceContext {
                     to_socket: &mut to_socket,
                     current_time,
-                    client_events: &mut self.client_event_stream
                 };
 
                 self.client_state.service(&mut service_context)?;
@@ -710,12 +708,7 @@ mod operational_state_tests {
         // service post-timeout
         assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-
-        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-            error: Mqtt5Error::ConnackTimeout,
-            connack: None
-        }));
-        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+        assert!(fixture.client_event_stream.is_empty());
     }
 
     #[test]
@@ -731,6 +724,8 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::ConnectionRejected), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
 
+        // connack rejection is the only time we generate a connection failure event, everything else
+        // is the responsibility of the caller
         let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
             error: Mqtt5Error::ConnectionRejected,
             connack: Some(create_connack_rejection())
@@ -748,12 +743,23 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+    }
 
-        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-            error: Mqtt5Error::ConnectionClosed,
-            connack: None
-        }));
-        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+    #[test]
+    fn pending_connack_state_incoming_garbage_data() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        let mut server_bytes = fixture.service_with_drain(0).unwrap();
+        server_bytes.clear();
+        let mut garbage = vec!(1, 2, 3, 4, 5, 6, 7, 8);
+        server_bytes.append(&mut garbage);
+
+        assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
     }
 
     #[test]

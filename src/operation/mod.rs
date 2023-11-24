@@ -21,7 +21,7 @@ use crate::spec::utils::*;
 use log::*;
 
 use std::cell::RefCell;
-use std::cmp::{min, Ordering, Reverse};
+use std::cmp::{Ordering, Reverse};
 use std::collections::*;
 use std::fmt::*;
 use std::mem;
@@ -114,7 +114,6 @@ pub(crate) struct UserEventContext {
 pub(crate) struct ServiceContext<'a> {
     to_socket: &'a mut Vec<u8>,
     current_time: Instant,
-    client_events: &'a mut VecDeque<Arc<ClientEvent>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -649,18 +648,6 @@ impl OperationalState {
         }
 
         info!("[{} ms] handle_network_event - connection closed, transitioning to Disconnected state", self.elapsed_time_ms);
-        if self.state == OperationalStateType::PendingConnack {
-            context.client_events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-                error: Mqtt5Error::ConnectionClosed,
-                connack: None
-            })));
-        } else {
-            context.client_events.push_back(Arc::new(ClientEvent::Disconnection(DisconnectionEvent{
-                error: Mqtt5Error::ConnectionClosed,
-                disconnect: None,
-            })));
-        }
-
         self.state = OperationalStateType::Disconnected;
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
@@ -759,7 +746,11 @@ impl OperationalState {
             decoded_packets: &mut decoded_packets
         };
 
-        self.decoder.decode_bytes(data, &mut decode_context)?;
+        let decode_result = self.decoder.decode_bytes(data, &mut decode_context);
+        if decode_result.is_err() {
+            self.state = OperationalStateType::Halted;
+            return decode_result;
+        }
 
         for packet in decoded_packets {
             let result = self.handle_packet(packet, context);
@@ -975,10 +966,6 @@ impl OperationalState {
 
         if context.current_time >= self.connack_timeout_timepoint.unwrap() {
             error!("[{} ms] service_pending_connack - connack timeout exceeded", self.elapsed_time_ms);
-            context.client_events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-                error: Mqtt5Error::ConnackTimeout,
-                connack: None
-            })));
             return Err(Mqtt5Error::ConnackTimeout);
         }
 
