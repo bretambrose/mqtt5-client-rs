@@ -21,7 +21,7 @@ mod operational_state_tests {
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveAll,
             rejoin_session_policy: RejoinSessionPolicy::RejoinAlways,
-            connack_timeout_millis: 30,
+            connack_timeout_millis: 10000,
             ping_timeout_millis: 30000,
             outbound_resolver: None,
         }
@@ -40,6 +40,24 @@ mod operational_state_tests {
                 assigned_client_identifier,
                 ..Default::default()
             }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn create_connack_rejection() -> ConnackPacket {
+        ConnackPacket {
+            reason_code : ConnectReasonCode::Banned,
+            ..Default::default()
+        }
+    }
+
+    fn handle_connect_with_failure_connack(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Connect(connect) = &**packet {
+            let response = Box::new(MqttPacket::Connack(create_connack_rejection()));
             response_packets.push_back(response);
 
             return Ok(());
@@ -204,7 +222,7 @@ mod operational_state_tests {
     impl OperationalStateTestFixture {
 
 
-        pub fn new(config : OperationalStateConfig) -> Self {
+        pub(crate) fn new(config : OperationalStateConfig) -> Self {
             Self {
                 base_timestamp : config.base_timestamp.clone(),
                 broker_decoder: Decoder::new(),
@@ -250,7 +268,21 @@ mod operational_state_tests {
             Ok(())
         }
 
-        pub fn service_with_drain(&mut self, elapsed_millis: u64) -> Mqtt5Result<Vec<u8>> {
+        pub(crate) fn service_once(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+            let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
+
+            let mut to_socket = Vec::with_capacity(4096);
+
+            let mut service_context = ServiceContext {
+                to_socket: &mut to_socket,
+                current_time,
+                client_events: &mut self.client_event_stream
+            };
+
+            self.client_state.service(&mut service_context)
+        }
+
+        pub(crate) fn service_with_drain(&mut self, elapsed_millis: u64) -> Mqtt5Result<Vec<u8>> {
             let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
             let mut done = false;
             let mut response_bytes = Vec::new();
@@ -262,6 +294,7 @@ mod operational_state_tests {
                 let mut service_context = ServiceContext {
                     to_socket: &mut to_socket,
                     current_time,
+                    client_events: &mut self.client_event_stream
                 };
 
                 self.client_state.service(&mut service_context)?;
@@ -306,7 +339,7 @@ mod operational_state_tests {
             Ok(response_bytes)
         }
 
-        pub fn on_connection_opened(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+        pub(crate) fn on_connection_opened(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::ConnectionOpened,
@@ -316,7 +349,7 @@ mod operational_state_tests {
             self.client_state.handle_network_event(&mut context)
         }
 
-        pub fn on_write_completion(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+        pub(crate) fn on_write_completion(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::WriteCompletion,
@@ -326,7 +359,7 @@ mod operational_state_tests {
             self.client_state.handle_network_event(&mut context)
         }
 
-        pub fn on_connection_closed(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+        pub(crate) fn on_connection_closed(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::ConnectionClosed,
@@ -336,7 +369,7 @@ mod operational_state_tests {
             self.client_state.handle_network_event(&mut context)
         }
 
-        pub fn on_incoming_bytes(&mut self, elapsed_millis: u64, bytes: &[u8]) -> Mqtt5Result<()> {
+        pub(crate) fn on_incoming_bytes(&mut self, elapsed_millis: u64, bytes: &[u8]) -> Mqtt5Result<()> {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::IncomingData(bytes),
@@ -346,7 +379,19 @@ mod operational_state_tests {
             self.client_state.handle_network_event(&mut context)
         }
 
-        pub fn subscribe(&mut self, elapsed_millis: u64, subscribe: SubscribePacket, options: SubscribeOptions) -> Mqtt5Result<oneshot::Receiver<SubscribeResult>> {
+        pub(crate) fn get_next_service_time(&mut self, elapsed_millis: u64) -> Option<u64> {
+            let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
+            let next_service_timepoint = self.client_state.get_next_service_timepoint(&current_time);
+
+            if let Some(service_timepoint) = &next_service_timepoint {
+                let next_service_millis = (*service_timepoint - self.base_timestamp).as_millis();
+                return Some(next_service_millis as u64);
+            }
+
+            None
+        }
+
+        pub(crate) fn subscribe(&mut self, elapsed_millis: u64, subscribe: SubscribePacket, options: SubscribeOptions) -> Mqtt5Result<oneshot::Receiver<SubscribeResult>> {
             let (sender, receiver) = oneshot::channel();
             let packet = Box::new(MqttPacket::Subscribe(subscribe));
             let subscribe_options = SubscribeOptionsInternal {
@@ -364,7 +409,7 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub fn unsubscribe(&mut self, elapsed_millis: u64, unsubscribe: UnsubscribePacket, options: UnsubscribeOptions) -> Mqtt5Result<oneshot::Receiver<UnsubscribeResult>> {
+        pub(crate) fn unsubscribe(&mut self, elapsed_millis: u64, unsubscribe: UnsubscribePacket, options: UnsubscribeOptions) -> Mqtt5Result<oneshot::Receiver<UnsubscribeResult>> {
             let (sender, receiver) = oneshot::channel();
             let packet = Box::new(MqttPacket::Unsubscribe(unsubscribe));
             let unsubscribe_options = UnsubscribeOptionsInternal {
@@ -382,7 +427,7 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub fn publish(&mut self, elapsed_millis: u64, publish: PublishPacket, options: PublishOptions) -> Mqtt5Result<oneshot::Receiver<PublishResult>> {
+        pub(crate) fn publish(&mut self, elapsed_millis: u64, publish: PublishPacket, options: PublishOptions) -> Mqtt5Result<oneshot::Receiver<PublishResult>> {
             let (sender, receiver) = oneshot::channel();
             let packet = Box::new(MqttPacket::Publish(publish));
             let publish_options = PublishOptionsInternal {
@@ -400,7 +445,7 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub fn disconnect(&mut self, elapsed_millis: u64, disconnect: DisconnectPacket, options: DisconnectOptions) -> Mqtt5Result<oneshot::Receiver<DisconnectResult>> {
+        pub(crate) fn disconnect(&mut self, elapsed_millis: u64, disconnect: DisconnectPacket, options: DisconnectOptions) -> Mqtt5Result<oneshot::Receiver<DisconnectResult>> {
             let (sender, receiver) = oneshot::channel();
             let packet = Box::new(MqttPacket::Disconnect(disconnect));
             let disconnect_options = DisconnectOptionsInternal {
@@ -416,6 +461,34 @@ mod operational_state_tests {
             })?;
 
             Ok(receiver)
+        }
+
+        pub(crate) fn advance_disconnected_to_state(&mut self, state: OperationalStateType, elapsed_millis: u64) -> Mqtt5Result<()> {
+            assert_eq!(OperationalStateType::Disconnected, self.client_state.state);
+
+            let result = match state {
+                OperationalStateType::PendingConnack => {
+                    self.on_connection_opened(elapsed_millis)
+                }
+                OperationalStateType::Connected => {
+                    self.on_connection_opened(elapsed_millis)?;
+                    let server_bytes = self.service_with_drain(elapsed_millis)?;
+                    self.on_incoming_bytes(elapsed_millis, server_bytes.as_slice())
+                }
+                OperationalStateType::PendingDisconnect => {
+                    panic!("Not supported");
+                }
+                OperationalStateType::Halted => {
+                    self.on_connection_opened(elapsed_millis)?;
+                    self.on_connection_opened(elapsed_millis).unwrap_or(());
+                    Ok(())
+                }
+                OperationalStateType::Disconnected => { Ok(()) }
+            };
+
+            assert_eq!(state, self.client_state.state);
+
+            result
         }
     }
 
@@ -492,7 +565,7 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn network_event_handler_fails_while_disconnected() {
+    fn disconnected_state_network_event_handler_fails() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
 
@@ -508,36 +581,186 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn network_event_handler_fails_while_pending_connack() {
+    fn disconnected_state_next_service_time_never() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+
+        assert_eq!(None, fixture.get_next_service_time(0));
+    }
+
+    fn verify_service_does_nothing(fixture : &mut OperationalStateTestFixture) {
+        let client_event_stream_length = fixture.client_event_stream.len();
+        let to_broker_packet_stream_length = fixture.to_broker_packet_stream.len();
+        let to_client_packet_stream_length = fixture.to_client_packet_stream.len();
+
+        let publish_receiver = fixture.publish(0, PublishPacket {
+            topic: "derp".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            ..Default::default()
+        }, PublishOptions {
+            timeout_in_millis: None
+        });
+        assert!(publish_receiver.is_ok());
+        assert!(fixture.client_state.operations.len() > 0);
+        assert!(fixture.client_state.user_operation_queue.len() > 0);
+
+        if let Ok(bytes) = fixture.service_with_drain(0) {
+            assert_eq!(0, bytes.len());
+        }
+
+        assert_eq!(client_event_stream_length, fixture.client_event_stream.len());
+        assert_eq!(to_broker_packet_stream_length, fixture.to_broker_packet_stream.len());
+        assert_eq!(to_client_packet_stream_length, fixture.to_client_packet_stream.len());
+    }
+
+    #[test]
+    fn disconnected_state_service_does_nothing() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+
+        verify_service_does_nothing(&mut fixture);
+    }
+
+    #[test]
+    fn halted_state_network_event_handler_fails() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Halted, 0));
+
+        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+
+        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+
+        let bytes : Vec<u8> = vec!(0, 1, 2, 3, 4, 5);
+        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_incoming_bytes(0, bytes.as_slice()).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+    }
+
+    #[test]
+    fn halted_state_next_service_time_never() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Halted, 0));
+
+        assert_eq!(None, fixture.get_next_service_time(0));
+    }
+
+    #[test]
+    fn halted_state_service_does_nothing() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Halted, 0));
+
+        verify_service_does_nothing(&mut fixture);
+    }
+
+    #[test]
+    fn halted_state_transition_out_on_connection_closed() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Halted, 0));
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+    }
+
+    #[test]
+    fn pending_connack_state_network_event_connection_opened_fails() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
         assert_eq!(Ok(()), fixture.on_connection_opened(0));
         assert_eq!(OperationalStateType::PendingConnack, fixture.client_state.state);
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
-
-        // write completion isn't invalid per se, but it is if nothing has been written yet
-        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
-        assert!(fixture.client_event_stream.is_empty());
-    }
-
-    fn advance_fixture_to_connected(fixture: &mut OperationalStateTestFixture, elapsed_millis: u64) -> Mqtt5Result<()> {
-        fixture.on_connection_opened(elapsed_millis)?;
-
-        let server_bytes = fixture.service_with_drain(elapsed_millis)?;
-
-        fixture.on_incoming_bytes(elapsed_millis, server_bytes.as_slice())?;
-
-        Ok(())
     }
 
     #[test]
-    fn can_connect_successfully() {
+    fn pending_connack_state_network_event_write_completion_fails() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
-        assert_eq!(Ok(()), advance_fixture_to_connected(&mut fixture, 0));
-        assert_eq!(OperationalStateType::Connected, fixture.client_state.state);
+        assert_eq!(Ok(()), fixture.on_connection_opened(0));
+        assert_eq!(OperationalStateType::PendingConnack, fixture.client_state.state);
+
+        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+    }
+
+    #[test]
+    fn pending_connack_state_connack_timeout() {
+        let config = build_standard_test_config();
+        let connack_timeout_millis = config.connack_timeout_millis;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 1));
+
+        assert_eq!(Some(1), fixture.get_next_service_time(1));
+
+        let service_result = fixture.service_with_drain(1);
+        assert!(service_result.is_ok());
+
+        assert_eq!(Some(1 + connack_timeout_millis as u64), fixture.get_next_service_time(1));
+
+        // nothing should happen until we cross over the timeout threshold
+        verify_service_does_nothing(&mut fixture);
+
+        // service post-timeout
+        assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+
+        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
+            error: Mqtt5Error::ConnackTimeout,
+            connack: None
+        }));
+        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+    }
+
+    #[test]
+    fn pending_connack_state_failure_connack() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_failure_connack));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        let server_bytes = fixture.service_with_drain(0).unwrap();
+
+        assert_eq!(Err(Mqtt5Error::ConnectionRejected), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+
+        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
+            error: Mqtt5Error::ConnectionRejected,
+            connack: Some(create_connack_rejection())
+        }));
+        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+    }
+
+    #[test]
+    fn pending_connack_state_connection_closed() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        let server_bytes = fixture.service_with_drain(0).unwrap();
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+
+        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
+            error: Mqtt5Error::ConnectionClosed,
+            connack: None
+        }));
+        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+    }
+
+    #[test]
+    fn cconnected_state_transition_to_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
         let connack = ConnackPacket {
             ..Default::default()
@@ -552,28 +775,25 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn network_event_handler_fails_while_connected() {
+    fn connected_state_network_event_connection_opened_fails() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
-        assert_eq!(Ok(()), advance_fixture_to_connected(&mut fixture, 0));
-        assert_eq!(OperationalStateType::Connected, fixture.client_state.state);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
         let client_event_count = fixture.client_event_stream.len();
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
-        assert_eq!(client_event_count, fixture.client_event_stream.len());
-
-        // write completion isn't invalid per se, but it is if nothing has been written yet
-        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert_eq!(client_event_count, fixture.client_event_stream.len());
     }
-
-/*
 
     #[test]
-    fn next_service_time_while_disconnected() {
-        let config = build_standard_test_config();
-        let state = OperationalState::new(config);
-    }
+    fn connected_state_network_event_write_completion_fails() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
- */
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+    }
 }
