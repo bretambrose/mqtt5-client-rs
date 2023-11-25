@@ -45,7 +45,7 @@ pub(crate) struct OutboundValidationContext<'a> {
 pub(crate) struct InboundValidationContext<'a> {
 
     // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
-    pub negotiated_settings : &'a NegotiatedSettings,
+    pub negotiated_settings : Option<&'a NegotiatedSettings>,
 }
 
 fn validate_user_property(property: &UserProperty, error: Mqtt5Error, packet_type: &str) -> Mqtt5Result<()> {
@@ -172,7 +172,7 @@ pub(crate) mod testing {
 
     pub(crate) fn create_inbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> InboundValidationContext {
         InboundValidationContext {
-            negotiated_settings : &pinned.settings,
+            negotiated_settings : Some(&pinned.settings),
         }
     }
 

@@ -17,6 +17,7 @@ use crate::encode::utils::*;
 use crate::spec::*;
 use crate::spec::connack::validate_connack_packet_inbound_internal;
 use crate::spec::utils::*;
+use crate::validate::*;
 
 use log::*;
 
@@ -343,10 +344,12 @@ impl OperationalState {
             };
 
         self.log_operational_state();
-        debug!("[{} ms] service - final result: {:?}", self.elapsed_time_ms, result);
 
         if result.is_err() {
+            error!("[{} ms] service - final result: {:?}", self.elapsed_time_ms, result);
             self.change_state(OperationalStateType::Halted);
+        } else {
+            debug!("[{} ms] service - final result: {:?}", self.elapsed_time_ms, result);
         }
 
         result
@@ -620,7 +623,7 @@ impl OperationalState {
             return Err(Mqtt5Error::InternalStateError);
         }
 
-        info!("[{} ms] handle_network_event_connection_opened - transitioning to PendingConnack state", self.elapsed_time_ms);
+        info!("[{} ms] handle_network_event_connection_opened", self.elapsed_time_ms);
         self.change_state(OperationalStateType::PendingConnack);
         self.current_operation = None;
         self.pending_write_completion = false;
@@ -647,7 +650,7 @@ impl OperationalState {
             return Err(Mqtt5Error::InternalStateError);
         }
 
-        info!("[{} ms] handle_network_event - connection closed, transitioning to Disconnected state", self.elapsed_time_ms);
+        info!("[{} ms] handle_network_event_connection_closed", self.elapsed_time_ms);
         self.change_state(OperationalStateType::Disconnected);
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
@@ -760,13 +763,13 @@ impl OperationalState {
 
         if self.state == OperationalStateType::PendingConnack {
             if self.is_connect_in_queue() {
-                self.change_state(OperationalStateType::Halted);
                 error!("[{} ms] handle_network_event_incoming_data - data received before CONNECT sent", self.elapsed_time_ms);
+                self.change_state(OperationalStateType::Halted);
                 return Err(Mqtt5Error::ProtocolError);
             }
         }
 
-        debug!("[{} ms] handle_network_event - incoming data", self.elapsed_time_ms);
+        debug!("[{} ms] handle_network_event_incoming_data received {} bytes", self.elapsed_time_ms, data.len());
         let mut decoded_packets = VecDeque::new();
         let mut decode_context = DecodingContext {
             maximum_packet_size: self.get_maximum_incoming_packet_size(),
@@ -775,15 +778,32 @@ impl OperationalState {
 
         let decode_result = self.decoder.decode_bytes(data, &mut decode_context);
         if decode_result.is_err() {
+            error!("[{} ms] handle_network_event_incoming_data - decode failure", self.elapsed_time_ms);
             self.change_state(OperationalStateType::Halted);
             return decode_result;
         }
 
         for packet in decoded_packets {
-            let result = self.handle_packet(packet, context);
-            if result.is_err() {
+            let mut validation_context = InboundValidationContext {
+                negotiated_settings : None
+            };
+
+            if let Some(settings) = &self.current_settings {
+                validation_context.negotiated_settings = Some(settings);
+            }
+
+            let validation_result = validate_packet_inbound_internal(&*packet, &validation_context);
+            if validation_result.is_err() {
+                error!("[{} ms] handle_network_event_incoming_data - incoming packet validation failure", self.elapsed_time_ms);
                 self.change_state(OperationalStateType::Halted);
-                return result;
+                return validation_result;
+            }
+
+            let handler_result = self.handle_packet(packet, context);
+            if handler_result.is_err() {
+                error!("[{} ms] handle_network_event_incoming_data - packet handling failure", self.elapsed_time_ms);
+                self.change_state(OperationalStateType::Halted);
+                return handler_result;
             }
         }
 

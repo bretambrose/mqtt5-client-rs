@@ -799,7 +799,7 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn pending_connack_state_non_connack_packet() {
+    fn pending_connack_state_unexpected_packets() {
         // Not a protocol error: Connack, Auth
         let packets = vec!(
             MqttPacket::Connect(ConnectPacket {
@@ -808,30 +808,39 @@ mod operational_state_tests {
             MqttPacket::Pingreq(PingreqPacket {}),
             MqttPacket::Pingresp(PingrespPacket {}),
             MqttPacket::Publish(PublishPacket {
+                topic: "hello/there".to_string(),
                 ..Default::default()
             }),
             MqttPacket::Puback(PubackPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Pubrec(PubrecPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Pubrel(PubrelPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Pubcomp(PubcompPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Subscribe(SubscribePacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Suback(SubackPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Unsubscribe(UnsubscribePacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Unsuback(UnsubackPacket {
+                packet_id : 1,
                 ..Default::default()
             }),
             MqttPacket::Disconnect(DisconnectPacket {
@@ -859,6 +868,16 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
+    }
+
+    #[test]
+    fn pending_connack_state_transition_to_disconnected() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
     }
 
     #[test]
@@ -900,5 +919,133 @@ mod operational_state_tests {
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+    }
+
+    #[test]
+    fn cconnected_state_transition_to_disconnected() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+    }
+
+    #[test]
+    fn connected_state_incoming_garbage_data() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let mut garbage = vec!(1, 2, 3, 4, 5, 6, 7, 8);
+
+        assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, garbage.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+    }
+
+    fn do_connected_state_unexpected_packet_test(packet : MqttPacket) {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let mut buffer = Vec::new();
+        assert_eq!(Ok(()), encode_packet_to_buffer(packet, &mut buffer));
+
+        assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, buffer.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+    }
+
+    #[test]
+    fn cconnected_state_unexpected_packets() {
+        let packets = vec!(
+            MqttPacket::Connect(ConnectPacket{
+                ..Default::default()
+            }),
+            MqttPacket::Connack(ConnackPacket{
+                ..Default::default()
+            }),
+            MqttPacket::Subscribe(SubscribePacket{
+                ..Default::default()
+            }),
+            MqttPacket::Unsubscribe(UnsubscribePacket{
+                ..Default::default()
+            }),
+            MqttPacket::Pingreq(PingreqPacket{})
+        );
+
+        for packet in packets {
+            do_connected_state_unexpected_packet_test(packet);
+        }
+    }
+
+    fn do_connected_state_invalid_ack_packet_id_test(packet : MqttPacket, error: Mqtt5Error) {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let mut buffer = Vec::new();
+        assert_eq!(Ok(()), encode_packet_to_buffer(packet, &mut buffer));
+
+        assert_eq!(Err(error), fixture.on_incoming_bytes(0, buffer.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+    }
+
+    #[test]
+    fn cconnected_state_unknown_ack_packet_id() {
+        let packets = vec!(
+            MqttPacket::Puback(PubackPacket{
+                packet_id : 5,
+                ..Default::default()
+            }),
+            MqttPacket::Suback(SubackPacket{
+                packet_id : 42,
+                ..Default::default()
+            }),
+            MqttPacket::Unsuback(UnsubackPacket{
+                packet_id : 47,
+                ..Default::default()
+            }),
+            MqttPacket::Pubrec(PubrecPacket{
+                packet_id : 666,
+                ..Default::default()
+            }),
+            MqttPacket::Pubcomp(PubcompPacket{
+                packet_id : 1023,
+                ..Default::default()
+            }),
+        );
+
+        for packet in packets {
+            do_connected_state_invalid_ack_packet_id_test(packet, Mqtt5Error::ProtocolError);
+        }
+    }
+
+    #[test]
+    fn cconnected_state_invalid_ack_packet_id() {
+        let packets = vec!(
+            (MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtLeastOnce,
+                ..Default::default()
+            }), Mqtt5Error::PublishPacketValidation),
+            (MqttPacket::Puback(PubackPacket{
+                ..Default::default()
+            }), Mqtt5Error::PubackPacketValidation),
+            (MqttPacket::Suback(SubackPacket{
+                ..Default::default()
+            }), Mqtt5Error::SubackPacketValidation),
+            (MqttPacket::Unsuback(UnsubackPacket{
+                ..Default::default()
+            }), Mqtt5Error::UnsubackPacketValidation),
+            (MqttPacket::Pubrec(PubrecPacket{
+                ..Default::default()
+            }), Mqtt5Error::PubrecPacketValidation),
+            (MqttPacket::Pubcomp(PubcompPacket{
+                ..Default::default()
+            }), Mqtt5Error::PubcompPacketValidation),
+        );
+
+        for (packet, expected_error) in packets {
+            do_connected_state_invalid_ack_packet_id_test(packet, expected_error);
+        }
     }
 }
