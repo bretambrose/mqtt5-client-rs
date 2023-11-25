@@ -346,7 +346,7 @@ impl OperationalState {
         debug!("[{} ms] service - final result: {:?}", self.elapsed_time_ms, result);
 
         if result.is_err() {
-            self.state = OperationalStateType::Halted;
+            self.change_state(OperationalStateType::Halted);
         }
 
         result
@@ -616,12 +616,12 @@ impl OperationalState {
     fn handle_network_event_connection_opened(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
         if self.state != OperationalStateType::Disconnected {
             error!("[{} ms] handle_network_event_connection_opened - called in invalid state", self.elapsed_time_ms);
-            self.state = OperationalStateType::Halted;
+            self.change_state(OperationalStateType::Halted);
             return Err(Mqtt5Error::InternalStateError);
         }
 
         info!("[{} ms] handle_network_event_connection_opened - transitioning to PendingConnack state", self.elapsed_time_ms);
-        self.state = OperationalStateType::PendingConnack;
+        self.change_state(OperationalStateType::PendingConnack);
         self.current_operation = None;
         self.pending_write_completion = false;
         self.pending_publish_count = 0;
@@ -648,7 +648,7 @@ impl OperationalState {
         }
 
         info!("[{} ms] handle_network_event - connection closed, transitioning to Disconnected state", self.elapsed_time_ms);
-        self.state = OperationalStateType::Disconnected;
+        self.change_state(OperationalStateType::Disconnected);
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
         self.ping_timeout_timepoint = None;
@@ -717,7 +717,7 @@ impl OperationalState {
 
         if !self.pending_write_completion {
             error!("[{} ms] handle_network_event_write_completion - called with no pending completion", self.elapsed_time_ms);
-            self.state = OperationalStateType::Halted;
+            self.change_state(OperationalStateType::Halted);
 
             return Err(Mqtt5Error::InternalStateError);
         }
@@ -733,10 +733,37 @@ impl OperationalState {
         result
     }
 
+    fn change_state(&mut self, next_state: OperationalStateType) {
+        debug!("[{} ms] change_state - transitioning from {} to {}", self.elapsed_time_ms, self.state, next_state);
+        self.state = next_state;
+    }
+
+    fn is_connect_packet(&self, id: u64) -> bool {
+        if let Some(operation) = self.operations.get(&id) {
+            return mqtt_packet_to_packet_type(&*operation.packet) == PacketType::Connect;
+        }
+
+        false
+    }
+
+    fn is_connect_in_queue(&self) -> bool {
+        self.high_priority_operation_queue.iter().fold(false, |accum, id| {
+            accum || self.is_connect_packet(*id)
+        })
+    }
+
     fn handle_network_event_incoming_data(&mut self, context: &mut NetworkEventContext, data: &[u8]) -> Mqtt5Result<()> {
         if self.state == OperationalStateType::Disconnected || self.state == OperationalStateType::Halted {
             error!("[{} ms] handle_network_event_incoming_data - called in invalid state", self.elapsed_time_ms);
             return Err(Mqtt5Error::InternalStateError);
+        }
+
+        if self.state == OperationalStateType::PendingConnack {
+            if self.is_connect_in_queue() {
+                self.change_state(OperationalStateType::Halted);
+                error!("[{} ms] handle_network_event_incoming_data - data received before CONNECT sent", self.elapsed_time_ms);
+                return Err(Mqtt5Error::ProtocolError);
+            }
         }
 
         debug!("[{} ms] handle_network_event - incoming data", self.elapsed_time_ms);
@@ -748,14 +775,14 @@ impl OperationalState {
 
         let decode_result = self.decoder.decode_bytes(data, &mut decode_context);
         if decode_result.is_err() {
-            self.state = OperationalStateType::Halted;
+            self.change_state(OperationalStateType::Halted);
             return decode_result;
         }
 
         for packet in decoded_packets {
             let result = self.handle_packet(packet, context);
             if result.is_err() {
-                self.state = OperationalStateType::Halted;
+                self.change_state(OperationalStateType::Halted);
                 return result;
             }
         }
@@ -1174,7 +1201,7 @@ impl OperationalState {
 
             validate_connack_packet_inbound_internal(&connack)?;
 
-            self.state = OperationalStateType::Connected;
+            self.change_state(OperationalStateType::Connected);
             self.has_connected_successfully = true;
 
             let settings = build_negotiated_settings(&self.config, &connack, &self.current_settings);

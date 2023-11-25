@@ -56,7 +56,7 @@ mod operational_state_tests {
     }
 
     fn handle_connect_with_failure_connack(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
-        if let MqttPacket::Connect(connect) = &**packet {
+        if let MqttPacket::Connect(_) = &**packet {
             let response = Box::new(MqttPacket::Connack(create_connack_rejection()));
             response_packets.push_back(response);
 
@@ -739,7 +739,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
 
-        let server_bytes = fixture.service_with_drain(0).unwrap();
+        let _ = fixture.service_with_drain(0).unwrap();
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
@@ -758,6 +758,105 @@ mod operational_state_tests {
         server_bytes.append(&mut garbage);
 
         assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+    }
+
+    fn encode_packet_to_buffer(packet: MqttPacket, buffer: &mut Vec<u8>) -> Mqtt5Result<()> {
+        let mut encode_buffer = Vec::with_capacity(4096);
+        let encoding_context = EncodingContext {
+            outbound_alias_resolution: OutboundAliasResolution {
+                skip_topic: false,
+                alias: None,
+            }
+        };
+
+        let mut encoder = Encoder::new();
+        encoder.reset(&packet, &encoding_context)?;
+
+        let mut encode_result = EncodeResult::Full;
+        while encode_result == EncodeResult::Full {
+            encode_result = encoder.encode(&packet, &mut encode_buffer)?;
+            buffer.append(&mut encode_buffer);
+        }
+
+        Ok(())
+    }
+
+    fn do_pending_connack_state_non_connack_packet_test(packet: MqttPacket) {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        let mut server_bytes = fixture.service_with_drain(0).unwrap();
+        server_bytes.clear();
+
+        assert_eq!(Ok(()), encode_packet_to_buffer(packet, &mut server_bytes));
+
+        assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert!(fixture.client_event_stream.is_empty());
+    }
+
+    #[test]
+    fn pending_connack_state_non_connack_packet() {
+        // Not a protocol error: Connack, Auth
+        let packets = vec!(
+            MqttPacket::Connect(ConnectPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Pingreq(PingreqPacket {}),
+            MqttPacket::Pingresp(PingrespPacket {}),
+            MqttPacket::Publish(PublishPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Puback(PubackPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Pubrec(PubrecPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Pubrel(PubrelPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Pubcomp(PubcompPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Subscribe(SubscribePacket {
+                ..Default::default()
+            }),
+            MqttPacket::Suback(SubackPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Unsubscribe(UnsubscribePacket {
+                ..Default::default()
+            }),
+            MqttPacket::Unsuback(UnsubackPacket {
+                ..Default::default()
+            }),
+            MqttPacket::Disconnect(DisconnectPacket {
+                ..Default::default()
+            }),
+        );
+
+        for packet in packets {
+            do_pending_connack_state_non_connack_packet_test(packet);
+        }
+    }
+
+    #[test]
+    fn pending_connack_state_connack_received_too_soon() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
+
+        let mut server_bytes = Vec::new();
+
+        assert_eq!(Ok(()), encode_packet_to_buffer(MqttPacket::Connack(ConnackPacket{
+            ..Default::default()
+        }), &mut server_bytes));
+
+        assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
     }
