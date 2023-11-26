@@ -337,6 +337,14 @@ mod operational_state_tests {
             Ok(response_bytes)
         }
 
+        pub(crate) fn service_round_trip(&mut self, service_time: u64, response_time: u64) -> Mqtt5Result<()> {
+            let server_bytes = self.service_with_drain(service_time)?;
+
+            self.on_incoming_bytes(response_time, server_bytes.as_slice())?;
+
+            Ok(())
+        }
+
         pub(crate) fn on_connection_opened(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
@@ -1117,6 +1125,192 @@ mod operational_state_tests {
         do_ping_sequence_test(7, 999, 131);
     }
 
+    fn do_connected_state_ping_push_out_test(operation_function: Box<dyn Fn(&mut OperationalStateTestFixture, u64, u64) -> ()>, transmission_time: u64, response_time: u64, expected_push_out: u64) {
+        const ping_timeout_millis : u32 = 10000;
+        const keep_alive_seconds : u16 = 20;
+        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+
+        let mut config = build_standard_test_config();
+        config.ping_timeout_millis = ping_timeout_millis;
+        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        operation_function(&mut fixture, transmission_time, response_time);
+
+        assert_eq!(Some(expected_push_out + keep_alive_milliseconds), fixture.get_next_service_time(response_time));
+    }
+
+    fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64) {
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::AtLeastOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+
+        let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Subscribe, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Subscribe(to_broker_subscribe) = &**to_broker_packet {
+            assert_eq!(subscribe.subscriptions, to_broker_subscribe.subscriptions);
+        } else {
+            panic!("Expected subscribe");
+        }
+
+        let result = subscribe_result_receiver.blocking_recv();
+        assert!(!result.is_err());
+
+        let subscribe_result = result.unwrap();
+        assert!(!subscribe_result.is_err());
+
+        let suback_result = subscribe_result.unwrap();
+        assert_eq!(1, suback_result.reason_codes.len());
+        assert_eq!(SubackReasonCode::GrantedQos1, suback_result.reason_codes[0]);
+
+        let (index, to_client_packet) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Suback, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Suback(to_client_suback) = &**to_client_packet {
+            assert_eq!(suback_result, *to_client_suback);
+        } else {
+            panic!("Expected suback");
+        }
+    }
+
+    fn do_publish_success(fixture : &mut OperationalStateTestFixture, qos: QualityOfService, transmission_time: u64, response_time: u64) {
+        let publish = PublishPacket {
+            topic: "hello/world".to_string(),
+            qos,
+            ..Default::default()
+        };
+
+        let publish_result_receiver = fixture.publish(0, publish.clone(), PublishOptions{ ..Default::default() }).unwrap();
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+
+        let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Publish(to_broker_publish) = &**to_broker_packet {
+            assert_eq!(publish.qos, to_broker_publish.qos);
+            assert_eq!(publish.topic, to_broker_publish.topic);
+        } else {
+            panic!("Expected publish");
+        }
+
+        // pubrel/pubcomp needs another full service cycle
+        if qos == QualityOfService::ExactlyOnce {
+            assert_eq!(Ok(()), fixture.service_round_trip(response_time, response_time));
+        }
+
+        let result = publish_result_receiver.blocking_recv();
+        assert!(!result.is_err());
+
+        let op_result = result.unwrap();
+        assert!(!op_result.is_err());
+
+        let publish_response = op_result.unwrap();
+        match publish_response {
+            PublishResponse::Qos0 => {
+                assert_eq!(QualityOfService::AtMostOnce, qos);
+            }
+            PublishResponse::Qos1(puback) => {
+                assert_eq!(QualityOfService::AtLeastOnce, qos);
+                let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Puback, 1, None, None).unwrap();
+                assert_eq!(1, index);
+            }
+            PublishResponse::Qos2(_) => {
+                assert_eq!(QualityOfService::ExactlyOnce, qos);
+                let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pubrec, 1, None, None).unwrap();
+                assert_eq!(1, index);
+                let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pubcomp, 1, None, None).unwrap();
+                assert_eq!(2, index);
+
+                let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 1, None, None).unwrap();
+                assert_eq!(2, index);
+            }
+        }
+    }
+
+    fn do_unsubscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64) {
+        let unsubscribe = UnsubscribePacket {
+            topic_filters: vec!("hello/world".to_string()),
+            ..Default::default()
+        };
+
+        let unsubscribe_result_receiver = fixture.unsubscribe(0, unsubscribe.clone(), UnsubscribeOptions{ ..Default::default() }).unwrap();
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+
+        let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Unsubscribe, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Unsubscribe(to_broker_unsubscribe) = &**to_broker_packet {
+            assert_eq!(unsubscribe.topic_filters, to_broker_unsubscribe.topic_filters);
+        } else {
+            panic!("Expected unsubscribe");
+        }
+
+        let result = unsubscribe_result_receiver.blocking_recv();
+        assert!(!result.is_err());
+
+        let unsubscribe_result = result.unwrap();
+        assert!(!unsubscribe_result.is_err());
+
+        let unsuback_result = unsubscribe_result.unwrap();
+        assert_eq!(1, unsuback_result.reason_codes.len());
+        assert_eq!(UnsubackReasonCode::Success, unsuback_result.reason_codes[0]);
+
+        let (index, to_client_packet) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Unsuback, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Unsuback(to_client_unsuback) = &**to_client_packet {
+            assert_eq!(unsuback_result, *to_client_unsuback);
+        } else {
+            panic!("Expected unsuback");
+        }
+    }
+
+    #[test]
+    fn connected_state_ping_push_out_by_subscribe_completion() {
+        do_connected_state_ping_push_out_test(Box::new(do_subscribe_success), 666, 1337, 666);
+    }
+
+    #[test]
+    fn connected_state_ping_push_out_by_unsubscribe_completion() {
+        do_connected_state_ping_push_out_test(Box::new(do_unsubscribe_success), 1337, 1551, 1337);
+    }
+
+    #[test]
+    fn connected_state_ping_no_push_out_by_qos0_publish_completion() {
+        do_connected_state_ping_push_out_test(Box::new(
+            |fixture, transmission_time, response_time|{
+                do_publish_success(fixture, QualityOfService::AtMostOnce, transmission_time, response_time);
+            }
+        ), 666, 1336, 0);
+    }
+
+    #[test]
+    fn connected_state_ping_push_out_by_qos1_publish_completion() {
+        do_connected_state_ping_push_out_test(Box::new(
+            |fixture, transmission_time, response_time|{
+                do_publish_success(fixture, QualityOfService::AtLeastOnce, transmission_time, response_time);
+            }
+        ), 333, 777, 333);
+    }
+
+    #[test]
+    fn connected_state_ping_push_out_by_qos2_publish_completion() {
+        do_connected_state_ping_push_out_test(Box::new(
+            |fixture, transmission_time, response_time|{
+                do_publish_success(fixture, QualityOfService::ExactlyOnce, transmission_time, response_time);
+            }
+        ), 444, 888, 888);
+    }
+
     #[test]
     fn connected_state_ping_pingresp_timeout() {
         const connack_time : u64 = 11;
@@ -1152,5 +1346,50 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::PingTimeout), fixture.service_once(ping_timeout_timepoint));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
+    }
+
+    #[test]
+    fn connected_state_ping_no_pings_on_zero_keep_alive() {
+        // TODO
+    }
+
+    #[test]
+    fn connected_state_subscribe_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_subscribe_success(&mut fixture, 1, 2);
+    }
+
+    #[test]
+    fn connected_state_unsubscribe_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_unsubscribe_success(&mut fixture, 3, 7);
+    }
+
+    #[test]
+    fn connected_state_publish_qos0_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::AtMostOnce, 11, 13);
+    }
+
+    #[test]
+    fn connected_state_publish_qos1_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::AtLeastOnce, 17, 23);
+    }
+
+    #[test]
+    fn connected_state_publish_qos2_success() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::ExactlyOnce, 29, 31);
     }
 }

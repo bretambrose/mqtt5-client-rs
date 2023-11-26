@@ -39,6 +39,10 @@ enum MqttOperationOptions {
 pub(crate) struct MqttOperation {
     id: u64,
     packet: Box<MqttPacket>,
+
+    // unpleasant hack to let the same operation track both the original qos 2 pulish and the pubrel
+    pubrel_packet: Option<Box<MqttPacket>>,
+
     packet_id: Option<u16>,
     options: Option<MqttOperationOptions>,
 
@@ -954,7 +958,7 @@ impl OperationalState {
 
         if let (Some(extension_base), Some(settings)) = (extension_base_option, &self.current_settings) {
             let potential_extension = extension_base + Duration::from_secs(settings.server_keep_alive as u64);
-            if potential_extension > self.next_ping_timepoint.unwrap() {
+            if self.next_ping_timepoint.is_some() && potential_extension > self.next_ping_timepoint.unwrap() {
                 self.next_ping_timepoint = Some(potential_extension);
             }
         }
@@ -1021,7 +1025,11 @@ impl OperationalState {
                 self.acquire_packet_id_for_operation(current_operation_id)?;
 
                 let operation = self.operations.get(&current_operation_id).unwrap();
-                let packet = &*operation.packet;
+                let mut packet = &*operation.packet;
+                if let Some(pubrel) = &operation.pubrel_packet {
+                    packet = &**pubrel;
+                }
+
                 let encode_context = EncodingContext {
                     outbound_alias_resolution: self.compute_outbound_alias_resolution(packet)
                 };
@@ -1076,7 +1084,11 @@ impl OperationalState {
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
                 self.ping_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.ping_timeout_millis as u64));
-                self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
+
+                let server_keep_alive = self.current_settings.as_ref().unwrap().server_keep_alive as u64;
+                if server_keep_alive > 0 {
+                    self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(server_keep_alive));
+                }
             }
         }
 
@@ -1263,13 +1275,18 @@ impl OperationalState {
             let settings = build_negotiated_settings(&self.config, &connack, &self.current_settings);
             debug!("[{} ms] handle_connack - negotiated settings: {}", self.elapsed_time_ms, &settings);
 
+            let server_keep_alive = settings.server_keep_alive as u64;
             self.current_settings = Some(settings);
             self.connack_timeout_timepoint = None;
             self.outbound_alias_resolver.borrow_mut().reset_for_new_connection(connack.topic_alias_maximum.unwrap_or(0));
             self.inbound_alias_resolver.reset_for_new_connection();
 
             self.ping_timeout_timepoint = None;
-            self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
+            if server_keep_alive > 0 {
+                self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(server_keep_alive));
+            } else {
+                self.next_ping_timepoint = None;
+            }
 
             self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
 
@@ -1400,10 +1417,10 @@ impl OperationalState {
                     if let Some(mut operation) = operation_option {
                         if let MqttPacket::Publish(publish) = &*operation.packet {
                             if publish.qos == QualityOfService::ExactlyOnce {
-                                operation.packet = Box::new(MqttPacket::Pubrel(PubrelPacket {
+                                operation.pubrel_packet = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
                                     packet_id: pubrec.packet_id,
                                     ..Default::default()
-                                }));
+                                })));
 
                                 self.enqueue_operation(*operation_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
                                 return Ok(());
@@ -1633,6 +1650,7 @@ impl OperationalState {
         let operation = MqttOperation {
             id,
             packet,
+            pubrel_packet: None,
             packet_id: None,
             options,
             ping_extension_base_timepoint : None,
@@ -1770,14 +1788,21 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
 fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
     match operation_options {
         MqttOperationOptions::Publish(publish_options) => {
-            if let OperationResponse::Publish(publish_result) = completion_result.unwrap() {
-                let sender = publish_options.response_sender.take().unwrap();
-                if sender.send(Ok(publish_result)).is_err() {
-                    return Err(Mqtt5Error::OperationChannelSendError);
+            let mut publish_response = PublishResponse::Qos0;
+            if completion_result.is_some() {
+                if let Some(OperationResponse::Publish(publish_result)) = completion_result {
+                    publish_response = publish_result;
+                } else {
+                    return Err(Mqtt5Error::InternalStateError);
                 }
-
-                return Ok(());
             }
+
+            let sender = publish_options.response_sender.take().unwrap();
+            if sender.send(Ok(publish_response)).is_err() {
+                return Err(Mqtt5Error::OperationChannelSendError);
+            }
+
+            return Ok(());
         }
         MqttOperationOptions::Subscribe(subscribe_options) => {
             if let OperationResponse::Subscribe(suback) = completion_result.unwrap() {
