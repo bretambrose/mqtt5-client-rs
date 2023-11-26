@@ -41,6 +41,19 @@ pub(crate) struct MqttOperation {
     packet: Box<MqttPacket>,
     packet_id: Option<u16>,
     options: Option<MqttOperationOptions>,
+
+    // Always starts as None
+    //
+    // Set when the operation is "essentially" flushed to the socket (but before write completion)
+    // When the operation completes (by either write completion for pingreqs and qos 0 publishes,
+    // final ack for subscribe, unsubscribe and qos1+ publishes), we bump the next ping
+    // timepoint to at least (this value + the keep alive interval).
+    //
+    // The details are complicated, but it boils down to this:
+    //
+    // The next ping timepoint is based on the transmission time of the last broker-acknowledged
+    // packet sent by the client.
+    ping_extension_base_timepoint: Option<Instant>,
 }
 
 impl MqttOperation {
@@ -567,6 +580,8 @@ impl OperationalState {
             self.pending_ack_operations.remove(&packet_id);
         }
 
+        self.apply_ping_extension_on_operation_success(&operation);
+
         if operation.options.is_none() {
             info!("[{} ms] complete_operation_as_success - internal {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
             return Ok(())
@@ -922,8 +937,31 @@ impl OperationalState {
         }
     }
 
+    fn apply_ping_extension_on_operation_success(&mut self, operation: &MqttOperation) {
+        let mut extension_base_option : Option<Instant> = None;
+
+        match &*operation.packet {
+            MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
+                extension_base_option = operation.ping_extension_base_timepoint;
+            }
+            MqttPacket::Publish(publish) => {
+                if publish.qos != QualityOfService::AtMostOnce {
+                    extension_base_option = operation.ping_extension_base_timepoint;
+                }
+            }
+            _ => {}
+        }
+
+        if let (Some(extension_base), Some(settings)) = (extension_base_option, &self.current_settings) {
+            let potential_extension = extension_base + Duration::from_secs(settings.server_keep_alive as u64);
+            if potential_extension > self.next_ping_timepoint.unwrap() {
+                self.next_ping_timepoint = Some(potential_extension);
+            }
+        }
+    }
+
     fn on_current_operation_fully_written(&mut self, now: Instant) -> () {
-        let operation = self.operations.get(&self.current_operation.unwrap()).unwrap();
+        let operation = self.operations.get_mut(&self.current_operation.unwrap()).unwrap();
         let packet = &*operation.packet;
         match packet {
             MqttPacket::Subscribe(subscribe) => {
@@ -947,6 +985,8 @@ impl OperationalState {
                 self.pending_write_completion_operations.push_back(operation.id);
             }
         }
+
+        operation.ping_extension_base_timepoint = Some(now);
 
         let id = operation.id;
         self.start_operation_ack_timeout(id, now);
@@ -1036,6 +1076,7 @@ impl OperationalState {
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
 
                 self.ping_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.ping_timeout_millis as u64));
+                self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
             }
         }
 
@@ -1118,7 +1159,7 @@ impl OperationalState {
             return next_service_time;
         }
 
-        next_service_time = fold_optional_timepoint(&None, &self.next_ping_timepoint);
+        next_service_time = fold_optional_timepoint(&next_service_time, &self.next_ping_timepoint);
 
         fold_optional_timepoint(&self.get_next_service_timepoint_operational_queue( OperationalQueueServiceMode::All), &next_service_time)
     }
@@ -1131,11 +1172,6 @@ impl OperationalState {
         }
 
         next_service_time
-    }
-
-    fn schedule_ping(&mut self, base_timepoint: &Instant) -> () {
-        self.ping_timeout_timepoint = None;
-        self.next_ping_timepoint = Some(*base_timepoint + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
     }
 
     fn unbind_operation_packet_id(&mut self, id: u64) {
@@ -1232,7 +1268,8 @@ impl OperationalState {
             self.outbound_alias_resolver.borrow_mut().reset_for_new_connection(connack.topic_alias_maximum.unwrap_or(0));
             self.inbound_alias_resolver.reset_for_new_connection();
 
-            self.schedule_ping(&context.current_time);
+            self.ping_timeout_timepoint = None;
+            self.next_ping_timepoint = Some(context.current_time + Duration::from_secs(self.current_settings.as_ref().unwrap().server_keep_alive as u64));
 
             self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
 
@@ -1254,7 +1291,6 @@ impl OperationalState {
             OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
                 if let Some(_) = &self.ping_timeout_timepoint {
                     self.ping_timeout_timepoint = None;
-                    self.schedule_ping(&self.next_ping_timepoint.unwrap());
                     Ok(())
                 } else {
                     error!("[{} ms] handle_pingresp - no matching PINGREQ", self.elapsed_time_ms);
@@ -1598,7 +1634,8 @@ impl OperationalState {
             id,
             packet,
             packet_id: None,
-            options
+            options,
+            ping_extension_base_timepoint : None,
         };
 
         self.operations.insert(id, operation);

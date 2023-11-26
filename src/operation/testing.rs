@@ -1048,4 +1048,109 @@ mod operational_state_tests {
             do_connected_state_invalid_ack_packet_id_test(packet, expected_error);
         }
     }
+
+    fn do_ping_sequence_test(connack_delay: u64, response_delay_millis: u64, request_delay_millis: u64) {
+        const ping_timeout_millis : u32 = 10000;
+        const keep_alive_seconds : u16 = 20;
+        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+
+        assert!(response_delay_millis < ping_timeout_millis as u64);
+
+        let mut config = build_standard_test_config();
+        config.ping_timeout_millis = ping_timeout_millis;
+        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, connack_delay));
+
+        let mut current_time = connack_delay;
+        let mut rolling_ping_time = current_time + keep_alive_milliseconds;
+        for i in 0..5 {
+            // verify next service time the outbound ping time and nothing happens until then
+            assert!(fixture.client_state.ping_timeout_timepoint.is_none());
+            assert!(fixture.client_state.next_ping_timepoint.is_some());
+            assert_eq!(rolling_ping_time, fixture.get_next_service_time(current_time).unwrap());
+            assert_eq!(1 + i, fixture.to_broker_packet_stream.len());
+
+            // trigger a ping, verify it goes out and a pingresp comes back
+            current_time = rolling_ping_time + request_delay_millis;
+            let server_bytes = fixture.service_with_drain(current_time).unwrap();
+            assert_eq!(2 + i, fixture.to_broker_packet_stream.len());
+            let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pingreq, i + 1, None, None).unwrap();
+            assert_eq!(1 + i, index);
+
+            // verify next service time is the ping timeout
+            let ping_timeout = current_time + ping_timeout_millis as u64;
+            assert!(fixture.client_state.ping_timeout_timepoint.is_some());
+            assert_eq!(ping_timeout, fixture.get_next_service_time(current_time).unwrap());
+
+            // receive pingresp, verify timeout reset
+            assert_eq!(2 + i, fixture.to_client_packet_stream.len());
+            let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pingresp, i + 1, None, None).unwrap();
+            assert_eq!(1 + i, index);
+
+            assert_eq!(Ok(()), fixture.on_incoming_bytes(current_time + response_delay_millis, server_bytes.as_slice()));
+            assert_eq!(None, fixture.client_state.ping_timeout_timepoint);
+
+            rolling_ping_time = current_time + keep_alive_milliseconds;
+        }
+    }
+
+    #[test]
+    fn connected_state_ping_sequence_instant() {
+        do_ping_sequence_test(0, 0, 0);
+    }
+
+    #[test]
+    fn connected_state_ping_sequence_response_delayed() {
+        do_ping_sequence_test(1,2500, 0);
+    }
+
+    #[test]
+    fn connected_state_ping_sequence_request_delayed() {
+        do_ping_sequence_test(3, 0, 1000);
+    }
+
+    #[test]
+    fn connected_state_ping_sequence_both_delayed() {
+        do_ping_sequence_test(7, 999, 131);
+    }
+
+    #[test]
+    fn connected_state_ping_pingresp_timeout() {
+        const connack_time : u64 = 11;
+        const ping_timeout_millis : u32 = 10000;
+        const keep_alive_seconds : u16 = 20;
+        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+
+        let mut config = build_standard_test_config();
+        config.ping_timeout_millis = ping_timeout_millis;
+        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, connack_time));
+        let expected_ping_time = connack_time + keep_alive_milliseconds;
+        assert_eq!(Some(expected_ping_time), fixture.get_next_service_time(connack_time));
+
+        // trigger a ping
+        let response_bytes = fixture.service_with_drain(expected_ping_time).unwrap();
+        let ping_timeout_timepoint = connack_time + keep_alive_milliseconds + ping_timeout_millis as u64;
+        assert_eq!(ping_timeout_timepoint, fixture.get_next_service_time(expected_ping_time).unwrap());
+        let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pingreq, 1, None, None).unwrap();
+        assert_eq!(1, index); // [connect, pingreq]
+
+        // right before timeout, nothing should happen
+        let outbound_packet_count = fixture.to_broker_packet_stream.len();
+        assert_eq!(2, outbound_packet_count);
+
+        assert_eq!(Ok(()), fixture.service_once(ping_timeout_timepoint - 1));
+        assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
+
+        // invoke service after timeout, verify failure and halt
+        assert_eq!(Err(Mqtt5Error::PingTimeout), fixture.service_once(ping_timeout_timepoint));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
+    }
 }
