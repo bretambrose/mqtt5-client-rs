@@ -1350,7 +1350,17 @@ mod operational_state_tests {
 
     #[test]
     fn connected_state_ping_no_pings_on_zero_keep_alive() {
-        // TODO
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+        assert_eq!(None, fixture.get_next_service_time(0));
+
+        for i in 0..3600 {
+            let elapsed_millis : u64 = i * 1000;
+            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+            assert_eq!(None, fixture.get_next_service_time(0));
+            assert_eq!(1, fixture.to_broker_packet_stream.len());
+            assert_eq!(1, fixture.to_client_packet_stream.len());
+        }
     }
 
     #[test]
