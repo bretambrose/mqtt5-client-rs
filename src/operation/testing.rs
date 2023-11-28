@@ -151,6 +151,26 @@ mod operational_state_tests {
         Err(Mqtt5Error::ProtocolError)
     }
 
+    fn handle_subscribe_with_failure(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Subscribe(subscribe) = &**packet {
+            let mut reason_codes = Vec::new();
+            for subscription in &subscribe.subscriptions {
+                reason_codes.push(SubackReasonCode::NotAuthorized);
+            }
+
+            let response = Box::new(MqttPacket::Suback(SubackPacket{
+                packet_id : subscribe.packet_id,
+                reason_codes,
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
     fn handle_unsubscribe_with_success(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
         if let MqttPacket::Unsubscribe(unsubscribe) = &**packet {
             let mut reason_codes = Vec::new();
@@ -1143,7 +1163,7 @@ mod operational_state_tests {
         assert_eq!(Some(expected_push_out + keep_alive_milliseconds), fixture.get_next_service_time(response_time));
     }
 
-    fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64) {
+    fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64, expected_reason_code: SubackReasonCode) {
         let subscribe = SubscribePacket {
             subscriptions: vec!(
                 Subscription{
@@ -1174,7 +1194,7 @@ mod operational_state_tests {
 
         let suback_result = subscribe_result.unwrap();
         assert_eq!(1, suback_result.reason_codes.len());
-        assert_eq!(SubackReasonCode::GrantedQos1, suback_result.reason_codes[0]);
+        assert_eq!(expected_reason_code, suback_result.reason_codes[0]);
 
         let (index, to_client_packet) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Suback, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -1276,7 +1296,11 @@ mod operational_state_tests {
 
     #[test]
     fn connected_state_ping_push_out_by_subscribe_completion() {
-        do_connected_state_ping_push_out_test(Box::new(do_subscribe_success), 666, 1337, 666);
+        do_connected_state_ping_push_out_test(Box::new(
+            |transmission_time, response_time, expected_push_out| {
+                do_subscribe_success(transmission_time, response_time, expected_push_out, SubackReasonCode::GrantedQos0)
+            }
+        ), 666, 1337, 666);
     }
 
     #[test]
@@ -1368,7 +1392,76 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_subscribe_success(&mut fixture, 1, 2);
+        do_subscribe_success(&mut fixture, 1, 2, SubackReasonCode::GrantedQos0);
+    }
+
+    #[test]
+    fn connected_state_subscribe_validate_failure() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(),
+            ..Default::default()
+        };
+
+        let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert_eq!(Err(Mqtt5Error::SubscribePacketValidation), fixture.service_round_trip(0, 0));
+    }
+
+    #[test]
+    fn connected_state_subscribe_suback_failure() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_subscribe_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_subscribe_success(&mut fixture, 0, 0, SubackReasonCode::NotAuthorized);
+    }
+
+    #[test]
+    fn connected_state_subscribe_timeout_failure() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_with_nothing));
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::AtLeastOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{
+            timeout_in_millis : Some(30000)
+        }).unwrap();
+        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+
+        let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Subscribe, 1, None, None).unwrap();
+        assert_eq!(1, index);
+        if let MqttPacket::Subscribe(to_broker_subscribe) = &**to_broker_packet {
+            assert_eq!(subscribe.subscriptions, to_broker_subscribe.subscriptions);
+        } else {
+            panic!("Expected subscribe");
+        }
+
+        assert_eq!(Some(30000), fixture.get_next_service_time(0));
+
+        for i in 0..30 {
+            let elapsed_millis = i * 1000;
+            assert_eq!(Some(30000 - elapsed_millis), fixture.get_next_service_time(elapsed_millis));
+            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+            assert_eq!(Err(oneshot::error::TryRecvError::Empty), subscribe_result_receiver.try_recv());
+        }
+
+        assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
+        let result = subscribe_result_receiver.blocking_recv();
+        assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
     }
 
     #[test]
