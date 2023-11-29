@@ -28,6 +28,7 @@ use crate::spec::suback::SubackPacket;
 use crate::spec::subscribe::SubscribePacket;
 use crate::spec::unsuback::UnsubackPacket;
 use crate::spec::unsubscribe::UnsubscribePacket;
+use crate::validate::*;
 
 #[derive(Debug, Default)]
 pub struct PublishOptions {

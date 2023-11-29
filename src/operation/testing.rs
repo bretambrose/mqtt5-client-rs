@@ -66,6 +66,20 @@ mod operational_state_tests {
         Err(Mqtt5Error::ProtocolError)
     }
 
+    fn handle_connect_with_tiny_maximum_packet_size(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Connect(_) = &**packet {
+            let response = Box::new(MqttPacket::Connack(ConnackPacket {
+                maximum_packet_size: Some(10),
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
     fn handle_pingreq_with_pingresp(_: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
         let response = Box::new(MqttPacket::Pingresp(PingrespPacket{}));
         response_packets.push_back(response);
@@ -590,6 +604,18 @@ mod operational_state_tests {
         assert!(expected_sequence.eq(client_event_sequence.skip(start)));
     }
 
+    fn verify_operational_state_empty(fixture: &OperationalStateTestFixture) {
+        assert_eq!(0, fixture.client_state.operations.len());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert_eq!(0, fixture.client_state.resubmit_operation_queue.len());
+        assert_eq!(0, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(0, fixture.client_state.operation_ack_timeouts.len());
+        assert_eq!(0, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(0, fixture.client_state.pending_ack_operations.len());
+        assert_eq!(0, fixture.client_state.pending_write_completion_operations.len());
+        assert_eq!(0, fixture.client_state.pending_publish_count);
+    }
+
     #[test]
     fn disconnected_state_network_event_handler_fails() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
@@ -730,13 +756,11 @@ mod operational_state_tests {
 
         assert_eq!(Some(1 + connack_timeout_millis as u64), fixture.get_next_service_time(1));
 
-        // nothing should happen until we cross over the timeout threshold
-        verify_service_does_nothing(&mut fixture);
-
         // service post-timeout
         assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -759,6 +783,7 @@ mod operational_state_tests {
             connack: Some(create_connack_rejection())
         }));
         assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -772,6 +797,7 @@ mod operational_state_tests {
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -788,6 +814,7 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
+        verify_operational_state_empty(&fixture);
     }
 
     fn encode_packet_to_buffer(packet: MqttPacket, buffer: &mut Vec<u8>) -> Mqtt5Result<()> {
@@ -824,6 +851,7 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_event_stream.is_empty());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -906,6 +934,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -924,6 +953,7 @@ mod operational_state_tests {
             settings
         }));
         assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -937,6 +967,7 @@ mod operational_state_tests {
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert_eq!(client_event_count, fixture.client_event_stream.len());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -947,6 +978,7 @@ mod operational_state_tests {
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -957,6 +989,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -969,6 +1002,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, garbage.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     fn do_connected_state_unexpected_packet_test(packet : MqttPacket) {
@@ -981,6 +1015,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, buffer.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1016,6 +1051,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(error), fixture.on_incoming_bytes(0, buffer.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1123,6 +1159,8 @@ mod operational_state_tests {
 
             rolling_ping_time = current_time + keep_alive_milliseconds;
         }
+
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1161,6 +1199,7 @@ mod operational_state_tests {
         operation_function(&mut fixture, transmission_time, response_time);
 
         assert_eq!(Some(expected_push_out + keep_alive_milliseconds), fixture.get_next_service_time(response_time));
+        verify_operational_state_empty(&fixture);
     }
 
     fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64, expected_reason_code: SubackReasonCode) {
@@ -1203,6 +1242,8 @@ mod operational_state_tests {
         } else {
             panic!("Expected suback");
         }
+
+        verify_operational_state_empty(&fixture);
     }
 
     fn do_publish_success(fixture : &mut OperationalStateTestFixture, qos: QualityOfService, transmission_time: u64, response_time: u64) {
@@ -1256,6 +1297,8 @@ mod operational_state_tests {
                 assert_eq!(2, index);
             }
         }
+
+        verify_operational_state_empty(&fixture);
     }
 
     fn do_unsubscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64) {
@@ -1292,13 +1335,15 @@ mod operational_state_tests {
         } else {
             panic!("Expected unsuback");
         }
+
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
     fn connected_state_ping_push_out_by_subscribe_completion() {
         do_connected_state_ping_push_out_test(Box::new(
             |transmission_time, response_time, expected_push_out| {
-                do_subscribe_success(transmission_time, response_time, expected_push_out, SubackReasonCode::GrantedQos0)
+                do_subscribe_success(transmission_time, response_time, expected_push_out, SubackReasonCode::GrantedQos1)
             }
         ), 666, 1337, 666);
     }
@@ -1370,6 +1415,7 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::PingTimeout), fixture.service_once(ping_timeout_timepoint));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1385,6 +1431,8 @@ mod operational_state_tests {
             assert_eq!(1, fixture.to_broker_packet_stream.len());
             assert_eq!(1, fixture.to_client_packet_stream.len());
         }
+
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1392,21 +1440,38 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_subscribe_success(&mut fixture, 1, 2, SubackReasonCode::GrantedQos0);
+        do_subscribe_success(&mut fixture, 1, 2, SubackReasonCode::GrantedQos1);
     }
 
     #[test]
     fn connected_state_subscribe_validate_failure() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_tiny_maximum_packet_size));
+
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
         let subscribe = SubscribePacket {
-            subscriptions: vec!(),
+            subscriptions: vec!(
+                Subscription {
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::AtLeastOnce,
+                    ..Default::default()
+                }
+            ),
             ..Default::default()
         };
 
         let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert_eq!(Err(Mqtt5Error::SubscribePacketValidation), fixture.service_round_trip(0, 0));
+        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+
+        let result = subscribe_result_receiver.blocking_recv();
+        assert!(!result.is_err());
+
+        let subscribe_result = result.unwrap();
+        assert!(subscribe_result.is_err());
+
+        assert_eq!(Mqtt5Error::SubscribePacketValidation, subscribe_result.unwrap_err());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]
@@ -1454,7 +1519,7 @@ mod operational_state_tests {
 
         for i in 0..30 {
             let elapsed_millis = i * 1000;
-            assert_eq!(Some(30000 - elapsed_millis), fixture.get_next_service_time(elapsed_millis));
+            assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
             assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
             assert_eq!(Err(oneshot::error::TryRecvError::Empty), subscribe_result_receiver.try_recv());
         }
@@ -1462,6 +1527,7 @@ mod operational_state_tests {
         assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
         let result = subscribe_result_receiver.blocking_recv();
         assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
+        verify_operational_state_empty(&fixture);
     }
 
     #[test]

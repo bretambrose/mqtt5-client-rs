@@ -41,7 +41,7 @@ pub(crate) struct MqttOperation {
     packet: Box<MqttPacket>,
 
     // unpleasant hack to let the same operation track both the original qos 2 pulish and the pubrel
-    pubrel_packet: Option<Box<MqttPacket>>,
+    secondary_packet: Option<Box<MqttPacket>>,
 
     packet_id: Option<u16>,
     options: Option<MqttOperationOptions>,
@@ -603,6 +603,12 @@ impl OperationalState {
         }
 
         let operation = operation_option.unwrap();
+        if let MqttPacket::Publish(publish) = &*operation.packet {
+            if publish.qos != QualityOfService::AtMostOnce {
+                self.pending_publish_count -= 1;
+            }
+        }
+
         if let Some(packet_id) = operation.packet_id {
             self.allocated_packet_ids.remove(&packet_id);
             self.pending_ack_operations.remove(&packet_id);
@@ -894,6 +900,7 @@ impl OperationalState {
         let mut result = Ok(());
 
         while let Some(id) = self.get_next_ack_timeout() {
+            self.operation_ack_timeouts.pop();
             result = fold_mqtt5_result(result, self.complete_operation_as_failure(id, Mqtt5Error::AckTimeout));
         }
 
@@ -979,7 +986,9 @@ impl OperationalState {
                     self.pending_write_completion_operations.push_back(operation.id);
                 } else {
                     self.pending_ack_operations.insert(publish.packet_id, operation.id);
-                    self.pending_publish_count += 1;
+                    if operation.secondary_packet.is_none() {
+                        self.pending_publish_count += 1;
+                    }
                 }
             }
             MqttPacket::Pubrel(pubrel) => {
@@ -1026,12 +1035,31 @@ impl OperationalState {
 
                 let operation = self.operations.get(&current_operation_id).unwrap();
                 let mut packet = &*operation.packet;
-                if let Some(pubrel) = &operation.pubrel_packet {
+                if let Some(pubrel) = &operation.secondary_packet {
                     packet = &**pubrel;
                 }
 
+                let outbound_alias_resolution = self.compute_outbound_alias_resolution(packet);
+
+                let mut validation_context = OutboundValidationContext {
+                    negotiated_settings : None,
+                    client_connect: Some(&*self.config.connect),
+                    outbound_alias_resolution: Some(outbound_alias_resolution.clone())
+                };
+
+                if let Some(settings) = &self.current_settings {
+                    validation_context.negotiated_settings = Some(settings);
+                }
+
+                if let Err(error) = validate_packet_outbound_internal(packet, &validation_context) {
+                    warn!("[{} ms] service_queue - {} operation {} failed last-chance validation", self.elapsed_time_ms, mqtt_packet_to_str(packet), current_operation_id);
+                    self.current_operation = None;
+                    self.complete_operation_as_failure(current_operation_id, error)?;
+                    continue;
+                }
+
                 let encode_context = EncodingContext {
-                    outbound_alias_resolution: self.compute_outbound_alias_resolution(packet)
+                    outbound_alias_resolution
                 };
 
                 debug!("[{} ms] service_queue - operation {} submitted to encoder for setup", self.elapsed_time_ms, current_operation_id);
@@ -1417,7 +1445,7 @@ impl OperationalState {
                     if let Some(mut operation) = operation_option {
                         if let MqttPacket::Publish(publish) = &*operation.packet {
                             if publish.qos == QualityOfService::ExactlyOnce {
-                                operation.pubrel_packet = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
+                                operation.secondary_packet = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
                                     packet_id: pubrec.packet_id,
                                     ..Default::default()
                                 })));
@@ -1650,7 +1678,7 @@ impl OperationalState {
         let operation = MqttOperation {
             id,
             packet,
-            pubrel_packet: None,
+            secondary_packet: None,
             packet_id: None,
             options,
             ping_extension_base_timepoint : None,

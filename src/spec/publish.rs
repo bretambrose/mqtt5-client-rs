@@ -408,7 +408,7 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
 
     let (total_remaining_length, _) = compute_publish_packet_length_properties(packet, &context.outbound_alias_resolution.unwrap_or(OutboundAliasResolution{..Default::default() }))?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+    if total_packet_length > context.negotiated_settings.unwrap().maximum_packet_size_to_server {
         error!("PublishPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
@@ -418,7 +418,7 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
-    if packet.retain && !context.negotiated_settings.retain_available {
+    if packet.retain && !context.negotiated_settings.unwrap().retain_available {
         error!("PublishPacket Outbound Validation - retained messages not allowed on this connection");
         return Err(Mqtt5Error::PublishPacketValidation);
     }

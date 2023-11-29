@@ -34,10 +34,10 @@ pub(crate) const MAXIMUM_BINARY_PROPERTY_LENGTH : usize = 65535;
 pub(crate) struct OutboundValidationContext<'a> {
 
     // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
-    pub negotiated_settings : &'a NegotiatedSettings,
+    pub negotiated_settings : Option<&'a NegotiatedSettings>,
 
     // session_expiry_interval for disconnect constraints
-    pub client_config: &'a Mqtt5ClientOptions,
+    pub client_connect: Option<&'a ConnectPacket>,
 
     pub outbound_alias_resolution: Option<OutboundAliasResolution>
 }
@@ -145,13 +145,13 @@ pub(crate) mod testing {
 
     pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
-        pub config : Mqtt5ClientOptions,
+        pub connect : ConnectPacket,
     }
 
     pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
         let mut pinned_context = PinnedValidationContext {
             settings : NegotiatedSettings {..Default::default() },
-            config : Mqtt5ClientOptions{ ..Default::default() },
+            connect : ConnectPacket{ ..Default::default() },
         };
 
         pinned_context.settings.maximum_packet_size_to_server = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
@@ -164,8 +164,8 @@ pub(crate) mod testing {
 
     pub(crate) fn create_outbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> OutboundValidationContext {
         OutboundValidationContext {
-            negotiated_settings : &pinned.settings,
-            client_config : &pinned.config,
+            negotiated_settings : Some(&pinned.settings),
+            client_connect : Some(&pinned.connect),
             outbound_alias_resolution : None,
         }
     }

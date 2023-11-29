@@ -32,8 +32,12 @@ pub(crate) use client_lifecycle_operation_body;
 
 macro_rules! client_mqtt_operation_body {
     ($self:ident, $operation_type:ident, $options_internal_type: ident, $packet_name: ident, $packet_type: ident, $options_value: expr) => ({
-        let (response_sender, rx) = oneshot::channel();
         let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name));
+        if let Err(error) = validate_packet_outbound(&*boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        let (response_sender, rx) = oneshot::channel();
         let internal_options = $options_internal_type {
             options : $options_value,
             response_sender : Some(response_sender)
