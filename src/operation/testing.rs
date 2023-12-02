@@ -1530,6 +1530,9 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
+    /////////////////////////////////////////////
+
+
     #[test]
     fn connected_state_unsubscribe_success() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());

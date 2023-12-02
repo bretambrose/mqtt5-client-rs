@@ -394,6 +394,14 @@ impl OperationalState {
 
         assert_ne!(op_id, 0);
 
+        if let Some(check_operation) = self.operations.get(&op_id) {
+            if !self.operation_submit_passes_offline_queue_policy(&*check_operation.packet) {
+                debug!("[{} ms] handle_user_event - operation {} failed by offline queue policy", self.elapsed_time_ms, op_id);
+                self.complete_operation_as_failure(op_id, Mqtt5Error::OfflineQueuePolicyFailed)?;
+                return Ok(());
+            }
+        }
+
         debug!("[{} ms] handle_user_event - queuing operation with id {}", self.elapsed_time_ms, op_id);
         let result = self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back);
 
@@ -424,7 +432,47 @@ impl OperationalState {
         next_service_time
     }
 
+    pub(crate) fn reset(&mut self, current_time: &Instant) {
+        self.update_internal_clock(current_time);
+
+        if self.state != OperationalStateType::Disconnected {
+            self.state = OperationalStateType::Halted;
+        }
+
+        let operations : Vec<u64> = self.operations.keys().map(|v| *v).collect();
+        for id in operations {
+            self.complete_operation_as_failure(id, Mqtt5Error::OperationalStateReset);
+        }
+
+        self.pending_write_completion = false;
+        self.operations.clear();
+        self.operation_ack_timeouts.clear();
+        self.user_operation_queue.clear();
+        self.resubmit_operation_queue.clear();
+        self.high_priority_operation_queue.clear();
+        self.current_operation = None;
+        self.qos2_incomplete_incoming_publishes.clear();
+        self.allocated_packet_ids.clear();
+        self.pending_ack_operations.clear();
+        self.pending_write_completion_operations.clear();
+        self.pending_publish_count = 0;
+        self.current_settings = None;
+        self.next_packet_id = 1;
+        self.has_connected_successfully = false;
+        self.next_ping_timepoint = None;
+        self.ping_timeout_timepoint = None;
+        self.connack_timeout_timepoint = None;
+    }
+
     // Private Implementation
+
+    fn operation_submit_passes_offline_queue_policy(&self, packet: &MqttPacket) -> bool {
+        if self.state == OperationalStateType::Connected {
+            return true;
+        }
+
+        return does_packet_pass_offline_queue_policy(packet, &self.config.offline_queue_policy);
+    }
 
     fn log_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "OperationalState: {{\n")?;

@@ -87,7 +87,8 @@ pub enum Mqtt5Error {
     OfflineQueuePolicyFailed,
     ServerSideDisconnect,
     AckTimeout,
-    PacketIdSpaceExhausted
+    PacketIdSpaceExhausted,
+    OperationalStateReset
 }
 
 impl fmt::Display for Mqtt5Error {
@@ -129,6 +130,7 @@ impl fmt::Display for Mqtt5Error {
             Mqtt5Error::ServerSideDisconnect => { write!(f, "ServerSideDisconnect") }
             Mqtt5Error::AckTimeout => { write!(f, "AckTimeout") }
             Mqtt5Error::PacketIdSpaceExhausted => { write!(f, "PacketIdSpaceExhausted") }
+            Mqtt5Error::OperationalStateReset => { write!(f, "OperationalStateReset") }
         }
     }
 }
