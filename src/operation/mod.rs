@@ -724,6 +724,42 @@ impl OperationalState {
         Ok(())
     }
 
+    fn apply_connection_closed_to_current_operation(&mut self) -> Mqtt5Result<()> {
+        if let Some(id) = self.current_operation {
+            if let Some(operation) = self.operations.get(&id) {
+                match &*operation.packet {
+                    MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
+                        if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
+                            self.user_operation_queue.push_front(id);
+                        } else {
+                            self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
+                        }
+                    }
+                    MqttPacket::Publish(publish) => {
+                        if publish.duplicate {
+                            self.resubmit_operation_queue.push_front(id);
+                        } else {
+                            if publish.qos == QualityOfService::ExactlyOnce && operation.secondary_packet.is_some() {
+                                self.high_priority_operation_queue.push_front(id);
+                            } else if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
+                                self.user_operation_queue.push_front(id);
+                            } else {
+                                self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.complete_operation_as_failure(id, Mqtt5Error::ConnectionClosed)?;
+                    }
+                }
+            }
+        }
+
+        self.current_operation = None;
+
+        Ok(())
+    }
+
     fn handle_network_event_connection_closed(&mut self, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
         if self.state == OperationalStateType::Disconnected {
             error!("[{} ms] handle_network_event_connection_closed - called in invalid state", self.elapsed_time_ms);
@@ -735,6 +771,8 @@ impl OperationalState {
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
         self.ping_timeout_timepoint = None;
+
+        self.apply_connection_closed_to_current_operation()?;
 
         let mut result : Mqtt5Result<()> = Ok(());
         let mut completions : VecDeque<u64> = VecDeque::new();
@@ -781,13 +819,23 @@ impl OperationalState {
         mem::swap(&mut unacked_table, &mut self.pending_ack_operations);
         self.operation_ack_timeouts.clear();
 
-        let (mut resubmit, offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(_, val)| { val }));
+        let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(_, val)| { val }));
         resubmit.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, true) });
         self.resubmit_operation_queue.append(&mut resubmit);
 
-        let (mut retained_unacked, rejected_unacked) = self.partition_operation_queue_by_queue_policy(&offline, &self.config.offline_queue_policy);
-        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected_unacked.into_iter(), Mqtt5Error::ConnectionClosed));
-        self.user_operation_queue.append(&mut retained_unacked);
+        /*
+         * any ackable that's not a resubmit goes to the user queue, after which we apply
+         * the offline policy to fast-fail operations that don't pass
+         */
+        self.user_operation_queue.append(&mut offline);
+
+        let mut user_move : VecDeque<u64> = VecDeque::new();
+        mem::swap(&mut user_move, &mut self.user_operation_queue);
+
+        let (mut retained_user, rejected_user) = self.partition_operation_queue_by_queue_policy(&user_move, &self.config.offline_queue_policy);
+        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected_user.into_iter(), Mqtt5Error::OfflineQueuePolicyFailed));
+
+        self.user_operation_queue.append(&mut retained_user);
 
         result
     }

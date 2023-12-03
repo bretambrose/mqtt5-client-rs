@@ -168,7 +168,7 @@ mod operational_state_tests {
     fn handle_subscribe_with_failure(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
         if let MqttPacket::Subscribe(subscribe) = &**packet {
             let mut reason_codes = Vec::new();
-            for subscription in &subscribe.subscriptions {
+            for _ in &subscribe.subscriptions {
                 reason_codes.push(SubackReasonCode::NotAuthorized);
             }
 
@@ -302,17 +302,19 @@ mod operational_state_tests {
             Ok(())
         }
 
-        pub(crate) fn service_once(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+        pub(crate) fn service_once(&mut self, elapsed_millis: u64, socket_buffer_size: usize) -> Mqtt5Result<Vec<u8>> {
             let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
 
-            let mut to_socket = Vec::with_capacity(4096);
+            let mut to_socket = Vec::with_capacity(socket_buffer_size);
 
             let mut service_context = ServiceContext {
                 to_socket: &mut to_socket,
                 current_time,
             };
 
-            self.client_state.service(&mut service_context)
+            self.client_state.service(&mut service_context)?;
+
+            Ok(to_socket)
         }
 
         pub(crate) fn service_with_drain(&mut self, elapsed_millis: u64) -> Mqtt5Result<Vec<u8>> {
@@ -943,7 +945,6 @@ mod operational_state_tests {
             ..Default::default()
         };
 
-        let settings = build_negotiated_settings(&fixture.client_state.config, &connack,&None);
         let expected_events = VecDeque::from(vec!(PacketEvent::Connack(connack)));
         assert_eq!(expected_events, fixture.client_packet_events);
 
@@ -992,7 +993,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        let mut garbage = vec!(1, 2, 3, 4, 5, 6, 7, 8);
+        let garbage = vec!(1, 2, 3, 4, 5, 6, 7, 8);
 
         assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, garbage.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
@@ -1108,22 +1109,22 @@ mod operational_state_tests {
     }
 
     fn do_ping_sequence_test(connack_delay: u64, response_delay_millis: u64, request_delay_millis: u64) {
-        const ping_timeout_millis : u32 = 10000;
-        const keep_alive_seconds : u16 = 20;
-        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+        const PING_TIMEOUT_MILLIS: u32 = 10000;
+        const KEEP_ALIVE_SECONDS: u16 = 20;
+        const KEEP_ALIVE_MILLIS: u64 = (KEEP_ALIVE_SECONDS as u64) * 1000;
 
-        assert!(response_delay_millis < ping_timeout_millis as u64);
+        assert!(response_delay_millis < PING_TIMEOUT_MILLIS as u64);
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = ping_timeout_millis;
-        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
+        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, connack_delay));
 
         let mut current_time = connack_delay;
-        let mut rolling_ping_time = current_time + keep_alive_milliseconds;
+        let mut rolling_ping_time = current_time + KEEP_ALIVE_MILLIS;
         for i in 0..5 {
             // verify next service time the outbound ping time and nothing happens until then
             assert!(fixture.client_state.ping_timeout_timepoint.is_none());
@@ -1139,7 +1140,7 @@ mod operational_state_tests {
             assert_eq!(1 + i, index);
 
             // verify next service time is the ping timeout
-            let ping_timeout = current_time + ping_timeout_millis as u64;
+            let ping_timeout = current_time + PING_TIMEOUT_MILLIS as u64;
             assert!(fixture.client_state.ping_timeout_timepoint.is_some());
             assert_eq!(ping_timeout, fixture.get_next_service_time(current_time).unwrap());
 
@@ -1151,7 +1152,7 @@ mod operational_state_tests {
             assert_eq!(Ok(()), fixture.on_incoming_bytes(current_time + response_delay_millis, server_bytes.as_slice()));
             assert_eq!(None, fixture.client_state.ping_timeout_timepoint);
 
-            rolling_ping_time = current_time + keep_alive_milliseconds;
+            rolling_ping_time = current_time + KEEP_ALIVE_MILLIS;
         }
 
         verify_operational_state_empty(&fixture);
@@ -1178,13 +1179,13 @@ mod operational_state_tests {
     }
 
     fn do_connected_state_ping_push_out_test(operation_function: Box<dyn Fn(&mut OperationalStateTestFixture, u64, u64) -> ()>, transmission_time: u64, response_time: u64, expected_push_out: u64) {
-        const ping_timeout_millis : u32 = 10000;
-        const keep_alive_seconds : u16 = 20;
-        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+        const PING_TIMEOUT_MILLIS: u32 = 10000;
+        const KEEP_ALIVE_SECONDS: u16 = 20;
+        const KEEP_ALIVE_MILLIS: u64 = (KEEP_ALIVE_SECONDS as u64) * 1000;
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = ping_timeout_millis;
-        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
+        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
@@ -1192,7 +1193,7 @@ mod operational_state_tests {
 
         operation_function(&mut fixture, transmission_time, response_time);
 
-        assert_eq!(Some(expected_push_out + keep_alive_milliseconds), fixture.get_next_service_time(response_time));
+        assert_eq!(Some(expected_push_out + KEEP_ALIVE_MILLIS), fixture.get_next_service_time(response_time));
         verify_operational_state_empty(&fixture);
     }
 
@@ -1275,7 +1276,7 @@ mod operational_state_tests {
             PublishResponse::Qos0 => {
                 assert_eq!(QualityOfService::AtMostOnce, qos);
             }
-            PublishResponse::Qos1(puback) => {
+            PublishResponse::Qos1(_) => {
                 assert_eq!(QualityOfService::AtLeastOnce, qos);
                 let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Puback, 1, None, None).unwrap();
                 assert_eq!(1, index);
@@ -1376,24 +1377,24 @@ mod operational_state_tests {
 
     #[test]
     fn connected_state_ping_pingresp_timeout() {
-        const connack_time : u64 = 11;
-        const ping_timeout_millis : u32 = 10000;
-        const keep_alive_seconds : u16 = 20;
-        const keep_alive_milliseconds : u64 = (keep_alive_seconds as u64) * 1000;
+        const CONNACK_TIME: u64 = 11;
+        const PING_TIMEOUT_MILLIS: u32 = 10000;
+        const KEEP_ALIVE_SECONDS: u16 = 20;
+        const KEEP_ALIVE_MILLIS: u64 = (KEEP_ALIVE_SECONDS as u64) * 1000;
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = ping_timeout_millis;
-        config.connect.keep_alive_interval_seconds = keep_alive_seconds;
+        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
+        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, connack_time));
-        let expected_ping_time = connack_time + keep_alive_milliseconds;
-        assert_eq!(Some(expected_ping_time), fixture.get_next_service_time(connack_time));
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, CONNACK_TIME));
+        let expected_ping_time = CONNACK_TIME + KEEP_ALIVE_MILLIS;
+        assert_eq!(Some(expected_ping_time), fixture.get_next_service_time(CONNACK_TIME));
 
         // trigger a ping
-        let response_bytes = fixture.service_with_drain(expected_ping_time).unwrap();
-        let ping_timeout_timepoint = connack_time + keep_alive_milliseconds + ping_timeout_millis as u64;
+        assert!(fixture.service_with_drain(expected_ping_time).is_ok());
+        let ping_timeout_timepoint = CONNACK_TIME + KEEP_ALIVE_MILLIS + PING_TIMEOUT_MILLIS as u64;
         assert_eq!(ping_timeout_timepoint, fixture.get_next_service_time(expected_ping_time).unwrap());
         let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pingreq, 1, None, None).unwrap();
         assert_eq!(1, index); // [connect, pingreq]
@@ -1402,11 +1403,11 @@ mod operational_state_tests {
         let outbound_packet_count = fixture.to_broker_packet_stream.len();
         assert_eq!(2, outbound_packet_count);
 
-        assert_eq!(Ok(()), fixture.service_once(ping_timeout_timepoint - 1));
+        assert!(fixture.service_once(ping_timeout_timepoint - 1, 4096).is_ok());
         assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
 
         // invoke service after timeout, verify failure and halt
-        assert_eq!(Err(Mqtt5Error::PingTimeout), fixture.service_once(ping_timeout_timepoint));
+        assert_eq!(Err(Mqtt5Error::PingTimeout), fixture.service_once(ping_timeout_timepoint, 4096));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert_eq!(outbound_packet_count, fixture.to_broker_packet_stream.len());
         verify_operational_state_empty(&fixture);
@@ -1430,7 +1431,7 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn connected_state_subscribe_success() {
+    fn connected_state_subscribe_immediate_success() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
@@ -1438,7 +1439,151 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn connected_state_subscribe_validate_failure() {
+    fn connected_state_subscribe_success_reconnect_while_in_user_queue() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+
+        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
+            assert_eq!(1, suback.reason_codes.len());
+            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
+        } else {
+            panic!("Expected suback result");
+        }
+
+        verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_subscribe_success_reconnect_while_current_operation() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        let service_result = fixture.service_once(10, 10);
+        assert!(service_result.is_ok());
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_some());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(20));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 30));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.service_round_trip(30, 40));
+
+        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
+            assert_eq!(1, suback.reason_codes.len());
+            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
+        } else {
+            panic!("Expected suback result");
+        }
+
+        verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_subscribe_success_reconnect_while_pending() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        let service_result = fixture.service_with_drain(10);
+        assert!(service_result.is_ok());
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_ack_operations.len());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(20));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 30));
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.service_round_trip(30, 40));
+
+        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
+            assert_eq!(1, suback.reason_codes.len());
+            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
+        } else {
+            panic!("Expected suback result");
+        }
+
+        verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_suback_reason_code() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_subscribe_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_subscribe_success(&mut fixture, 0, 0, SubackReasonCode::NotAuthorized);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_validation() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_tiny_maximum_packet_size));
 
@@ -1469,17 +1614,7 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn connected_state_subscribe_suback_failure() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-        fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_subscribe_with_failure));
-
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-
-        do_subscribe_success(&mut fixture, 0, 0, SubackReasonCode::NotAuthorized);
-    }
-
-    #[test]
-    fn connected_state_subscribe_timeout_failure() {
+    fn connected_state_subscribe_failure_timeout() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
         fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_with_nothing));
@@ -1522,6 +1657,140 @@ mod operational_state_tests {
         let result = subscribe_result_receiver.blocking_recv();
         assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
         verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_offline_submit_and_policy_fail() {
+        let mut config = build_standard_test_config();
+        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription {
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::AtLeastOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+
+        let result = subscribe_result_receiver.blocking_recv();
+        assert!(!result.is_err());
+
+        let subscribe_result = result.unwrap();
+        assert!(subscribe_result.is_err());
+
+        assert_eq!(Mqtt5Error::OfflineQueuePolicyFailed, subscribe_result.unwrap_err());
+        verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_disconnect_user_queue_with_failing_offline_policy() {
+        let mut config = build_standard_test_config();
+        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        verify_operational_state_empty(&fixture);
+
+        let result = subscribe_result_receiver.blocking_recv().unwrap();
+        assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_disconnect_current_operation_with_failing_offline_policy() {
+        let mut config = build_standard_test_config();
+        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        let service_result = fixture.service_once(10, 10);
+        assert!(service_result.is_ok());
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_some());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(0));
+        verify_operational_state_empty(&fixture);
+
+        let result = subscribe_result_receiver.blocking_recv().unwrap();
+        assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result);
+    }
+
+    #[test]
+    fn connected_state_subscribe_failure_disconnect_pending_with_failing_offline_policy() {
+        let mut config = build_standard_test_config();
+        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let subscribe = SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        };
+
+        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        let service_result = fixture.service_with_drain(10);
+        assert!(service_result.is_ok());
+        assert!(subscribe_result_receiver.try_recv().is_err());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_ack_operations.len());
+
+        assert_eq!(Ok(()), fixture.on_connection_closed(20));
+        verify_operational_state_empty(&fixture);
+
+        let result = subscribe_result_receiver.blocking_recv().unwrap();
+        assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result);
     }
 
     /////////////////////////////////////////////
