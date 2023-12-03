@@ -104,6 +104,13 @@ impl MqttOperation {
     }
 }
 
+#[cfg_attr(test, derive(Eq, PartialEq, Debug))]
+pub(crate) enum PacketEvent {
+    Connack(ConnackPacket),
+    Publish(PublishPacket),
+    Disconnect(DisconnectPacket)
+}
+
 pub(crate) enum NetworkEvent<'a> {
     ConnectionOpened,
     ConnectionClosed,
@@ -114,7 +121,7 @@ pub(crate) enum NetworkEvent<'a> {
 pub(crate) struct NetworkEventContext<'a> {
     event: NetworkEvent<'a>,
     current_time: Instant,
-    client_events: &'a mut VecDeque<Arc<ClientEvent>>,
+    packet_events: &'a mut VecDeque<PacketEvent>,
 }
 
 pub(crate) enum UserEvent {
@@ -1336,10 +1343,7 @@ impl OperationalState {
 
             if connack.reason_code != ConnectReasonCode::Success {
                 error!("[{} ms] handle_connack - connection rejected with reason code {}", self.elapsed_time_ms, connect_reason_code_to_str(connack.reason_code));
-                context.client_events.push_back(Arc::new(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-                    error: Mqtt5Error::ConnectionRejected,
-                    connack: Some(connack)
-                })));
+                context.packet_events.push_back(PacketEvent::Connack(connack));
                 return Err(Mqtt5Error::ConnectionRejected);
             }
 
@@ -1366,10 +1370,7 @@ impl OperationalState {
 
             self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
 
-            context.client_events.push_back(Arc::new(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
-                connack,
-                settings: self.current_settings.as_ref().unwrap().clone()
-            })));
+            context.packet_events.push_back(PacketEvent::Connack(connack));
 
             return Ok(());
         }
@@ -1588,16 +1589,12 @@ impl OperationalState {
             let qos = publish.qos;
             match qos {
                 QualityOfService::AtMostOnce => {
-                    context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
-                        publish
-                    })));
+                    context.packet_events.push_back(PacketEvent::Publish(publish));
                     return Ok(());
                 }
 
                 QualityOfService::AtLeastOnce => {
-                    context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
-                        publish
-                    })));
+                    context.packet_events.push_back(PacketEvent::Publish(publish));
 
                     let puback = Box::new(MqttPacket::Puback(PubackPacket{
                         packet_id,
@@ -1612,9 +1609,7 @@ impl OperationalState {
 
                 QualityOfService::ExactlyOnce => {
                     if !self.qos2_incomplete_incoming_publishes.contains(&packet_id) {
-                        context.client_events.push_back(Arc::new(ClientEvent::PublishReceived(PublishReceivedEvent{
-                            publish
-                        })));
+                        context.packet_events.push_back(PacketEvent::Publish(publish));
                         self.qos2_incomplete_incoming_publishes.insert(packet_id);
                     }
 
@@ -1647,10 +1642,7 @@ impl OperationalState {
         }
 
         if let MqttPacket::Disconnect(disconnect) = *packet {
-            context.client_events.push_back(Arc::new(ClientEvent::Disconnection(DisconnectionEvent{
-                error: Mqtt5Error::ServerSideDisconnect,
-                disconnect: Some(disconnect)
-            })));
+            context.packet_events.push_back(PacketEvent::Disconnect(disconnect));
 
             return Err(Mqtt5Error::ServerSideDisconnect);
         }

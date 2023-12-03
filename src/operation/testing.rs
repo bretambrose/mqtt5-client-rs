@@ -245,7 +245,7 @@ mod operational_state_tests {
 
         pub client_state: OperationalState,
 
-        pub client_event_stream: VecDeque<Arc<ClientEvent>>,
+        pub client_packet_events: VecDeque<PacketEvent>,
 
         pub to_broker_packet_stream: VecDeque<Box<MqttPacket>>,
         pub to_client_packet_stream: VecDeque<Box<MqttPacket>>,
@@ -262,7 +262,7 @@ mod operational_state_tests {
                 broker_decoder: Decoder::new(),
                 broker_encoder: Encoder::new(),
                 client_state: OperationalState::new(config),
-                client_event_stream : VecDeque::new(),
+                client_packet_events : VecDeque::new(),
                 to_broker_packet_stream : VecDeque::new(),
                 to_client_packet_stream : VecDeque::new(),
                 broker_packet_handlers : create_default_packet_handlers(),
@@ -334,7 +334,7 @@ mod operational_state_tests {
                     let mut network_event = NetworkEventContext {
                         event: NetworkEvent::WriteCompletion,
                         current_time,
-                        client_events: &mut self.client_event_stream,
+                        packet_events: &mut self.client_packet_events,
                     };
 
                     let completion_result = self.client_state.handle_network_event(&mut network_event);
@@ -383,7 +383,7 @@ mod operational_state_tests {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::ConnectionOpened,
-                client_events: &mut self.client_event_stream,
+                packet_events: &mut self.client_packet_events,
             };
 
             self.client_state.handle_network_event(&mut context)
@@ -393,7 +393,7 @@ mod operational_state_tests {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::WriteCompletion,
-                client_events: &mut self.client_event_stream,
+                packet_events: &mut self.client_packet_events,
             };
 
             self.client_state.handle_network_event(&mut context)
@@ -403,7 +403,7 @@ mod operational_state_tests {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::ConnectionClosed,
-                client_events: &mut self.client_event_stream,
+                packet_events: &mut self.client_packet_events,
             };
 
             self.client_state.handle_network_event(&mut context)
@@ -413,7 +413,7 @@ mod operational_state_tests {
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::IncomingData(bytes),
-                client_events: &mut self.client_event_stream,
+                packet_events: &mut self.client_packet_events,
             };
 
             self.client_state.handle_network_event(&mut context)
@@ -622,14 +622,14 @@ mod operational_state_tests {
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_closed(0).err().unwrap());
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
 
         let bytes : Vec<u8> = vec!(0, 1, 2, 3, 4, 5);
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_incoming_bytes(0, bytes.as_slice()).err().unwrap());
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
     }
 
     #[test]
@@ -641,7 +641,7 @@ mod operational_state_tests {
     }
 
     fn verify_service_does_nothing(fixture : &mut OperationalStateTestFixture) {
-        let client_event_stream_length = fixture.client_event_stream.len();
+        let client_packet_events_length = fixture.client_packet_events.len();
         let to_broker_packet_stream_length = fixture.to_broker_packet_stream.len();
         let to_client_packet_stream_length = fixture.to_client_packet_stream.len();
 
@@ -660,7 +660,7 @@ mod operational_state_tests {
             assert_eq!(0, bytes.len());
         }
 
-        assert_eq!(client_event_stream_length, fixture.client_event_stream.len());
+        assert_eq!(client_packet_events_length, fixture.client_packet_events.len());
         assert_eq!(to_broker_packet_stream_length, fixture.to_broker_packet_stream.len());
         assert_eq!(to_client_packet_stream_length, fixture.to_client_packet_stream.len());
     }
@@ -680,16 +680,16 @@ mod operational_state_tests {
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
 
         let bytes : Vec<u8> = vec!(0, 1, 2, 3, 4, 5);
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_incoming_bytes(0, bytes.as_slice()).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
     }
 
     #[test]
@@ -726,7 +726,7 @@ mod operational_state_tests {
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
     }
 
     #[test]
@@ -738,7 +738,7 @@ mod operational_state_tests {
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_write_completion(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
     }
 
     #[test]
@@ -759,7 +759,7 @@ mod operational_state_tests {
         // service post-timeout
         assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
         verify_operational_state_empty(&fixture);
     }
 
@@ -776,13 +776,9 @@ mod operational_state_tests {
         assert_eq!(Err(Mqtt5Error::ConnectionRejected), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
 
-        // connack rejection is the only time we generate a connection failure event, everything else
-        // is the responsibility of the caller
-        let expected_events = vec!(ClientEvent::ConnectionFailure(ConnectionFailureEvent{
-            error: Mqtt5Error::ConnectionRejected,
-            connack: Some(create_connack_rejection())
-        }));
-        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+        let expected_events = VecDeque::from(vec!(PacketEvent::Connack(create_connack_rejection())));
+        assert_eq!(expected_events, fixture.client_packet_events);
+
         verify_operational_state_empty(&fixture);
     }
 
@@ -796,7 +792,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
         verify_operational_state_empty(&fixture);
     }
 
@@ -813,7 +809,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::MalformedPacket), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
         verify_operational_state_empty(&fixture);
     }
 
@@ -850,7 +846,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
         verify_operational_state_empty(&fixture);
     }
 
@@ -923,7 +919,7 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::ProtocolError), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert!(fixture.client_event_stream.is_empty());
+        assert!(fixture.client_packet_events.is_empty());
     }
 
     #[test]
@@ -948,11 +944,9 @@ mod operational_state_tests {
         };
 
         let settings = build_negotiated_settings(&fixture.client_state.config, &connack,&None);
-        let expected_events = vec!(ClientEvent::ConnectionSuccess(ConnectionSuccessEvent{
-            connack,
-            settings
-        }));
-        assert!(expected_events.iter().eq(fixture.client_event_stream.iter().map(|event| { &**event })));
+        let expected_events = VecDeque::from(vec!(PacketEvent::Connack(connack)));
+        assert_eq!(expected_events, fixture.client_packet_events);
+
         verify_operational_state_empty(&fixture);
     }
 
@@ -962,11 +956,11 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        let client_event_count = fixture.client_event_stream.len();
+        let client_event_count = fixture.client_packet_events.len();
 
         assert_eq!(Mqtt5Error::InternalStateError, fixture.on_connection_opened(0).err().unwrap());
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
-        assert_eq!(client_event_count, fixture.client_event_stream.len());
+        assert_eq!(client_event_count, fixture.client_packet_events.len());
         verify_operational_state_empty(&fixture);
     }
 
