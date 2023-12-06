@@ -1437,139 +1437,421 @@ mod operational_state_tests {
 
         do_subscribe_success(&mut fixture, 1, 2, SubackReasonCode::GrantedQos1);
     }
+    macro_rules! define_operation_success_reconnect_while_in_user_queue_test {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = $queue_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let operation = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+
+                if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
+                    $verify_function_name(&ack);
+                } else {
+                    panic!("Expected ack result");
+                }
+
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    fn verify_successful_test_suback(suback: &SubackPacket) {
+        assert_eq!(1, suback.reason_codes.len());
+        assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
+    }
+
+    fn build_subscribe_success_packet() -> SubscribePacket {
+        SubscribePacket {
+            subscriptions: vec!(
+                Subscription{
+                    topic_filter : "hello/world".to_string(),
+                    qos : QualityOfService::ExactlyOnce,
+                    ..Default::default()
+                }
+            ),
+            ..Default::default()
+        }
+    }
+
+    define_operation_success_reconnect_while_in_user_queue_test!(
+        connected_state_subscribe_success_reconnect_while_in_user_queue_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        verify_successful_test_suback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
 
     #[test]
     fn connected_state_subscribe_success_reconnect_while_in_user_queue() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+        connected_state_subscribe_success_reconnect_while_in_user_queue_helper();
+    }
 
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription{
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::ExactlyOnce,
-                    ..Default::default()
-                }
+    fn verify_successful_test_unsuback(unsuback: &UnsubackPacket) {
+        assert_eq!(1, unsuback.reason_codes.len());
+        assert_eq!(UnsubackReasonCode::Success, unsuback.reason_codes[0]);
+    }
+
+    fn build_unsubscribe_success_packet() -> UnsubscribePacket {
+        UnsubscribePacket {
+            topic_filters: vec!(
+                "hello/world".to_string()
             ),
             ..Default::default()
-        };
+        }
+    }
 
-        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    define_operation_success_reconnect_while_in_user_queue_test!(
+        connected_state_unsubscribe_success_reconnect_while_in_user_queue_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        verify_successful_test_unsuback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
 
-        assert_eq!(Ok(()), fixture.on_connection_closed(0));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    #[test]
+    fn connected_state_unsubscribe_success_reconnect_while_in_user_queue() {
+        connected_state_unsubscribe_success_reconnect_while_in_user_queue_helper();
+    }
 
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    fn verify_successful_test_qos0_publish(response: &PublishResponse) {
+        assert_eq!(PublishResponse::Qos0, *response);
+    }
 
-        assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+    fn build_qos0_publish_success_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtMostOnce,
+            ..Default::default()
+        }
+    }
 
-        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
-            assert_eq!(1, suback.reason_codes.len());
-            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
-        } else {
-            panic!("Expected suback result");
+    define_operation_success_reconnect_while_in_user_queue_test!(
+        connected_state_qos0_publish_success_reconnect_while_in_user_queue_helper,
+        build_qos0_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos0_publish,
+        OfflineQueuePolicy::PreserveAll
+    );
+
+    #[test]
+    fn connected_state_qos0_publish_success_reconnect_while_in_user_queue() {
+        connected_state_qos0_publish_success_reconnect_while_in_user_queue_helper();
+    }
+
+    fn verify_successful_test_qos1_publish(response: &PublishResponse) {
+        if let PublishResponse::Qos1(puback) = response {
+            assert_eq!(PubackReasonCode::Success, puback.reason_code);
+            return;
         }
 
-        verify_operational_state_empty(&fixture);
+        panic!("Expected puback");
     }
+
+    fn build_qos1_publish_success_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            ..Default::default()
+        }
+    }
+
+    define_operation_success_reconnect_while_in_user_queue_test!(
+        connected_state_qos1_publish_success_reconnect_while_in_user_queue_helper,
+        build_qos1_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos1_publish,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
+
+    #[test]
+    fn connected_state_qos1_publish_success_reconnect_while_in_user_queue() {
+        connected_state_qos1_publish_success_reconnect_while_in_user_queue_helper();
+    }
+
+    fn verify_successful_test_qos2_publish(response: &PublishResponse) {
+        if let PublishResponse::Qos2(qos2_response) = response {
+            if let Qos2Response::Pubcomp(pubcomp) = qos2_response {
+                assert_eq!(PubcompReasonCode::Success, pubcomp.reason_code);
+                return;
+            }
+        }
+
+        panic!("Expected pubcomp");
+    }
+
+    fn build_qos2_publish_success_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "hello/world".to_string(),
+            qos: QualityOfService::ExactlyOnce,
+            ..Default::default()
+        }
+    }
+
+    define_operation_success_reconnect_while_in_user_queue_test!(
+        connected_state_qos2_publish_success_reconnect_while_in_user_queue_helper,
+        build_qos2_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos2_publish,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
+
+    #[test]
+    fn connected_state_qos2_publish_success_reconnect_while_in_user_queue() {
+        connected_state_qos2_publish_success_reconnect_while_in_user_queue_helper();
+    }
+
+    macro_rules! define_operation_success_reconnect_while_current_operation_test {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = $queue_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let operation = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                let service_result = fixture.service_once(10, 10);
+                assert!(service_result.is_ok());
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(0, fixture.client_state.user_operation_queue.len());
+                assert!(fixture.client_state.current_operation.is_some());
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+
+                if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
+                    $verify_function_name(&ack);
+                } else {
+                    panic!("Expected ack result");
+                }
+
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    define_operation_success_reconnect_while_current_operation_test!(
+        connected_state_subscribe_success_reconnect_while_current_operation_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        verify_successful_test_suback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
 
     #[test]
     fn connected_state_subscribe_success_reconnect_while_current_operation() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription{
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::ExactlyOnce,
-                    ..Default::default()
-                }
-            ),
-            ..Default::default()
-        };
-
-        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-        let service_result = fixture.service_once(10, 10);
-        assert!(service_result.is_ok());
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(0, fixture.client_state.user_operation_queue.len());
-        assert!(fixture.client_state.current_operation.is_some());
-
-        assert_eq!(Ok(()), fixture.on_connection_closed(20));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 30));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-        assert_eq!(Ok(()), fixture.service_round_trip(30, 40));
-
-        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
-            assert_eq!(1, suback.reason_codes.len());
-            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
-        } else {
-            panic!("Expected suback result");
-        }
-
-        verify_operational_state_empty(&fixture);
+        connected_state_subscribe_success_reconnect_while_current_operation_helper();
     }
+
+    define_operation_success_reconnect_while_current_operation_test!(
+        connected_state_unsubscribe_success_reconnect_while_current_operation_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        verify_successful_test_unsuback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
+
+    #[test]
+    fn connected_state_unsubscribe_success_reconnect_while_current_operation() {
+        connected_state_unsubscribe_success_reconnect_while_current_operation_helper();
+    }
+
+    define_operation_success_reconnect_while_current_operation_test!(
+        connected_state_qos0_publish_success_reconnect_while_current_operation_helper,
+        build_qos0_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos0_publish,
+        OfflineQueuePolicy::PreserveAll
+    );
+
+    #[test]
+    fn connected_state_qos0_publish_success_reconnect_while_current_operation() {
+        connected_state_qos0_publish_success_reconnect_while_current_operation_helper();
+    }
+
+    define_operation_success_reconnect_while_current_operation_test!(
+        connected_state_qos1_publish_success_reconnect_while_current_operation_helper,
+        build_qos1_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos1_publish,
+        OfflineQueuePolicy::PreserveQos1PlusPublishes
+    );
+
+    #[test]
+    fn connected_state_qos1_publish_success_reconnect_while_current_operation() {
+        connected_state_qos1_publish_success_reconnect_while_current_operation_helper();
+    }
+
+    define_operation_success_reconnect_while_current_operation_test!(
+        connected_state_qos2_publish_success_reconnect_while_current_operation_helper,
+        build_qos2_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos2_publish,
+        OfflineQueuePolicy::PreserveQos1PlusPublishes
+    );
+
+    #[test]
+    fn connected_state_qos2_publish_success_reconnect_while_current_operation() {
+        connected_state_qos2_publish_success_reconnect_while_current_operation_helper();
+    }
+
+    macro_rules! define_operation_success_reconnect_while_pending_test {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = $queue_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let operation = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                let service_result = fixture.service_once(0, 4096);
+                assert!(service_result.is_ok());
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(0, fixture.client_state.user_operation_queue.len());
+                assert!(fixture.client_state.current_operation.is_none());
+
+                let is_pending_ack = (1 == fixture.client_state.allocated_packet_ids.len()) && (1 == fixture.client_state.pending_ack_operations.len());
+                let is_pending_write_complete = (1 == fixture.client_state.pending_write_completion_operations.len());
+                assert!(is_pending_ack != is_pending_write_complete); // xor - one or the other must be true, not both
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len() + fixture.client_state.resubmit_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+
+                if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
+                    $verify_function_name(&ack);
+                } else {
+                    panic!("Expected ack result");
+                }
+
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    define_operation_success_reconnect_while_pending_test!(
+        connected_state_subscribe_success_reconnect_while_pending_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        verify_successful_test_suback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
 
     #[test]
     fn connected_state_subscribe_success_reconnect_while_pending() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+        connected_state_subscribe_success_reconnect_while_pending_helper();
+    }
 
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription{
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::ExactlyOnce,
-                    ..Default::default()
-                }
-            ),
-            ..Default::default()
-        };
+    define_operation_success_reconnect_while_pending_test!(
+        connected_state_unsubscribe_success_reconnect_while_pending_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        verify_successful_test_unsuback,
+        OfflineQueuePolicy::PreserveAcknowledged
+    );
 
-        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    #[test]
+    fn connected_state_unsubscribe_success_reconnect_while_pending() {
+        connected_state_unsubscribe_success_reconnect_while_pending_helper();
+    }
 
-        let service_result = fixture.service_with_drain(10);
-        assert!(service_result.is_ok());
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(0, fixture.client_state.user_operation_queue.len());
-        assert!(fixture.client_state.current_operation.is_none());
-        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
-        assert_eq!(1, fixture.client_state.pending_ack_operations.len());
+    define_operation_success_reconnect_while_pending_test!(
+        connected_state_qos0_publish_success_reconnect_while_pending_helper,
+        build_qos0_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos0_publish,
+        OfflineQueuePolicy::PreserveAll
+    );
 
-        assert_eq!(Ok(()), fixture.on_connection_closed(20));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    #[test]
+    fn connected_state_qos0_publish_success_reconnect_while_pending() {
+        connected_state_qos0_publish_success_reconnect_while_pending_helper();
+    }
 
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 30));
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    define_operation_success_reconnect_while_pending_test!(
+        connected_state_qos1_publish_success_reconnect_while_pending_helper,
+        build_qos1_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos1_publish,
+        OfflineQueuePolicy::PreserveQos1PlusPublishes
+    );
 
-        assert_eq!(Ok(()), fixture.service_round_trip(30, 40));
+    #[test]
+    fn connected_state_qos1_publish_success_reconnect_while_pending() {
+        connected_state_qos1_publish_success_reconnect_while_pending_helper();
+    }
 
-        if let Ok(Ok(suback)) = subscribe_result_receiver.blocking_recv() {
-            assert_eq!(1, suback.reason_codes.len());
-            assert_eq!(SubackReasonCode::GrantedQos2, suback.reason_codes[0]);
-        } else {
-            panic!("Expected suback result");
-        }
+    define_operation_success_reconnect_while_pending_test!(
+        connected_state_qos2_publish_success_reconnect_while_pending_helper,
+        build_qos2_publish_success_packet,
+        publish,
+        PublishOptions,
+        verify_successful_test_qos2_publish,
+        OfflineQueuePolicy::PreserveQos1PlusPublishes
+    );
 
-        verify_operational_state_empty(&fixture);
+    #[test]
+    fn connected_state_qos2_publish_success_reconnect_while_pending() {
+        connected_state_qos2_publish_success_reconnect_while_pending_helper();
     }
 
     #[test]

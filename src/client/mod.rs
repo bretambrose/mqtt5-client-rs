@@ -36,12 +36,14 @@ pub struct PublishOptions {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum Qos2Response {
     Pubrec(PubrecPacket),
     Pubcomp(PubcompPacket),
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum PublishResponse {
     Qos0,
     Qos1(PubackPacket),
