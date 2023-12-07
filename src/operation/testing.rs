@@ -2093,34 +2093,93 @@ mod operational_state_tests {
 
     // TODO: connected_state_qos2_publish_pubrel_failure_timeout requires custom impl
 
+    macro_rules! define_operation_failure_offline_submit_and_policy_fail_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $offline_policy: ident) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = OfflineQueuePolicy::$offline_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+
+                let packet = $build_operation_function_name();
+
+                let operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{ ..Default::default() }).unwrap();
+
+                let result = operation_result_receiver.blocking_recv();
+                assert!(!result.is_err());
+
+                let operation_result = result.unwrap();
+                assert!(operation_result.is_err());
+
+                assert_eq!(Mqtt5Error::OfflineQueuePolicyFailed, operation_result.unwrap_err());
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    define_operation_failure_offline_submit_and_policy_fail_helper!(
+        connected_state_subscribe_failure_offline_submit_and_policy_fail_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        PreserveQos1PlusPublishes
+    );
+
     #[test]
     fn connected_state_subscribe_failure_offline_submit_and_policy_fail() {
-        let mut config = build_standard_test_config();
-        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+        connected_state_subscribe_failure_offline_submit_and_policy_fail_helper();
+    }
 
-        let mut fixture = OperationalStateTestFixture::new(config);
+    define_operation_failure_offline_submit_and_policy_fail_helper!(
+        connected_state_unsubscribe_failure_offline_submit_and_policy_fail_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        PreserveQos1PlusPublishes
+    );
 
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription {
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::AtLeastOnce,
-                    ..Default::default()
-                }
-            ),
-            ..Default::default()
-        };
+    #[test]
+    fn connected_state_unsubscribe_failure_offline_submit_and_policy_fail() {
+        connected_state_unsubscribe_failure_offline_submit_and_policy_fail_helper();
+    }
 
-        let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+    define_operation_failure_offline_submit_and_policy_fail_helper!(
+        connected_state_qos0_publish_failure_offline_submit_and_policy_fail_helper,
+        build_qos0_publish_success_packet,
+        publish,
+        PublishOptions,
+        PreserveAcknowledged
+    );
 
-        let result = subscribe_result_receiver.blocking_recv();
-        assert!(!result.is_err());
+    #[test]
+    fn connected_state_qos0_publish_failure_offline_submit_and_policy_fail() {
+        connected_state_qos0_publish_failure_offline_submit_and_policy_fail_helper();
+    }
 
-        let subscribe_result = result.unwrap();
-        assert!(subscribe_result.is_err());
+    define_operation_failure_offline_submit_and_policy_fail_helper!(
+        connected_state_qos1_publish_failure_offline_submit_and_policy_fail_helper,
+        build_qos1_publish_success_packet,
+        publish,
+        PublishOptions,
+        PreserveNothing
+    );
 
-        assert_eq!(Mqtt5Error::OfflineQueuePolicyFailed, subscribe_result.unwrap_err());
-        verify_operational_state_empty(&fixture);
+    #[test]
+    fn connected_state_qos1_publish_failure_offline_submit_and_policy_fail() {
+        connected_state_qos1_publish_failure_offline_submit_and_policy_fail_helper();
+    }
+
+    define_operation_failure_offline_submit_and_policy_fail_helper!(
+        connected_state_qos2_publish_failure_offline_submit_and_policy_fail_helper,
+        build_qos2_publish_success_packet,
+        publish,
+        PublishOptions,
+        PreserveNothing
+    );
+
+    #[test]
+    fn connected_state_qos2_publish_failure_offline_submit_and_policy_fail() {
+        connected_state_qos2_publish_failure_offline_submit_and_policy_fail_helper();
     }
 
     #[test]
