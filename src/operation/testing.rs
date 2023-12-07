@@ -1437,6 +1437,7 @@ mod operational_state_tests {
 
         do_subscribe_success(&mut fixture, 1, 2, SubackReasonCode::GrantedQos1);
     }
+
     macro_rules! define_operation_success_reconnect_while_in_user_queue_test {
         ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
             fn $test_helper_name() {
@@ -1864,14 +1865,33 @@ mod operational_state_tests {
         do_subscribe_success(&mut fixture, 0, 0, SubackReasonCode::NotAuthorized);
     }
 
-    #[test]
-    fn connected_state_subscribe_failure_validation() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_tiny_maximum_packet_size));
+    macro_rules! define_operation_failure_validation_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $expected_error_type: ident) => {
+            fn $test_helper_name() {
+                let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+                fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_tiny_maximum_packet_size));
 
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        let subscribe = SubscribePacket {
+                let packet = $build_operation_function_name();
+
+                let operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{ ..Default::default() }).unwrap();
+                assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+
+                let result = operation_result_receiver.blocking_recv();
+                assert!(!result.is_err());
+
+                let operation_result = result.unwrap();
+                assert!(operation_result.is_err());
+
+                assert_eq!(Mqtt5Error::$expected_error_type, operation_result.unwrap_err());
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    fn build_subscribe_failure_validation_packet() -> SubscribePacket {
+        SubscribePacket {
             subscriptions: vec!(
                 Subscription {
                     topic_filter : "hello/world".to_string(),
@@ -1880,19 +1900,108 @@ mod operational_state_tests {
                 }
             ),
             ..Default::default()
-        };
+        }
+    }
 
-        let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+    define_operation_failure_validation_helper!(
+        connected_state_subscribe_failure_validation_helper,
+        build_subscribe_failure_validation_packet,
+        subscribe,
+        SubscribeOptions,
+        SubscribePacketValidation
+    );
 
-        let result = subscribe_result_receiver.blocking_recv();
-        assert!(!result.is_err());
+    #[test]
+    fn connected_state_subscribe_failure_validation() {
+        connected_state_subscribe_failure_validation_helper();
+    }
 
-        let subscribe_result = result.unwrap();
-        assert!(subscribe_result.is_err());
+    fn build_unsubscribe_failure_validation_packet() -> UnsubscribePacket {
+        UnsubscribePacket {
+            topic_filters: vec!(
+                "Hello/World/Derp".to_string()
+            ),
+            ..Default::default()
+        }
+    }
 
-        assert_eq!(Mqtt5Error::SubscribePacketValidation, subscribe_result.unwrap_err());
-        verify_operational_state_empty(&fixture);
+    define_operation_failure_validation_helper!(
+        connected_state_unsubscribe_failure_validation_helper,
+        build_unsubscribe_failure_validation_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        UnsubscribePacketValidation
+    );
+
+    #[test]
+    fn connected_state_unsubscribe_failure_validation() {
+        connected_state_unsubscribe_failure_validation_helper();
+    }
+
+    fn build_qos0_publish_failure_validation_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "derrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrp".to_string(),
+            qos: QualityOfService::AtMostOnce,
+            payload: Some("Some Kind of Payload".as_bytes().to_vec()),
+            ..Default::default()
+        }
+    }
+
+    define_operation_failure_validation_helper!(
+        connected_state_qos0_publish_failure_validation_helper,
+        build_qos0_publish_failure_validation_packet,
+        publish,
+        PublishOptions,
+        PublishPacketValidation
+    );
+
+    #[test]
+    fn connected_state_qos0_publish_failure_validation() {
+        connected_state_qos0_publish_failure_validation_helper();
+    }
+
+    fn build_qos1_publish_failure_validation_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "derrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrp".to_string(),
+            qos: QualityOfService::AtLeastOnce,
+            payload: Some("Some Kind of Payload".as_bytes().to_vec()),
+            ..Default::default()
+        }
+    }
+
+    define_operation_failure_validation_helper!(
+        connected_state_qos1_publish_failure_validation_helper,
+        build_qos1_publish_failure_validation_packet,
+        publish,
+        PublishOptions,
+        PublishPacketValidation
+    );
+
+    #[test]
+    fn connected_state_qos1_publish_failure_validation() {
+        connected_state_qos1_publish_failure_validation_helper();
+    }
+
+    fn build_qos2_publish_failure_validation_packet() -> PublishPacket {
+        PublishPacket {
+            topic: "derrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrp".to_string(),
+            qos: QualityOfService::ExactlyOnce,
+            payload: Some("Some Kind of Payload".as_bytes().to_vec()),
+            ..Default::default()
+        }
+    }
+
+    define_operation_failure_validation_helper!(
+        connected_state_qos2_publish_failure_validation_helper,
+        build_qos2_publish_failure_validation_packet,
+        publish,
+        PublishOptions,
+        PublishPacketValidation
+    );
+
+    #[test]
+    fn connected_state_qos2_publish_failure_validation() {
+        connected_state_qos2_publish_failure_validation_helper();
     }
 
     #[test]

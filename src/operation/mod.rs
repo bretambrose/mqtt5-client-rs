@@ -658,13 +658,15 @@ impl OperationalState {
         }
 
         let operation = operation_option.unwrap();
-        if let MqttPacket::Publish(publish) = &*operation.packet {
-            if publish.qos != QualityOfService::AtMostOnce {
-                self.pending_publish_count -= 1;
-            }
-        }
-
         if let Some(packet_id) = operation.packet_id {
+            if self.pending_ack_operations.get(&packet_id).is_some() {
+                if let MqttPacket::Publish(publish) = &*operation.packet {
+                    if publish.qos != QualityOfService::AtMostOnce {
+                        self.pending_publish_count -= 1;
+                    }
+                }
+            }
+
             self.allocated_packet_ids.remove(&packet_id);
             self.pending_ack_operations.remove(&packet_id);
         }
