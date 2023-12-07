@@ -2004,51 +2004,94 @@ mod operational_state_tests {
         connected_state_qos2_publish_failure_validation_helper();
     }
 
+    macro_rules! define_operation_failure_timeout_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $packet_type: ident) => {
+            fn $test_helper_name() {
+                let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+                fixture.broker_packet_handlers.insert(PacketType::$packet_type, Box::new(handle_with_nothing));
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let packet = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{
+                    timeout_in_millis : Some(30000)
+                }).unwrap();
+                assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+
+                let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::$packet_type, 1, None, None).unwrap();
+                assert_eq!(1, index);
+
+                assert_eq!(Some(30000), fixture.get_next_service_time(0));
+
+                for i in 0..30 {
+                    let elapsed_millis = i * 1000;
+                    assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
+                    assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+                    assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
+                }
+
+                assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
+                let result = operation_result_receiver.blocking_recv();
+                assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    define_operation_failure_timeout_helper!(
+        connected_state_subscribe_failure_timeout_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        Subscribe
+    );
+
     #[test]
     fn connected_state_subscribe_failure_timeout() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
-
-        fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_with_nothing));
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription{
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::AtLeastOnce,
-                    ..Default::default()
-                }
-            ),
-            ..Default::default()
-        };
-
-        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{
-            timeout_in_millis : Some(30000)
-        }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
-
-        let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Subscribe, 1, None, None).unwrap();
-        assert_eq!(1, index);
-        if let MqttPacket::Subscribe(to_broker_subscribe) = &**to_broker_packet {
-            assert_eq!(subscribe.subscriptions, to_broker_subscribe.subscriptions);
-        } else {
-            panic!("Expected subscribe");
-        }
-
-        assert_eq!(Some(30000), fixture.get_next_service_time(0));
-
-        for i in 0..30 {
-            let elapsed_millis = i * 1000;
-            assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
-            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
-            assert_eq!(Err(oneshot::error::TryRecvError::Empty), subscribe_result_receiver.try_recv());
-        }
-
-        assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
-        let result = subscribe_result_receiver.blocking_recv();
-        assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
-        verify_operational_state_empty(&fixture);
+        connected_state_subscribe_failure_timeout_helper();
     }
+
+    define_operation_failure_timeout_helper!(
+        connected_state_unsubscribe_failure_timeout_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        Unsubscribe
+    );
+
+    #[test]
+    fn connected_state_unsubscribe_failure_timeout() {
+        connected_state_unsubscribe_failure_timeout_helper();
+    }
+
+    define_operation_failure_timeout_helper!(
+        connected_state_qos1_publish_failure_timeout_helper,
+        build_qos1_publish_success_packet,
+        publish,
+        PublishOptions,
+        Publish
+    );
+
+    #[test]
+    fn connected_state_qos1_publish_failure_timeout() {
+        connected_state_qos1_publish_failure_timeout_helper();
+    }
+
+    define_operation_failure_timeout_helper!(
+        connected_state_qos2_publish_failure_timeout_helper,
+        build_qos2_publish_success_packet,
+        publish,
+        PublishOptions,
+        Publish
+    );
+
+    #[test]
+    fn connected_state_qos2_publish_failure_timeout() {
+        connected_state_qos2_publish_failure_timeout_helper();
+    }
+
+    // TODO: connected_state_qos2_publish_pubrel_failure_timeout requires custom impl
 
     #[test]
     fn connected_state_subscribe_failure_offline_submit_and_policy_fail() {
