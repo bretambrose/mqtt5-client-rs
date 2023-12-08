@@ -2276,7 +2276,42 @@ mod operational_state_tests {
         connected_state_qos2_publish_failure_timeout_helper();
     }
 
-    // TODO: connected_state_qos2_publish_pubrel_failure_timeout requires custom impl
+    #[test]
+    fn connected_state_qos2_publish_failure_pubrel_timeout() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+
+        fixture.broker_packet_handlers.insert(PacketType::Pubrel, Box::new(handle_with_nothing));
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let packet = build_qos2_publish_success_packet();
+
+        let mut operation_result_receiver = fixture.publish(0, packet, PublishOptions {
+            timeout_in_millis : Some(30000)
+        }).unwrap();
+        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+        assert_eq!(Ok(()), fixture.service_round_trip(10, 10));
+
+        let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
+        assert_eq!(1, index);
+
+        let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 1, None, None).unwrap();
+        assert_eq!(2, index);
+
+        assert_eq!(Some(30000), fixture.get_next_service_time(0));
+
+        for i in 0..30 {
+            let elapsed_millis = i * 1000;
+            assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
+            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+            assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
+        }
+
+        assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
+        let result = operation_result_receiver.blocking_recv();
+        assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
+        assert_eq!(Ok(()), fixture.service_round_trip(30010, 30010));
+        verify_operational_state_empty(&fixture);
+    }
 
     macro_rules! define_operation_failure_offline_submit_and_policy_fail_helper {
         ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $offline_policy: ident) => {
@@ -2565,42 +2600,84 @@ mod operational_state_tests {
         connected_state_qos2_publish_failure_disconnect_current_operation_with_failing_offline_policy_helper();
     }
 
+    macro_rules! define_operation_failure_disconnect_pending_with_failing_offline_policy_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $offline_policy: ident) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = OfflineQueuePolicy::$offline_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let packet = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{ ..Default::default() }).unwrap();
+
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                let service_result = fixture.service_once(10, 4096);
+                assert!(service_result.is_ok());
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(0, fixture.client_state.user_operation_queue.len());
+                assert!(fixture.client_state.current_operation.is_none());
+                if OfflineQueuePolicy::$offline_policy != OfflineQueuePolicy::PreserveAcknowledged {
+                    assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+                    assert_eq!(1, fixture.client_state.pending_ack_operations.len());
+                }
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                verify_operational_state_empty(&fixture);
+
+                let result = operation_result_receiver.blocking_recv();
+                assert!(!result.is_err());
+
+                let operation_result = result.unwrap();
+                assert!(operation_result.is_err());
+
+                assert_eq!(Mqtt5Error::OfflineQueuePolicyFailed, operation_result.unwrap_err());
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
+    define_operation_failure_disconnect_pending_with_failing_offline_policy_helper!(
+        connected_state_subscribe_failure_disconnect_pending_with_failing_offline_policy_helper,
+        build_subscribe_success_packet,
+        subscribe,
+        SubscribeOptions,
+        PreserveQos1PlusPublishes
+    );
+
     #[test]
     fn connected_state_subscribe_failure_disconnect_pending_with_failing_offline_policy() {
-        let mut config = build_standard_test_config();
-        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+        connected_state_subscribe_failure_disconnect_pending_with_failing_offline_policy_helper();
+    }
 
-        let mut fixture = OperationalStateTestFixture::new(config);
-        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+    define_operation_failure_disconnect_pending_with_failing_offline_policy_helper!(
+        connected_state_unsubscribe_failure_disconnect_pending_with_failing_offline_policy_helper,
+        build_unsubscribe_success_packet,
+        unsubscribe,
+        UnsubscribeOptions,
+        PreserveQos1PlusPublishes
+    );
 
-        let subscribe = SubscribePacket {
-            subscriptions: vec!(
-                Subscription{
-                    topic_filter : "hello/world".to_string(),
-                    qos : QualityOfService::ExactlyOnce,
-                    ..Default::default()
-                }
-            ),
-            ..Default::default()
-        };
+    #[test]
+    fn connected_state_unsubscribe_failure_disconnect_pending_with_failing_offline_policy() {
+        connected_state_unsubscribe_failure_disconnect_pending_with_failing_offline_policy_helper();
+    }
 
-        let mut subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+    define_operation_failure_disconnect_pending_with_failing_offline_policy_helper!(
+        connected_state_qos0_publish_failure_disconnect_pending_with_failing_offline_policy_helper,
+        build_qos0_publish_success_packet,
+        publish,
+        PublishOptions,
+        PreserveAcknowledged
+    );
 
-        let service_result = fixture.service_with_drain(10);
-        assert!(service_result.is_ok());
-        assert!(subscribe_result_receiver.try_recv().is_err());
-        assert_eq!(0, fixture.client_state.user_operation_queue.len());
-        assert!(fixture.client_state.current_operation.is_none());
-        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
-        assert_eq!(1, fixture.client_state.pending_ack_operations.len());
-
-        assert_eq!(Ok(()), fixture.on_connection_closed(20));
-        verify_operational_state_empty(&fixture);
-
-        let result = subscribe_result_receiver.blocking_recv().unwrap();
-        assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result);
+    #[test]
+    fn connected_state_qos0_publish_failure_disconnect_pending_with_failing_offline_policy() {
+        connected_state_qos0_publish_failure_disconnect_pending_with_failing_offline_policy_helper();
     }
 
     /////////////////////////////////////////////

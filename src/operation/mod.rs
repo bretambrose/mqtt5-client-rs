@@ -805,7 +805,7 @@ impl OperationalState {
         self.user_operation_queue.append(&mut retained);
 
         /* fail everything else */
-        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected.into_iter(), Mqtt5Error::ConnectionClosed));
+        result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(rejected.into_iter(), Mqtt5Error::OfflineQueuePolicyFailed));
 
         /*
          * unacked operations are processed as follows:
