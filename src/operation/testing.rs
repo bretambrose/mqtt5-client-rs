@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 mod operational_state_tests {
     use super::*;
     use crate::operation::*;
+    use crate::Qos2Response::Pubcomp;
 
     fn build_standard_test_config() -> OperationalStateConfig {
         OperationalStateConfig {
@@ -113,6 +114,34 @@ mod operational_state_tests {
         Err(Mqtt5Error::ProtocolError)
     }
 
+    fn handle_publish_with_failure(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Publish(publish) = &**packet {
+            match publish.qos {
+                QualityOfService::AtMostOnce => {}
+                QualityOfService::AtLeastOnce => {
+                    let response = Box::new(MqttPacket::Puback(PubackPacket{
+                        packet_id : publish.packet_id,
+                        reason_code : PubackReasonCode::QuotaExceeded,
+                        ..Default::default()
+                    }));
+                    response_packets.push_back(response);
+                }
+                QualityOfService::ExactlyOnce => {
+                    let response = Box::new(MqttPacket::Pubrec(PubrecPacket{
+                        packet_id : publish.packet_id,
+                        reason_code : PubrecReasonCode::QuotaExceeded,
+                        ..Default::default()
+                    }));
+                    response_packets.push_back(response);
+                }
+            }
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
     fn handle_pubrec_with_success(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
         if let MqttPacket::Pubrec(pubrec) = &**packet {
             let response = Box::new(MqttPacket::Pubrel(PubrelPacket{
@@ -131,6 +160,21 @@ mod operational_state_tests {
         if let MqttPacket::Pubrel(pubrel) = &**packet {
             let response = Box::new(MqttPacket::Pubcomp(PubcompPacket{
                 packet_id : pubrel.packet_id,
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_pubrel_with_failure(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Pubrel(pubrel) = &**packet {
+            let response = Box::new(MqttPacket::Pubcomp(PubcompPacket{
+                packet_id : pubrel.packet_id,
+                reason_code : PubcompReasonCode::PacketIdentifierNotFound,
                 ..Default::default()
             }));
             response_packets.push_back(response);
@@ -174,6 +218,26 @@ mod operational_state_tests {
 
             let response = Box::new(MqttPacket::Suback(SubackPacket{
                 packet_id : subscribe.packet_id,
+                reason_codes,
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_unsubscribe_with_failure(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Unsubscribe(unsubscribe) = &**packet {
+            let mut reason_codes = Vec::new();
+            for _ in &unsubscribe.topic_filters {
+                reason_codes.push(UnsubackReasonCode::ImplementationSpecificError);
+            }
+
+            let response = Box::new(MqttPacket::Unsuback(UnsubackPacket{
+                packet_id : unsubscribe.packet_id,
                 reason_codes,
                 ..Default::default()
             }));
@@ -1197,6 +1261,43 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
+    macro_rules! define_operation_success_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = $queue_policy;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let operation = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+
+                if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
+                    $verify_function_name(&ack);
+                } else {
+                    panic!("Expected ack result");
+                }
+
+                verify_operational_state_empty(&fixture);
+            }
+        };
+    }
+
     fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64, expected_reason_code: SubackReasonCode) {
         let subscribe = SubscribePacket {
             subscriptions: vec!(
@@ -1241,7 +1342,7 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
-    fn do_publish_success(fixture : &mut OperationalStateTestFixture, qos: QualityOfService, transmission_time: u64, response_time: u64) {
+    fn do_publish_success(fixture : &mut OperationalStateTestFixture, qos: QualityOfService, transmission_time: u64, response_time: u64, expected_response: PublishResponse) {
         let publish = PublishPacket {
             topic: "hello/world".to_string(),
             qos,
@@ -1272,31 +1373,56 @@ mod operational_state_tests {
         assert!(!op_result.is_err());
 
         let publish_response = op_result.unwrap();
-        match publish_response {
+
+        match &publish_response {
             PublishResponse::Qos0 => {
-                assert_eq!(QualityOfService::AtMostOnce, qos);
+                assert_eq!(expected_response, publish_response);
             }
-            PublishResponse::Qos1(_) => {
-                assert_eq!(QualityOfService::AtLeastOnce, qos);
+
+            PublishResponse::Qos1(puback) => {
+                if let PublishResponse::Qos1(expected_puback) = expected_response {
+                    assert_eq!(expected_puback.reason_code, puback.reason_code);
+                } else {
+                    panic!("expected puback");
+                }
                 let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Puback, 1, None, None).unwrap();
                 assert_eq!(1, index);
             }
-            PublishResponse::Qos2(_) => {
-                assert_eq!(QualityOfService::ExactlyOnce, qos);
+
+            PublishResponse::Qos2(qos2_response) => {
                 let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pubrec, 1, None, None).unwrap();
                 assert_eq!(1, index);
-                let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pubcomp, 1, None, None).unwrap();
-                assert_eq!(2, index);
 
-                let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 1, None, None).unwrap();
-                assert_eq!(2, index);
+                match &qos2_response {
+                    Qos2Response::Pubcomp(pubcomp) => {
+                        if let PublishResponse::Qos2(Qos2Response::Pubcomp(expected_pubcomp)) = expected_response {
+                            assert_eq!(expected_pubcomp.reason_code, pubcomp.reason_code);
+                        } else {
+                            panic!("expected pubcomp");
+                        }
+
+                        let (index, _) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Pubcomp, 1, None, None).unwrap();
+                        assert_eq!(2, index);
+
+                        let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 1, None, None).unwrap();
+                        assert_eq!(2, index);
+                    }
+
+                    Qos2Response::Pubrec(pubrec) => {
+                        if let PublishResponse::Qos2(Qos2Response::Pubrec(expected_pubrec)) = expected_response {
+                            assert_eq!(expected_pubrec.reason_code, pubrec.reason_code);
+                        } else {
+                            panic!("expected pubcomp");
+                        }
+                    }
+                }
             }
         }
 
         verify_operational_state_empty(&fixture);
     }
 
-    fn do_unsubscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64) {
+    fn do_unsubscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64, expected_reason_code: UnsubackReasonCode) {
         let unsubscribe = UnsubscribePacket {
             topic_filters: vec!("hello/world".to_string()),
             ..Default::default()
@@ -1321,7 +1447,7 @@ mod operational_state_tests {
 
         let unsuback_result = unsubscribe_result.unwrap();
         assert_eq!(1, unsuback_result.reason_codes.len());
-        assert_eq!(UnsubackReasonCode::Success, unsuback_result.reason_codes[0]);
+        assert_eq!(expected_reason_code, unsuback_result.reason_codes[0]);
 
         let (index, to_client_packet) = find_nth_packet_of_type(fixture.to_client_packet_stream.iter(), PacketType::Unsuback, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -1345,14 +1471,18 @@ mod operational_state_tests {
 
     #[test]
     fn connected_state_ping_push_out_by_unsubscribe_completion() {
-        do_connected_state_ping_push_out_test(Box::new(do_unsubscribe_success), 1337, 1551, 1337);
+        do_connected_state_ping_push_out_test(Box::new(
+            |transmission_time, response_time, expected_push_out| {
+                do_unsubscribe_success(transmission_time, response_time, expected_push_out, UnsubackReasonCode::Success)
+            }
+        ), 666, 1337, 666);
     }
 
     #[test]
     fn connected_state_ping_no_push_out_by_qos0_publish_completion() {
         do_connected_state_ping_push_out_test(Box::new(
             |fixture, transmission_time, response_time|{
-                do_publish_success(fixture, QualityOfService::AtMostOnce, transmission_time, response_time);
+                do_publish_success(fixture, QualityOfService::AtMostOnce, transmission_time, response_time, PublishResponse::Qos0);
             }
         ), 666, 1336, 0);
     }
@@ -1361,7 +1491,10 @@ mod operational_state_tests {
     fn connected_state_ping_push_out_by_qos1_publish_completion() {
         do_connected_state_ping_push_out_test(Box::new(
             |fixture, transmission_time, response_time|{
-                do_publish_success(fixture, QualityOfService::AtLeastOnce, transmission_time, response_time);
+                do_publish_success(fixture, QualityOfService::AtLeastOnce, transmission_time, response_time, PublishResponse::Qos1(PubackPacket{
+                    reason_code: PubackReasonCode::Success,
+                    ..Default::default()
+                }));
             }
         ), 333, 777, 333);
     }
@@ -1370,7 +1503,10 @@ mod operational_state_tests {
     fn connected_state_ping_push_out_by_qos2_publish_completion() {
         do_connected_state_ping_push_out_test(Box::new(
             |fixture, transmission_time, response_time|{
-                do_publish_success(fixture, QualityOfService::ExactlyOnce, transmission_time, response_time);
+                do_publish_success(fixture, QualityOfService::ExactlyOnce, transmission_time, response_time, PublishResponse::Qos2(Qos2Response::Pubcomp(PubcompPacket{
+                    reason_code: PubcompReasonCode::Success,
+                    ..Default::default()
+                })));
             }
         ), 444, 888, 888);
     }
@@ -1856,13 +1992,62 @@ mod operational_state_tests {
     }
 
     #[test]
-    fn connected_state_subscribe_failure_suback_reason_code() {
+    fn connected_state_subscribe_success_failing_reason_code() {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         fixture.broker_packet_handlers.insert(PacketType::Subscribe, Box::new(handle_subscribe_with_failure));
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
         do_subscribe_success(&mut fixture, 0, 0, SubackReasonCode::NotAuthorized);
+    }
+
+    #[test]
+    fn connected_state_unsubscribe_success_failing_reason_code() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Unsubscribe, Box::new(handle_unsubscribe_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_unsubscribe_success(&mut fixture, 0, 0, UnsubackReasonCode::ImplementationSpecificError);
+    }
+
+    #[test]
+    fn connected_state_qos1_publish_success_failing_reason_code() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Publish, Box::new(handle_publish_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::AtLeastOnce, 0, 0, PublishResponse::Qos1(PubackPacket{
+            reason_code: PubackReasonCode::QuotaExceeded,
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn connected_state_qos2_publish_success_failing_reason_code_pubrec() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Publish, Box::new(handle_publish_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::ExactlyOnce, 0, 0, PublishResponse::Qos2(Qos2Response::Pubrec(PubrecPacket{
+            reason_code: PubrecReasonCode::QuotaExceeded,
+            ..Default::default()
+        })));
+    }
+
+    #[test]
+    fn connected_state_qos2_publish_success_failing_reason_code_pubcomp() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Pubrel, Box::new(handle_pubrel_with_failure));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        do_publish_success(&mut fixture, QualityOfService::ExactlyOnce, 0, 0, PublishResponse::Qos2(Qos2Response::Pubcomp(PubcompPacket{
+            reason_code: PubcompReasonCode::PacketIdentifierNotFound,
+            ..Default::default()
+        })));
     }
 
     macro_rules! define_operation_failure_validation_helper {
@@ -2426,7 +2611,7 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_unsubscribe_success(&mut fixture, 3, 7);
+        do_unsubscribe_success(&mut fixture, 3, 7, UnsubackReasonCode::Success);
     }
 
     #[test]
@@ -2434,7 +2619,7 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_publish_success(&mut fixture, QualityOfService::AtMostOnce, 11, 13);
+        do_publish_success(&mut fixture, QualityOfService::AtMostOnce, 11, 13, PublishResponse::Qos0);
     }
 
     #[test]
@@ -2442,7 +2627,10 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_publish_success(&mut fixture, QualityOfService::AtLeastOnce, 17, 23);
+        do_publish_success(&mut fixture, QualityOfService::AtLeastOnce, 17, 23, PublishResponse::Qos1(PubackPacket{
+            reason_code: PubackReasonCode::Success,
+            ..Default::default()
+        }));
     }
 
     #[test]
@@ -2450,6 +2638,9 @@ mod operational_state_tests {
         let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        do_publish_success(&mut fixture, QualityOfService::ExactlyOnce, 29, 31);
+        do_publish_success(&mut fixture, QualityOfService::ExactlyOnce, 29, 31, PublishResponse::Qos2(Qos2Response::Pubcomp(PubcompPacket{
+            reason_code: PubcompReasonCode::Success,
+            ..Default::default()
+        })));
     }
 }
