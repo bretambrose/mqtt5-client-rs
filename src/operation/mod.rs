@@ -260,9 +260,9 @@ pub(crate) struct OperationalState {
 
     qos2_incomplete_incoming_publishes: HashSet<u16>,
     allocated_packet_ids: HashMap<u16, u64>,
-    pending_ack_operations: HashMap<u16, u64>,
+    pending_publish_operations: HashMap<u16, u64>,
+    pending_non_publish_operations: HashMap<u16, u64>,
     pending_write_completion_operations: VecDeque<u64>,
-    pending_publish_count: u16,
 
     current_settings: Option<NegotiatedSettings>,
 
@@ -320,9 +320,9 @@ impl OperationalState {
             current_operation: None,
             qos2_incomplete_incoming_publishes: HashSet::new(),
             allocated_packet_ids: HashMap::new(),
-            pending_ack_operations: HashMap::new(),
+            pending_publish_operations: HashMap::new(),
+            pending_non_publish_operations: HashMap::new(),
             pending_write_completion_operations: VecDeque::new(),
-            pending_publish_count: 0,
             current_settings: None,
             next_operation_id : 1,
             next_packet_id : 1,
@@ -460,9 +460,9 @@ impl OperationalState {
         self.current_operation = None;
         self.qos2_incomplete_incoming_publishes.clear();
         self.allocated_packet_ids.clear();
-        self.pending_ack_operations.clear();
+        self.pending_publish_operations.clear();
+        self.pending_non_publish_operations.clear();
         self.pending_write_completion_operations.clear();
-        self.pending_publish_count = 0;
         self.current_settings = None;
         self.next_packet_id = 1;
         self.has_connected_successfully = false;
@@ -494,9 +494,9 @@ impl OperationalState {
         write!(f, "  current_operation: {:?}\n", self.current_operation)?;
         write!(f, "  qos2_incomplete_incoming_publishes: {} operations\n", self.qos2_incomplete_incoming_publishes.len())?;
         write!(f, "  allocated_packet_ids: {} ids\n", self.allocated_packet_ids.len())?;
-        write!(f, "  pending_ack_operations: {} operations\n", self.pending_ack_operations.len())?;
+        write!(f, "  pending_publish_operations: {} operations\n", self.pending_publish_operations.len())?;
+        write!(f, "  pending_non_publish_operations: {} operations\n", self.pending_non_publish_operations.len())?;
         write!(f, "  pending_write_completion_operations: {} operations\n", self.pending_write_completion_operations.len())?;
-        write!(f, "  pending_publish_count: {}\n", self.pending_publish_count)?;
         write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
         write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
         write!(f, "}}\n")?;
@@ -525,13 +525,17 @@ impl OperationalState {
             write!(f, "    ({}, {})\n", *packet_id, *operation_id);
         });
         write!(f, "  }}\n")?;
-        write!(f, "  pending_ack_operations: {{\n")?;
-        self.pending_ack_operations.iter().for_each(|(packet_id, operation_id)| {
+        write!(f, "  pending_publish_operations: {{\n")?;
+        self.pending_publish_operations.iter().for_each(|(packet_id, operation_id)| {
+            write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+        });
+        write!(f, "  }}\n")?;
+        write!(f, "  pending_non_publish_operations: {{\n")?;
+        self.pending_non_publish_operations.iter().for_each(|(packet_id, operation_id)| {
             write!(f, "    ({}, {})\n", *packet_id, *operation_id);
         });
         write!(f, "  }}\n")?;
         write!(f, "  pending_write_completion_operations: {:?}\n", self.pending_write_completion_operations)?;
-        write!(f, "  pending_publish_count: {}\n", self.pending_publish_count)?;
         write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
         write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
         write!(f, "}}\n")?;
@@ -628,15 +632,10 @@ impl OperationalState {
         }
 
         let operation = operation_option.unwrap();
-        if let MqttPacket::Publish(publish) = &*operation.packet {
-            if publish.qos != QualityOfService::AtMostOnce {
-                self.pending_publish_count -= 1;
-            }
-        }
-
         if let Some(packet_id) = operation.packet_id {
             self.allocated_packet_ids.remove(&packet_id);
-            self.pending_ack_operations.remove(&packet_id);
+            self.pending_publish_operations.remove(&packet_id);
+            self.pending_non_publish_operations.remove(&packet_id);
         }
 
         self.apply_ping_extension_on_operation_success(&operation);
@@ -659,16 +658,9 @@ impl OperationalState {
 
         let operation = operation_option.unwrap();
         if let Some(packet_id) = operation.packet_id {
-            if self.pending_ack_operations.get(&packet_id).is_some() {
-                if let MqttPacket::Publish(publish) = &*operation.packet {
-                    if publish.qos != QualityOfService::AtMostOnce {
-                        self.pending_publish_count -= 1;
-                    }
-                }
-            }
-
             self.allocated_packet_ids.remove(&packet_id);
-            self.pending_ack_operations.remove(&packet_id);
+            self.pending_publish_operations.remove(&packet_id);
+            self.pending_non_publish_operations.remove(&packet_id);
         }
 
         if operation.options.is_none() {
@@ -709,7 +701,6 @@ impl OperationalState {
         self.change_state(OperationalStateType::PendingConnack);
         self.current_operation = None;
         self.pending_write_completion = false;
-        self.pending_publish_count = 0;
         self.decoder.reset_for_new_connection();
 
         // Queue up a Connect packet
@@ -773,6 +764,7 @@ impl OperationalState {
         self.connack_timeout_timepoint = None;
         self.next_ping_timepoint = None;
         self.ping_timeout_timepoint = None;
+        self.operation_ack_timeouts.clear();
 
         self.apply_connection_closed_to_current_operation()?;
 
@@ -817,20 +809,31 @@ impl OperationalState {
          *   next successful connection and either have the offline queue policy applied (if no
          *   session is found) or stay in the resubmit queue.
          */
-        let mut unacked_table = HashMap::new();
-        mem::swap(&mut unacked_table, &mut self.pending_ack_operations);
-        self.operation_ack_timeouts.clear();
-
-        let (mut resubmit, mut offline) = self.partition_unacked_operations_for_disconnect(unacked_table.into_iter().map(|(_, val)| { val }));
-        resubmit.iter().for_each(|id| { self.set_publish_duplicate_flag(*id, true) });
-        self.resubmit_operation_queue.append(&mut resubmit);
 
         /*
-         * any ackable that's not a resubmit goes to the user queue, after which we apply
-         * the offline policy to fast-fail operations that don't pass
+         * qos1+ publishes: mark as duplicate and add to end of resubmit queue
          */
-        self.user_operation_queue.append(&mut offline);
+        let mut unacked_publish_table = HashMap::new();
+        mem::swap(&mut unacked_publish_table, &mut self.pending_publish_operations);
 
+        unacked_publish_table.into_iter().for_each(|(_, id) |{
+            self.set_publish_duplicate_flag(id, true);
+            self.resubmit_operation_queue.push_back(id);
+        });
+
+        /*
+         * subscribe/unsubscribe to the user queue
+         */
+        let mut unacked_sub_unsub_table = HashMap::new();
+        mem::swap(&mut unacked_sub_unsub_table, &mut self.pending_non_publish_operations);
+
+        unacked_sub_unsub_table.into_iter().for_each(|(_, id) |{
+            self.user_operation_queue.push_front(id);
+        });
+
+        /*
+         * apply the offline policy to user queue operations
+         */
         let mut user_move : VecDeque<u64> = VecDeque::new();
         mem::swap(&mut user_move, &mut self.user_operation_queue);
 
@@ -942,7 +945,7 @@ impl OperationalState {
 
     fn does_operation_pass_receive_maximum_flow_control(&self, id: u64) -> bool {
         if let Some(settings) = &self.current_settings {
-            if self.pending_publish_count >= settings.receive_maximum_from_server {
+            if self.pending_publish_operations.len() >= settings.receive_maximum_from_server as usize {
                 if let Some(operation) = self.operations.get(&id) {
                     if let MqttPacket::Publish(publish) = &*operation.packet {
                         if publish.qos != QualityOfService::AtMostOnce {
@@ -1081,23 +1084,17 @@ impl OperationalState {
         let packet = &*operation.packet;
         match packet {
             MqttPacket::Subscribe(subscribe) => {
-                self.pending_ack_operations.insert(subscribe.packet_id, operation.id);
+                self.pending_non_publish_operations.insert(subscribe.packet_id, operation.id);
             }
             MqttPacket::Unsubscribe(unsubscribe) => {
-                self.pending_ack_operations.insert(unsubscribe.packet_id, operation.id);
+                self.pending_non_publish_operations.insert(unsubscribe.packet_id, operation.id);
             }
             MqttPacket::Publish(publish) => {
                 if publish.qos == QualityOfService::AtMostOnce {
                     self.pending_write_completion_operations.push_back(operation.id);
                 } else {
-                    self.pending_ack_operations.insert(publish.packet_id, operation.id);
-                    if operation.secondary_packet.is_none() {
-                        self.pending_publish_count += 1;
-                    }
+                    self.pending_publish_operations.insert(publish.packet_id, operation.id);
                 }
-            }
-            MqttPacket::Pubrel(pubrel) => {
-                self.pending_ack_operations.insert(pubrel.packet_id, operation.id);
             }
             _ => {
                 self.pending_write_completion_operations.push_back(operation.id);
@@ -1259,7 +1256,7 @@ impl OperationalState {
         if mode == OperationalQueueServiceMode::All {
             /* receive_maximum flow control check */
             if let Some(settings) = &self.current_settings {
-                if self.pending_publish_count >= settings.receive_maximum_from_server {
+                if self.pending_publish_operations.len() >= settings.receive_maximum_from_server as usize {
                     let mut head = self.resubmit_operation_queue.front();
                     if head.is_none() {
                         head = self.user_operation_queue.front();
@@ -1331,7 +1328,7 @@ impl OperationalState {
     fn set_publish_duplicate_flag(&mut self, id: u64, value: bool) {
         if let Some(operation) = self.operations.get_mut(&id) {
             if let MqttPacket::Publish(publish) = &mut *operation.packet {
-                debug!("[{} ms] set_publish_duplicate_flag - marking publish operation {} as duplicate", self.elapsed_time_ms, id);
+                debug!("[{} ms] set_publish_duplicate_flag - setting publish operation {} duplicate field to {}", self.elapsed_time_ms, id, value);
                 publish.duplicate = value;
             }
         }
@@ -1375,7 +1372,8 @@ impl OperationalState {
         sort_operation_deque(&mut self.user_operation_queue);
 
         assert!(self.high_priority_operation_queue.is_empty());
-        assert!(self.pending_ack_operations.is_empty());
+        assert!(self.pending_publish_operations.is_empty());
+        assert!(self.pending_non_publish_operations.is_empty());
         assert!(self.operation_ack_timeouts.is_empty());
         assert!(self.pending_write_completion_operations.is_empty());
 
@@ -1460,7 +1458,7 @@ impl OperationalState {
 
         if let MqttPacket::Suback(suback) = *packet {
             let packet_id = suback.packet_id;
-            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            let operation_id_option = self.pending_non_publish_operations.get(&packet_id);
             if let Some(operation_id) = operation_id_option {
                 return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Subscribe(suback)));
             }
@@ -1485,7 +1483,7 @@ impl OperationalState {
 
         if let MqttPacket::Unsuback(unsuback) = *packet {
             let packet_id = unsuback.packet_id;
-            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            let operation_id_option = self.pending_non_publish_operations.get(&packet_id);
             if let Some(operation_id) = operation_id_option {
                 return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Unsubscribe(unsuback)));
             }
@@ -1510,7 +1508,7 @@ impl OperationalState {
 
         if let MqttPacket::Puback(puback) = *packet {
             let packet_id = puback.packet_id;
-            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            let operation_id_option = self.pending_publish_operations.get(&packet_id);
             if let Some(operation_id) = operation_id_option {
                 return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Publish(PublishResponse::Qos1(puback))));
             }
@@ -1535,7 +1533,7 @@ impl OperationalState {
 
         if let MqttPacket::Pubrec(pubrec) = *packet {
             let packet_id = pubrec.packet_id;
-            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            let operation_id_option = self.pending_publish_operations.get(&packet_id);
             if let Some(operation_id) = operation_id_option {
                 if pubrec.reason_code as u8 >= 128 {
                     return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Publish(PublishResponse::Qos2(Qos2Response::Pubrec(pubrec)))));
@@ -1611,7 +1609,7 @@ impl OperationalState {
 
         if let MqttPacket::Pubcomp(pubcomp) = *packet {
             let packet_id = pubcomp.packet_id;
-            let operation_id_option = self.pending_ack_operations.get(&packet_id);
+            let operation_id_option = self.pending_publish_operations.get(&packet_id);
             if let Some(operation_id) = operation_id_option {
                 return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Publish(PublishResponse::Qos2(Qos2Response::Pubcomp(pubcomp)))));
             }
