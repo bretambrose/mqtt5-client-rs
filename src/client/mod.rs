@@ -20,6 +20,7 @@ use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
 
 use crate::spec::connect::ConnectPacket;
+use crate::spec::disconnect::validate_disconnect_packet_outbound;
 use crate::spec::puback::PubackPacket;
 use crate::spec::pubrec::PubrecPacket;
 use crate::spec::pubcomp::PubcompPacket;
@@ -73,12 +74,17 @@ pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
 #[derive(Debug, Default)]
-pub struct DisconnectOptions {
+pub enum StopMode {
+    #[default]
+    Soft,
+    Hard
 }
 
-pub type DisconnectResult = Mqtt5Result<()>;
-
-pub type DisconnectResultFuture = dyn Future<Output = DisconnectResult>;
+#[derive(Debug, Default)]
+pub struct StopOptions {
+    disconnect: Option<DisconnectPacket>,
+    mode: StopMode
+}
 
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct NegotiatedSettings {
@@ -265,8 +271,24 @@ impl Mqtt5Client {
         client_lifecycle_operation_body!(Start, self)
     }
 
-    pub fn stop(&self, packet: DisconnectPacket, options: DisconnectOptions) -> Pin<Box<DisconnectResultFuture>> {
-        client_mqtt_operation_body!(self, Stop, DisconnectOptionsInternal, packet, Disconnect, options)
+    pub fn stop(&self, options: StopOptions) -> Mqtt5Result<()> {
+        if let Some(disconnect) = &options.disconnect {
+            validate_disconnect_packet_outbound(disconnect)?;
+        }
+
+        let mut stop_options_internal = StopOptionsInternal {
+            mode: options.mode,
+            ..Default::default()
+        };
+
+        if options.disconnect.is_some() {
+            stop_options_internal.disconnect = Some(Box::new(MqttPacket::Disconnect(options.disconnect.unwrap())));
+        }
+
+        match self.operation_sender.try_send(OperationOptions::Stop(stop_options_internal)) {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
+            _ => Ok(())
+        }
     }
 
     pub fn close(&self) -> Mqtt5Result<()> {

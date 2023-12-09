@@ -570,24 +570,6 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub(crate) fn disconnect(&mut self, elapsed_millis: u64, disconnect: DisconnectPacket, options: DisconnectOptions) -> Mqtt5Result<oneshot::Receiver<DisconnectResult>> {
-            let (sender, receiver) = oneshot::channel();
-            let packet = Box::new(MqttPacket::Disconnect(disconnect));
-            let disconnect_options = DisconnectOptionsInternal {
-                options,
-                response_sender : Some(sender)
-            };
-
-            let disconnect_event = UserEvent::Disconnect(packet, disconnect_options);
-
-            self.client_state.handle_user_event(UserEventContext {
-                event: disconnect_event,
-                current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
-            })?;
-
-            Ok(receiver)
-        }
-
         pub(crate) fn advance_disconnected_to_state(&mut self, state: OperationalStateType, elapsed_millis: u64) -> Mqtt5Result<()> {
             assert_eq!(OperationalStateType::Disconnected, self.client_state.state);
 

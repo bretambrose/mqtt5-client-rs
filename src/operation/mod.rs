@@ -33,7 +33,7 @@ enum MqttOperationOptions {
     Publish(PublishOptionsInternal),
     Subscribe(SubscribeOptionsInternal),
     Unsubscribe(UnsubscribeOptionsInternal),
-    Disconnect(DisconnectOptionsInternal),
+    Disconnect(StopOptionsInternal),
 }
 
 pub(crate) struct MqttOperation {
@@ -128,7 +128,7 @@ pub(crate) enum UserEvent {
     Publish(Box<MqttPacket>, PublishOptionsInternal),
     Subscribe(Box<MqttPacket>, SubscribeOptionsInternal),
     Unsubscribe(Box<MqttPacket>, UnsubscribeOptionsInternal),
-    Disconnect(Box<MqttPacket>, DisconnectOptionsInternal)
+    Disconnect(StopOptionsInternal)
 }
 
 pub(crate) struct UserEventContext {
@@ -394,8 +394,10 @@ impl OperationalState {
                 UserEvent::Publish(packet, publish_options) => {
                     self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)))
                 }
-                UserEvent::Disconnect(packet, disconnect_options) => {
-                    self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)))
+                UserEvent::Disconnect(disconnect_options) => {
+                    // TODO: fix
+                    //self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)))
+                    0
                 }
             };
 
@@ -1927,11 +1929,9 @@ fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, 
                 return Ok(());
             }
         }
-        MqttOperationOptions::Disconnect(disconnect_options) => {
-            let sender = disconnect_options.response_sender.take().unwrap();
-            if sender.send(Ok(())).is_err() {
-                return Err(Mqtt5Error::OperationChannelSendError);
-            }
+        MqttOperationOptions::Disconnect(stop_options) => {
+            // TODO: fix by returning an "error" that indicates we flushed the packet and the
+            // connection can be shut down
 
             return Ok(());
         }
@@ -1954,9 +1954,8 @@ fn complete_operation_with_error(operation_options: &mut MqttOperationOptions, e
             let sender = unsubscribe_options.response_sender.take().unwrap();
             let _ = sender.send(Err(error));
         }
-        MqttOperationOptions::Disconnect(disconnect_options) => {
-            let sender = disconnect_options.response_sender.take().unwrap();
-            let _ = sender.send(Err(error));
+        MqttOperationOptions::Disconnect(stop_options) => {
+            // TODO: fix by probably doing nothing
         }
     }
 

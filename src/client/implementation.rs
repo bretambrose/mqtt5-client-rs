@@ -80,9 +80,10 @@ pub(crate) struct UnsubscribeOptionsInternal {
     pub response_sender: Option<oneshot::Sender<UnsubscribeResult>>,
 }
 
-pub(crate) struct DisconnectOptionsInternal {
-    pub options: DisconnectOptions,
-    pub response_sender: Option<oneshot::Sender<DisconnectResult>>,
+#[derive(Debug, Default)]
+pub(crate) struct StopOptionsInternal {
+    pub disconnect: Option<Box<MqttPacket>>,
+    pub mode: StopMode
 }
 
 pub(crate) enum OperationOptions {
@@ -90,7 +91,7 @@ pub(crate) enum OperationOptions {
     Subscribe(Box<MqttPacket>, SubscribeOptionsInternal),
     Unsubscribe(Box<MqttPacket>, UnsubscribeOptionsInternal),
     Start(),
-    Stop(Box<MqttPacket>, DisconnectOptionsInternal),
+    Stop(StopOptionsInternal),
     Shutdown(),
     AddListener(u64, ClientEventListener),
     RemoveListener(u64)
@@ -156,10 +157,8 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
                             OperationOptions::Start() => {
                                 println!("Received start!");
                             }
-                            OperationOptions::Stop(_, internal_options) => {
+                            OperationOptions::Stop(_) => {
                                 println!("Received stop!");
-                                let failure_result : DisconnectResult = Err(Mqtt5Error::Unimplemented);
-                                internal_options.response_sender.unwrap().send(failure_result).unwrap();
                             }
                             OperationOptions::Shutdown() => {
                                 println!("Received shutdown!");
