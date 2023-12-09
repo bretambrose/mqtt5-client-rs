@@ -48,6 +48,26 @@ mod operational_state_tests {
         Err(Mqtt5Error::ProtocolError)
     }
 
+    fn handle_connect_with_session_resumption(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Connect(connect) = &**packet {
+            let mut assigned_client_identifier = None;
+            if connect.client_id.is_none() {
+                assigned_client_identifier = Some("auto-assigned-client-id".to_string());
+            }
+
+            let response = Box::new(MqttPacket::Connack(ConnackPacket {
+                assigned_client_identifier,
+                session_present : !connect.clean_start,
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
     fn create_connack_rejection() -> ConnackPacket {
         ConnackPacket {
             reason_code : ConnectReasonCode::Banned,
@@ -1260,43 +1280,6 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
-    macro_rules! define_operation_success_helper {
-        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $verify_function_name: ident, $queue_policy: expr) => {
-            fn $test_helper_name() {
-                let mut config = build_standard_test_config();
-                config.offline_queue_policy = $queue_policy;
-
-                let mut fixture = OperationalStateTestFixture::new(config);
-                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-
-                let operation = $build_operation_function_name();
-
-                let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
-                assert!(operation_result_receiver.try_recv().is_err());
-                assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-                assert_eq!(Ok(()), fixture.on_connection_closed(0));
-                assert!(operation_result_receiver.try_recv().is_err());
-                assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
-                assert!(operation_result_receiver.try_recv().is_err());
-                assert_eq!(1, fixture.client_state.user_operation_queue.len());
-
-                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
-                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
-
-                if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
-                    $verify_function_name(&ack);
-                } else {
-                    panic!("Expected ack result");
-                }
-
-                verify_operational_state_empty(&fixture);
-            }
-        };
-    }
-
     fn do_subscribe_success(fixture : &mut OperationalStateTestFixture, transmission_time: u64, response_time: u64, expected_reason_code: SubackReasonCode) {
         let subscribe = SubscribePacket {
             subscriptions: vec!(
@@ -1925,7 +1908,6 @@ mod operational_state_tests {
                 let mut operation_result_receiver = fixture.$operation_api(0, operation.clone(), $operation_options_type{ ..Default::default()}).unwrap();
                 assert!(operation_result_receiver.try_recv().is_err());
                 assert_eq!(1, fixture.client_state.user_operation_queue.len());
-                let operation_id = *fixture.client_state.user_operation_queue.get(0).unwrap();
 
                 let service_result = fixture.service_once(0, 4096);
                 assert!(service_result.is_ok());
@@ -2243,7 +2225,7 @@ mod operational_state_tests {
                 }).unwrap();
                 assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
 
-                let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::$packet_type, 1, None, None).unwrap();
+                let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::$packet_type, 1, None, None).unwrap();
                 assert_eq!(1, index);
 
                 assert_eq!(Some(30000), fixture.get_next_service_time(0));
@@ -2720,7 +2702,7 @@ mod operational_state_tests {
     }
 
     macro_rules! define_acked_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper {
-        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $qos2_pubrel_timeout: expr) => {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $qos2_pubrel_timeout: expr) => {
             fn $test_helper_name() {
                 let mut config = build_standard_test_config();
                 config.offline_queue_policy = OfflineQueuePolicy::PreserveNothing;
@@ -2728,7 +2710,7 @@ mod operational_state_tests {
                 let mut fixture = OperationalStateTestFixture::new(config);
                 assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-                let packet = build_qos1_publish_success_packet();
+                let packet = $build_operation_function_name();
 
                 let mut operation_result_receiver = fixture.publish(0, packet, PublishOptions{ ..Default::default() }).unwrap();
 
@@ -2739,7 +2721,7 @@ mod operational_state_tests {
                 assert!(service_result.is_ok());
                 if $qos2_pubrel_timeout {
                     fixture.on_incoming_bytes(20, service_result.unwrap().as_slice());
-                    fixture.service_once(30, 4096);
+                    fixture.service_with_drain(30);
                 }
 
                 assert!(operation_result_receiver.try_recv().is_err());
@@ -2776,8 +2758,6 @@ mod operational_state_tests {
     define_acked_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper!(
         connected_state_qos1_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper,
         build_qos1_publish_success_packet,
-        publish,
-        PublishOptions,
         false
     );
 
@@ -2789,8 +2769,6 @@ mod operational_state_tests {
     define_acked_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper!(
         connected_state_qos2_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper,
         build_qos2_publish_success_packet,
-        publish,
-        PublishOptions,
         false
     );
 
@@ -2802,8 +2780,6 @@ mod operational_state_tests {
     define_acked_publish_failure_disconnect_pending_no_session_resumption_with_failing_offline_policy_helper!(
         connected_state_qos2_publish_failure_disconnect_pubrel_pending_no_session_resumption_with_failing_offline_policy_helper,
         build_qos2_publish_success_packet,
-        publish,
-        PublishOptions,
         true
     );
 
@@ -2814,19 +2790,153 @@ mod operational_state_tests {
 
     // verify duplicate set and resubmit queue
 
+    macro_rules! define_acked_publish_success_disconnect_pending_with_session_resumption_helper {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $verify_result_function_name: ident, $qos2_pubrel_timeout: expr) => {
+            fn $test_helper_name() {
+                let mut config = build_standard_test_config();
+                config.offline_queue_policy = OfflineQueuePolicy::PreserveNothing;
+                config.rejoin_session_policy = RejoinSessionPolicy::RejoinPostSuccess;
+
+                let mut fixture = OperationalStateTestFixture::new(config);
+                fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
+
+                assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+                let packet = $build_operation_function_name();
+
+                let mut operation_result_receiver = fixture.publish(0, packet, PublishOptions{ ..Default::default() }).unwrap();
+
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+                let service_result = fixture.service_with_drain(10);
+                assert!(service_result.is_ok());
+                if $qos2_pubrel_timeout { // we want to interrupt pubrel
+                    assert_eq!(Ok(()), fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()));
+                    fixture.service_with_drain(30);
+                }
+
+                assert!(operation_result_receiver.try_recv().is_err());
+                assert_eq!(0, fixture.client_state.user_operation_queue.len());
+                assert!(fixture.client_state.current_operation.is_none());
+                assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+                assert_eq!(1, fixture.client_state.pending_publish_operations.len());
+                assert_eq!(0, fixture.client_state.pending_non_publish_operations.len());
+
+                assert_eq!(Ok(()), fixture.on_connection_closed(0));
+                assert_eq!(1, fixture.client_state.resubmit_operation_queue.len());
+                let operation_id = fixture.client_state.resubmit_operation_queue.get(0).unwrap();
+                let operation = fixture.client_state.operations.get(operation_id).unwrap();
+                if let MqttPacket::Publish(publish) = &*operation.packet {
+                    assert_eq!(true, publish.duplicate);
+                    assert!(publish.packet_id != 0);
+                } else {
+                    panic!("Expected publish!");
+                }
+
+                if $qos2_pubrel_timeout {
+                    assert!(operation.secondary_packet.is_some());
+                }
+
+                assert_eq!(Ok(()), fixture.on_connection_opened(10));
+                assert_eq!(Ok(()), fixture.service_round_trip(20, 30)); // connect -> connack
+                assert_eq!(Ok(()), fixture.service_round_trip(40, 50)); // publish -> puback/pubrec
+                assert_eq!(Ok(()), fixture.service_round_trip(60, 70)); // Optional: pubrel -> pubcomp
+
+                let result = operation_result_receiver.blocking_recv();
+                assert!(!result.is_err());
+
+                let operation_result = result.unwrap().unwrap();
+
+                $verify_result_function_name(operation_result);
+
+                let mut packet_id = 0;
+                let (_, first_publish_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
+                if let MqttPacket::Publish(first_publish) = &**first_publish_packet {
+                    assert!(!first_publish.duplicate);
+                    packet_id = first_publish.packet_id;
+                } else {
+                    panic!("Expected publish");
+                }
+
+                if $qos2_pubrel_timeout {
+                    assert!(find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 2, None, None).is_none());
+                    let (_, first_pubrel_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 1, None, None).unwrap();
+                    if let MqttPacket::Pubrel(first_pubrel) = &**first_pubrel_packet {
+                        assert_eq!(packet_id, first_pubrel.packet_id);
+                    } else {
+                        panic!("Expected pubrel");
+                    }
+
+                    let (_, second_pubrel_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pubrel, 2, None, None).unwrap();
+                    if let MqttPacket::Pubrel(second_pubrel) = &**second_pubrel_packet {
+                        assert_eq!(packet_id, second_pubrel.packet_id);
+                    } else {
+                        panic!("Expected pubrel");
+                    }
+                } else {
+                    let (_, second_publish_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 2, None, None).unwrap();
+                    if let MqttPacket::Publish(second_publish) = &**second_publish_packet {
+                        assert!(second_publish.duplicate);
+                        assert_eq!(second_publish.packet_id, packet_id);
+                    } else {
+                        panic!("Expected publish");
+                    }
+                }
+            }
+        };
+    }
+
+    fn verify_qos1_publish_session_resumption_result(result: PublishResponse) {
+        if let PublishResponse::Qos1(puback) = result {
+            assert_eq!(PubackReasonCode::Success, puback.reason_code);
+        } else {
+            panic!("Expected puback");
+        }
+    }
+
+    define_acked_publish_success_disconnect_pending_with_session_resumption_helper!(
+        connected_state_qos1_publish_success_disconnect_pending_with_session_resumption_helper,
+        build_qos1_publish_success_packet,
+        verify_qos1_publish_session_resumption_result,
+        false
+    );
+
     #[test]
     fn connected_state_qos1_publish_success_disconnect_pending_with_session_resumption() {
-
+        connected_state_qos1_publish_success_disconnect_pending_with_session_resumption_helper();
     }
+
+    fn verify_qos2_publish_session_resumption_result(result: PublishResponse) {
+        if let PublishResponse::Qos2(Qos2Response::Pubcomp(pubcomp)) = result {
+            assert_eq!(PubcompReasonCode::Success, pubcomp.reason_code);
+        } else {
+            panic!("Expected pubcomp");
+        }
+    }
+
+    define_acked_publish_success_disconnect_pending_with_session_resumption_helper!(
+        connected_state_qos2_publish_success_disconnect_pending_with_session_resumption_helper,
+        build_qos2_publish_success_packet,
+        verify_qos2_publish_session_resumption_result,
+        false
+    );
 
     #[test]
     fn connected_state_qos2_publish_success_disconnect_pending_with_session_resumption() {
-
+        connected_state_qos2_publish_success_disconnect_pending_with_session_resumption_helper();
     }
+
+
+    define_acked_publish_success_disconnect_pending_with_session_resumption_helper!(
+        connected_state_qos2_publish_success_disconnect_pubrel_pending_with_session_resumption_helper,
+        build_qos2_publish_success_packet,
+        verify_qos2_publish_session_resumption_result,
+        true
+    );
 
     #[test]
     fn connected_state_qos2_publish_success_disconnect_pubrel_pending_with_session_resumption() {
-
+        connected_state_qos2_publish_success_disconnect_pubrel_pending_with_session_resumption_helper();
     }
-
 }

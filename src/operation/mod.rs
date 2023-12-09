@@ -383,21 +383,21 @@ impl OperationalState {
         self.update_internal_clock(&context.current_time);
 
         let event = context.event;
-        let mut op_id = 0;
-        match event {
-            UserEvent::Subscribe(packet, subscribe_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)));
-            }
-            UserEvent::Unsubscribe(packet, unsubscribe_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)));
-            }
-            UserEvent::Publish(packet, publish_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)));
-            }
-            UserEvent::Disconnect(packet, disconnect_options) => {
-                op_id = self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)));
-            }
-        };
+        let mut op_id =
+            match event {
+                UserEvent::Subscribe(packet, subscribe_options) => {
+                    self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)))
+                }
+                UserEvent::Unsubscribe(packet, unsubscribe_options) => {
+                    self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)))
+                }
+                UserEvent::Publish(packet, publish_options) => {
+                    self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)))
+                }
+                UserEvent::Disconnect(packet, disconnect_options) => {
+                    self.create_operation(packet, Some(MqttOperationOptions::Disconnect(disconnect_options)))
+                }
+            };
 
         assert_ne!(op_id, 0);
 
@@ -1788,7 +1788,7 @@ impl OperationalState {
 
         match self.config.rejoin_session_policy {
             RejoinSessionPolicy::RejoinPostSuccess => {
-                connect.clean_start = self.has_connected_successfully;
+                connect.clean_start = !self.has_connected_successfully;
             }
             RejoinSessionPolicy::RejoinAlways => {
                 connect.clean_start = false;
