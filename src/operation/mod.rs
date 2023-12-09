@@ -383,7 +383,7 @@ impl OperationalState {
         self.update_internal_clock(&context.current_time);
 
         let event = context.event;
-        let mut op_id =
+        let op_id =
             match event {
                 UserEvent::Subscribe(packet, subscribe_options) => {
                     self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)))
@@ -448,7 +448,7 @@ impl OperationalState {
 
         let operations : Vec<u64> = self.operations.keys().map(|v| *v).collect();
         for id in operations {
-            self.complete_operation_as_failure(id, Mqtt5Error::OperationalStateReset);
+            let _ = self.complete_operation_as_failure(id, Mqtt5Error::OperationalStateReset);
         }
 
         self.pending_write_completion = false;
@@ -511,7 +511,7 @@ impl OperationalState {
         write!(f, "  pending_write_completion: {}\n", self.pending_write_completion)?;
         write!(f, "  operations: {{\n")?;
         self.operations.iter().for_each(|(id, operation)| {
-            write!(f, "    ({}, {})\n", *id, mqtt_packet_to_str(&*operation.packet));
+            let _ = write!(f, "    ({}, {})\n", *id, mqtt_packet_to_str(&*operation.packet));
         });
         write!(f, "  }}\n")?;
         write!(f, "  operation_ack_timeouts: {} timeouts pending\n", self.operation_ack_timeouts.len())?;
@@ -522,17 +522,17 @@ impl OperationalState {
         write!(f, "  qos2_incomplete_incoming_publishes: {:?}\n", self.qos2_incomplete_incoming_publishes)?;
         write!(f, "  allocated_packet_ids: {{\n")?;
         self.allocated_packet_ids.iter().for_each(|(packet_id, operation_id)| {
-            write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
         });
         write!(f, "  }}\n")?;
         write!(f, "  pending_publish_operations: {{\n")?;
         self.pending_publish_operations.iter().for_each(|(packet_id, operation_id)| {
-            write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
         });
         write!(f, "  }}\n")?;
         write!(f, "  pending_non_publish_operations: {{\n")?;
         self.pending_non_publish_operations.iter().for_each(|(packet_id, operation_id)| {
-            write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
         });
         write!(f, "  }}\n")?;
         write!(f, "  pending_write_completion_operations: {:?}\n", self.pending_write_completion_operations)?;
@@ -1856,18 +1856,6 @@ impl OperationalState {
     // Test accessors
     pub(crate) fn get_negotiated_settings(&self) -> &Option<NegotiatedSettings> {
         &self.current_settings
-    }
-}
-
-fn get_ack_packet_id(packet: &MqttPacket) -> Option<u16> {
-    match packet {
-        MqttPacket::Suback(suback) => { Some(suback.packet_id) }
-        MqttPacket::Unsuback(unsuback) => { Some(unsuback.packet_id) }
-        MqttPacket::Puback(puback) => { Some(puback.packet_id) }
-        MqttPacket::Pubcomp(pubcomp) => { Some(pubcomp.packet_id) }
-        MqttPacket::Pubrel(pubrel) => { Some(pubrel.packet_id) }
-        MqttPacket::Pubrec(pubrec) => { Some(pubrec.packet_id) }
-        _ => { None }
     }
 }
 

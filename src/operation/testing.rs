@@ -2720,8 +2720,8 @@ mod operational_state_tests {
                 let service_result = fixture.service_once(10, 4096);
                 assert!(service_result.is_ok());
                 if $qos2_pubrel_timeout {
-                    fixture.on_incoming_bytes(20, service_result.unwrap().as_slice());
-                    fixture.service_with_drain(30);
+                    assert!(fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()).is_ok());
+                    assert!(fixture.service_with_drain(30).is_ok());
                 }
 
                 assert!(operation_result_receiver.try_recv().is_err());
@@ -2812,8 +2812,8 @@ mod operational_state_tests {
                 let service_result = fixture.service_with_drain(10);
                 assert!(service_result.is_ok());
                 if $qos2_pubrel_timeout { // we want to interrupt pubrel
-                    assert_eq!(Ok(()), fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()));
-                    fixture.service_with_drain(30);
+                    assert!(fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()).is_ok());
+                    assert!(fixture.service_with_drain(30).is_ok());
                 }
 
                 assert!(operation_result_receiver.try_recv().is_err());
@@ -2850,14 +2850,17 @@ mod operational_state_tests {
 
                 $verify_result_function_name(operation_result);
 
-                let mut packet_id = 0;
                 let (_, first_publish_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
-                if let MqttPacket::Publish(first_publish) = &**first_publish_packet {
-                    assert!(!first_publish.duplicate);
-                    packet_id = first_publish.packet_id;
-                } else {
-                    panic!("Expected publish");
-                }
+                let packet_id =
+                    match &**first_publish_packet {
+                        MqttPacket::Publish(first_publish) => {
+                            assert_eq!(false, first_publish.duplicate);
+                            first_publish.packet_id
+                        }
+                        _ => {
+                            panic!("Expected publish");
+                        }
+                    };
 
                 if $qos2_pubrel_timeout {
                     assert!(find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 2, None, None).is_none());
