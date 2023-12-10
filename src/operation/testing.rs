@@ -2962,11 +2962,70 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
+    /*
     #[test]
     fn connected_state_user_disconnect_success_non_empty_queues() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
+        // (1)-(5) set up so that there's a user operation, resubmit operation and high priority operation
+
+        // (1) submit three publishes, qos2 in the lead
+        let qos2_publish = PublishPacket {
+            qos: QualityOfService::ExactlyOnce,
+            topic: "hello/world".to_string(),
+            payload: "qos2".to_string().as_vec(),
+            ..Default::default()
+        };
+
+        assert_eq!(Ok(()), fixture.publish(10, qos2_publish, PublishOptions{ ..Default::default() }));
+
+        let first_qos1_publish = PublishPacket {
+            qos: QualityOfService::AtLeastOnce,
+            topic: "hello/world".to_string(),
+            payload: "qos1-1".to_string().as_vec(),
+            ..Default::default()
+        };
+
+        assert_eq!(Ok(()), fixture.publish(10, first_qos1_publish, PublishOptions{ ..Default::default() }));
+
+        let second_qos1_publish = PublishPacket {
+            qos: QualityOfService::AtLeastOnce,
+            topic: "hello/world".to_string(),
+            payload: "qos1-2".to_string().as_vec(),
+            ..Default::default()
+        };
+
+        assert_eq!(Ok(()), fixture.publish(10, second_qos1_publish, PublishOptions{ ..Default::default() }));
+        assert_eq!(3, fixture.client_state.user_operation_queue.len());
+
+        // (2) service so that all three are processed and moved to the unacked_publish list
+
+        // (3) disconnect, which should move all three to the resubmit queue
+
+        // (4) reconnect
+
+        // (5) service carefully so that the qos2 is unacked and waiting on its pubcomp
+        // the first qos1 is the current operation
+        // and the second qos1 is still in the resubmitqueue
+
+        // (6) submit a disconnect
+        let disconnect = DisconnectPacket {
+            reason_code: DisconnectReasonCode::DisconnectWithWillMessage,
+            ..Default::default()
+        };
+
+        assert_eq!(Ok(()), fixture.disconnect(0, disconnect));
+        assert_eq!(2, fixture.client_state.high_priority_operation_queue.len());
+
+        // (7) do a complete service
+        assert!(fixture.service_with_round_trip(10, 20).is_ok());
+
+        // (8) verify the current operation got sent, the disconnect was sent and nothing else happened
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
     }
-
+*/
+    
     #[test]
     fn connected_state_user_disconnect_failure_invalid_packet() {
 
