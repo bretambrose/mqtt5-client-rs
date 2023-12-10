@@ -350,7 +350,13 @@ impl OperationalState {
             };
 
         self.log_operational_state();
-        debug!("[{} ms] handle_network_event - final result: {:?}", self.elapsed_time_ms, result);
+
+        if result.is_err() {
+            error!("[{} ms] handle_network_event - final result: {:?}", self.elapsed_time_ms, result);
+            self.change_state(OperationalStateType::Halted);
+        } else {
+            debug!("[{} ms] handle_network_event - final result: {:?}", self.elapsed_time_ms, result);
+        }
 
         result
     }
@@ -383,19 +389,19 @@ impl OperationalState {
         self.update_internal_clock(&context.current_time);
 
         let event = context.event;
-        let op_id =
+        let (op_id, queue, position) =
             match event {
                 UserEvent::Subscribe(packet, subscribe_options) => {
-                    self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options)))
+                    (self.create_operation(packet, Some(MqttOperationOptions::Subscribe(subscribe_options))), OperationalQueueType::User, OperationalEnqueuePosition::Back)
                 }
                 UserEvent::Unsubscribe(packet, unsubscribe_options) => {
-                    self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)))
+                    (self.create_operation(packet, Some(MqttOperationOptions::Unsubscribe(unsubscribe_options))), OperationalQueueType::User, OperationalEnqueuePosition::Back)
                 }
                 UserEvent::Publish(packet, publish_options) => {
-                    self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options)))
+                    (self.create_operation(packet, Some(MqttOperationOptions::Publish(publish_options))), OperationalQueueType::User, OperationalEnqueuePosition::Back)
                 }
                 UserEvent::Disconnect(disconnect) => {
-                    self.create_operation(disconnect, None)
+                    (self.create_operation(disconnect, None), OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)
                 }
             };
 
@@ -409,8 +415,8 @@ impl OperationalState {
             }
         }
 
-        debug!("[{} ms] handle_user_event - queuing operation with id {}", self.elapsed_time_ms, op_id);
-        let result = self.enqueue_operation(op_id, OperationalQueueType::User, OperationalEnqueuePosition::Back);
+        debug!("[{} ms] handle_user_event - queuing operation with id {} into {} of {} queue", self.elapsed_time_ms, op_id, position, queue);
+        let result = self.enqueue_operation(op_id, queue, position);
 
         self.log_operational_state();
         debug!("[{} ms] handle_user_event - final result: {:?}", self.elapsed_time_ms, result);
@@ -598,30 +604,16 @@ impl OperationalState {
         (retained, rejected)
     }
 
-    fn should_resubmit_post_disconnection(&self, id: u64) -> bool {
-        if let Some(operation) = self.operations.get(&id) {
-            match &*operation.packet {
-                MqttPacket::Publish(_) | MqttPacket::Pubrel(_) => { return true; }
-                _ => {}
+    fn apply_disconnect_completion(&mut self, operation: &MqttOperation) -> Mqtt5Result<()> {
+        if let MqttPacket::Disconnect(_) = &*operation.packet {
+            if self.state == OperationalStateType::PendingDisconnect {
+                self.state = OperationalStateType::Halted;
             }
+            info!("[{} ms] apply_disconnect_completion - user-requested disconnect operation {} completed", self.elapsed_time_ms, operation.id);
+            return Err(Mqtt5Error::UserInitiatedDisconnect);
         }
 
-        false
-    }
-
-    fn partition_unacked_operations_for_disconnect<T>(&self, iterator: T) -> (VecDeque<u64>, VecDeque<u64>) where T : Iterator<Item = u64> {
-        let mut resubmit = VecDeque::new();
-        let mut offline = VecDeque::new();
-
-        iterator.for_each(|id| {
-            if self.should_resubmit_post_disconnection(id) {
-                resubmit.push_back(id);
-            } else {
-                offline.push_back(id);
-            }
-        });
-
-        (resubmit, offline)
+        Ok(())
     }
 
     fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
@@ -639,6 +631,7 @@ impl OperationalState {
         }
 
         self.apply_ping_extension_on_operation_success(&operation);
+        self.apply_disconnect_completion(&operation)?;
 
         if operation.options.is_none() {
             info!("[{} ms] complete_operation_as_success - internal {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
@@ -662,6 +655,8 @@ impl OperationalState {
             self.pending_publish_operations.remove(&packet_id);
             self.pending_non_publish_operations.remove(&packet_id);
         }
+
+        self.apply_disconnect_completion(&operation)?;
 
         if operation.options.is_none() {
             info!("[{} ms] complete_operation_as_failure ({}) - internal {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&*operation.packet), id);
@@ -1096,6 +1091,10 @@ impl OperationalState {
                     self.pending_publish_operations.insert(publish.packet_id, operation.id);
                 }
             }
+            MqttPacket::Disconnect(_) => {
+                self.state = OperationalStateType::PendingDisconnect;
+                self.pending_write_completion_operations.push_back(operation.id);
+            }
             _ => {
                 self.pending_write_completion_operations.push_back(operation.id);
             }
@@ -1117,7 +1116,7 @@ impl OperationalState {
     fn service_queue(&mut self, context: &mut ServiceContext, mode: OperationalQueueServiceMode) -> Mqtt5Result<()> {
         let to_socket_length = context.to_socket.len();
 
-        loop {
+        while self.state == OperationalStateType::PendingConnack || self.state == OperationalStateType::Connected {
             if self.current_operation.is_none() {
                 self.current_operation = self.dequeue_operation(mode);
                 if self.current_operation.is_none() {
@@ -1184,6 +1183,8 @@ impl OperationalState {
                 return Ok(())
             }
         }
+
+        Ok(())
     }
 
     fn service_pending_connack(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
@@ -1235,10 +1236,9 @@ impl OperationalState {
         Ok(())
     }
 
-    fn service_pending_disconnect(&mut self, context: &mut ServiceContext) -> Mqtt5Result<()> {
+    fn service_pending_disconnect(&mut self, _: &mut ServiceContext) -> Mqtt5Result<()> {
         debug!("[{} ms] service_pending_disconnect", self.elapsed_time_ms);
 
-        self.service_queue(context, OperationalQueueServiceMode::HighPriorityOnly)?;
         self.process_ack_timeouts()?;
 
         Ok(())
@@ -1844,15 +1844,6 @@ impl OperationalState {
         }
     }
 
-    fn release_packet_id_for_operation(&mut self, operation_id: u64) -> () {
-        let operation = self.operations.get_mut(&operation_id).unwrap();
-
-        if let Some(packet_id) = operation.packet_id {
-            self.allocated_packet_ids.remove(&packet_id);
-            operation.packet_id = None;
-        }
-    }
-
     // Test accessors
     pub(crate) fn get_negotiated_settings(&self) -> &Option<NegotiatedSettings> {
         &self.current_settings
@@ -1927,9 +1918,7 @@ fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, 
                 return Ok(());
             }
         }
-        MqttOperationOptions::Disconnect => {
-            return Err(Mqtt5Error::UserInitiatedDisconnect);
-        }
+        _ => { return Ok(()); }
     }
 
     Err(Mqtt5Error::InternalStateError)
@@ -1949,10 +1938,7 @@ fn complete_operation_with_error(operation_options: &mut MqttOperationOptions, e
             let sender = unsubscribe_options.response_sender.take().unwrap();
             let _ = sender.send(Err(error));
         }
-        MqttOperationOptions::Disconnect => {
-            // If we reach a failure while trying to disconnect properly, then the failure will
-            // put is into the halted/disconnected state on its own, and we should do nothing
-        }
+        _ => {}
     }
 
     Ok(())

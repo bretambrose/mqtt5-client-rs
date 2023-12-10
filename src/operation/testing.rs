@@ -570,6 +570,18 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
+        pub(crate) fn disconnect(&mut self, elapsed_millis: u64, disconnect: DisconnectPacket) -> Mqtt5Result<()> {
+            let packet = Box::new(MqttPacket::Disconnect(disconnect));
+            let disconnect_event = UserEvent::Disconnect(packet);
+
+            self.client_state.handle_user_event(UserEventContext {
+                event: disconnect_event,
+                current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
+            })?;
+
+            Ok(())
+        }
+
         pub(crate) fn advance_disconnected_to_state(&mut self, state: OperationalStateType, elapsed_millis: u64) -> Mqtt5Result<()> {
             assert_eq!(OperationalStateType::Disconnected, self.client_state.state);
 
@@ -2923,5 +2935,50 @@ mod operational_state_tests {
     #[test]
     fn connected_state_qos2_publish_success_disconnect_pubrel_pending_with_session_resumption() {
         connected_state_qos2_publish_success_disconnect_pubrel_pending_with_session_resumption_helper();
+    }
+
+    #[test]
+    fn connected_state_user_disconnect_success_empty_queues() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        // submit a disconnect
+        let disconnect = DisconnectPacket {
+            reason_code: DisconnectReasonCode::DisconnectWithWillMessage,
+            ..Default::default()
+        };
+
+        assert_eq!(Ok(()), fixture.disconnect(0, disconnect));
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+
+        // process it but don't write complete yet, verify state expectations
+        assert!(fixture.service_once(10, 4096).is_ok());
+        assert_eq!(OperationalStateType::PendingDisconnect, fixture.client_state.state);
+        assert_eq!(1, fixture.client_state.pending_write_completion_operations.len());
+
+        // write complete and verify final state
+        assert_eq!(Err(Mqtt5Error::UserInitiatedDisconnect), fixture.on_write_completion(20));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_user_disconnect_success_non_empty_queues() {
+
+    }
+
+    #[test]
+    fn connected_state_user_disconnect_failure_invalid_packet() {
+
+    }
+
+    #[test]
+    fn connected_state_user_disconnect_failure_interrupted_by_server_disconnect() {
+
+    }
+
+    #[test]
+    fn connected_state_user_disconnect_failure_interrupted_by_protocol_error() {
+
     }
 }
