@@ -86,6 +86,10 @@ pub(crate) struct StopOptionsInternal {
     pub mode: StopMode
 }
 
+pub(crate) struct DisconnectOptionsInternal {
+    pub disconnect: Box<MqttPacket>
+}
+
 pub(crate) enum OperationOptions {
     Publish(Box<MqttPacket>, PublishOptionsInternal),
     Subscribe(Box<MqttPacket>, SubscribeOptionsInternal),
