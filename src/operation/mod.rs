@@ -753,7 +753,7 @@ impl OperationalState {
         Ok(())
     }
 
-    fn handle_network_event_connection_closed(&mut self, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_network_event_connection_closed(&mut self, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
         if self.state == OperationalStateType::Disconnected {
             error!("[{} ms] handle_network_event_connection_closed - called in invalid state", self.elapsed_time_ms);
             return Err(Mqtt5Error::InternalStateError);
@@ -845,7 +845,7 @@ impl OperationalState {
         result
     }
 
-    fn handle_network_event_write_completion(&mut self, context: &NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_network_event_write_completion(&mut self, _: &NetworkEventContext) -> Mqtt5Result<()> {
         if self.state == OperationalStateType::Halted || self.state == OperationalStateType::Disconnected {
             error!("[{} ms] handle_network_event_write_completion - called in invalid state", self.elapsed_time_ms);
             return Err(Mqtt5Error::InternalStateError);
@@ -1334,7 +1334,7 @@ impl OperationalState {
         }
     }
 
-    fn apply_session_present_to_connection(&mut self, session_present: bool, current_time: &Instant) -> Mqtt5Result<()> {
+    fn apply_session_present_to_connection(&mut self, session_present: bool) -> Mqtt5Result<()> {
         let mut result = Ok(());
 
         if !session_present {
@@ -1416,7 +1416,7 @@ impl OperationalState {
                 self.next_ping_timepoint = None;
             }
 
-            self.apply_session_present_to_connection(connack.session_present, &context.current_time)?;
+            self.apply_session_present_to_connection(connack.session_present)?;
 
             context.packet_events.push_back(PacketEvent::Connack(connack));
 
@@ -1427,7 +1427,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pingresp(&mut self, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_pingresp(&mut self) -> Mqtt5Result<()> {
         info!("[{} ms] handle_pingresp - processing PINGRESP packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
@@ -1446,7 +1446,7 @@ impl OperationalState {
         }
     }
 
-    fn handle_suback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_suback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_suback - processing SUBACK packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1471,7 +1471,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_unsuback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_unsuback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_unsuback - processing UNSUBACK packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1496,7 +1496,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_puback(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_puback(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_puback - processing PUBACK packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1521,7 +1521,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubrec(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_pubrec(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_pubrec - processing PUBREC packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1539,7 +1539,7 @@ impl OperationalState {
                     return self.complete_operation_as_success(*operation_id, Some(OperationResponse::Publish(PublishResponse::Qos2(Qos2Response::Pubrec(pubrec)))));
                 } else {
                     let operation_option = self.operations.get_mut(operation_id);
-                    if let Some(mut operation) = operation_option {
+                    if let Some(operation) = operation_option {
                         if let MqttPacket::Publish(publish) = &*operation.packet {
                             if publish.qos == QualityOfService::ExactlyOnce {
                                 operation.secondary_packet = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
@@ -1569,7 +1569,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubrel(&mut self, packet: Box<MqttPacket>, _: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_pubrel(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_pubrel - processing PUBREL packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1597,7 +1597,7 @@ impl OperationalState {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn handle_pubcomp(&mut self, packet: Box<MqttPacket>, context: &mut NetworkEventContext) -> Mqtt5Result<()> {
+    fn handle_pubcomp(&mut self, packet: Box<MqttPacket>) -> Mqtt5Result<()> {
         info!("[{} ms] handle_pubcomp - processing PUBCOMP packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Disconnected | OperationalStateType::PendingConnack => {
@@ -1708,14 +1708,14 @@ impl OperationalState {
         match &*packet {
             MqttPacket::Connack(_) => { self.handle_connack(packet, context) }
             MqttPacket::Publish(_) => { self.handle_publish(packet, context) }
-            MqttPacket::Pingresp(_) => { self.handle_pingresp(context) }
+            MqttPacket::Pingresp(_) => { self.handle_pingresp() }
             MqttPacket::Disconnect(_) => { self.handle_disconnect(packet, context) }
-            MqttPacket::Suback(_) => { self.handle_suback(packet, context) }
-            MqttPacket::Unsuback(_) => { self.handle_unsuback(packet, context) }
-            MqttPacket::Puback(_) => { self.handle_puback(packet, context) }
-            MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet, context) }
-            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet, context) }
-            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet, context) }
+            MqttPacket::Suback(_) => { self.handle_suback(packet) }
+            MqttPacket::Unsuback(_) => { self.handle_unsuback(packet) }
+            MqttPacket::Puback(_) => { self.handle_puback(packet) }
+            MqttPacket::Pubcomp(_) => { self.handle_pubcomp(packet) }
+            MqttPacket::Pubrel(_) => { self.handle_pubrel(packet) }
+            MqttPacket::Pubrec(_) => { self.handle_pubrec(packet) }
             MqttPacket::Auth(_) => { self.handle_auth(packet, context) }
             _ => {
                 error!("[{} ms] handle_packet - invalid packet type for client received", self.elapsed_time_ms);

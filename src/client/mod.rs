@@ -308,9 +308,8 @@ impl Mqtt5Client {
     }
 
     pub fn add_event_listener(&self, listener: ClientEventListener) -> Mqtt5Result<u64> {
-        let mut listener_id : u64 = 1;
         let mut current_id = self.listener_id_allocator.lock().unwrap();
-        listener_id = *current_id;
+        let listener_id = *current_id;
         *current_id += 1;
 
         match self.operation_sender.try_send(OperationOptions::AddListener(listener_id, listener))
