@@ -400,13 +400,45 @@ mod operational_state_tests {
             Ok(to_socket)
         }
 
-        pub(crate) fn service_with_drain(&mut self, elapsed_millis: u64) -> Mqtt5Result<Vec<u8>> {
+        pub(crate) fn write_to_socket(&mut self, elapsed_millis: u64, bytes: &[u8]) -> Mqtt5Result<Vec<u8>> {
+            let mut response_bytes = Vec::new();
+            let mut broker_packets = VecDeque::new();
+
+            let mut network_event = NetworkEventContext {
+                event: NetworkEvent::WriteCompletion,
+                current_time: self.base_timestamp + Duration::from_millis(elapsed_millis),
+                packet_events: &mut self.client_packet_events,
+            };
+
+            self.client_state.handle_network_event(&mut network_event)?;
+            let mut maximum_packet_size_to_server : u32 = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
+            if let Some(settings) = self.client_state.get_negotiated_settings() {
+                maximum_packet_size_to_server = settings.maximum_packet_size_to_server;
+            }
+
+            let mut decode_context = DecodingContext {
+                maximum_packet_size : maximum_packet_size_to_server,
+                decoded_packets: &mut broker_packets,
+            };
+
+            self.broker_decoder.decode_bytes(bytes, &mut decode_context)?;
+
+            for packet in &broker_packets {
+                self.handle_to_broker_packet(packet, &mut response_bytes)?;
+            }
+
+            self.to_broker_packet_stream.append(&mut broker_packets);
+
+            Ok(response_bytes)
+        }
+
+        pub(crate) fn service_with_drain(&mut self, elapsed_millis: u64, socket_buffer_size: usize) -> Mqtt5Result<Vec<u8>> {
             let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
             let mut done = false;
             let mut response_bytes = Vec::new();
 
             while !done {
-                let mut to_socket = Vec::with_capacity(4096);
+                let mut to_socket = Vec::with_capacity(socket_buffer_size);
                 let mut broker_packets = VecDeque::new();
 
                 let mut service_context = ServiceContext {
@@ -456,8 +488,8 @@ mod operational_state_tests {
             Ok(response_bytes)
         }
 
-        pub(crate) fn service_round_trip(&mut self, service_time: u64, response_time: u64) -> Mqtt5Result<()> {
-            let server_bytes = self.service_with_drain(service_time)?;
+        pub(crate) fn service_round_trip(&mut self, service_time: u64, response_time: u64, socket_buffer_size: usize) -> Mqtt5Result<()> {
+            let server_bytes = self.service_with_drain(service_time, socket_buffer_size)?;
 
             self.on_incoming_bytes(response_time, server_bytes.as_slice())?;
 
@@ -591,7 +623,7 @@ mod operational_state_tests {
                 }
                 OperationalStateType::Connected => {
                     self.on_connection_opened(elapsed_millis)?;
-                    let server_bytes = self.service_with_drain(elapsed_millis)?;
+                    let server_bytes = self.service_with_drain(elapsed_millis, 4096)?;
                     self.on_incoming_bytes(elapsed_millis, server_bytes.as_slice())
                 }
                 OperationalStateType::PendingDisconnect => {
@@ -735,7 +767,7 @@ mod operational_state_tests {
         assert!(fixture.client_state.operations.len() > 0);
         assert!(fixture.client_state.user_operation_queue.len() > 0);
 
-        if let Ok(bytes) = fixture.service_with_drain(0) {
+        if let Ok(bytes) = fixture.service_with_drain(0, 4096) {
             assert_eq!(0, bytes.len());
         }
 
@@ -830,13 +862,13 @@ mod operational_state_tests {
 
         assert_eq!(Some(1), fixture.get_next_service_time(1));
 
-        let service_result = fixture.service_with_drain(1);
+        let service_result = fixture.service_with_drain(1, 4096);
         assert!(service_result.is_ok());
 
         assert_eq!(Some(1 + connack_timeout_millis as u64), fixture.get_next_service_time(1));
 
         // service post-timeout
-        assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64));
+        assert_eq!(Err(Mqtt5Error::ConnackTimeout), fixture.service_with_drain(1 + connack_timeout_millis as u64, 4096));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
         assert!(fixture.client_packet_events.is_empty());
         verify_operational_state_empty(&fixture);
@@ -850,7 +882,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
 
-        let server_bytes = fixture.service_with_drain(0).unwrap();
+        let server_bytes = fixture.service_with_drain(0, 4096).unwrap();
 
         assert_eq!(Err(Mqtt5Error::ConnectionRejected), fixture.on_incoming_bytes(0, server_bytes.as_slice()));
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
@@ -867,7 +899,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
 
-        let _ = fixture.service_with_drain(0).unwrap();
+        let _ = fixture.service_with_drain(0, 4096).unwrap();
 
         assert_eq!(Ok(()), fixture.on_connection_closed(0));
         assert_eq!(OperationalStateType::Disconnected, fixture.client_state.state);
@@ -881,7 +913,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
 
-        let mut server_bytes = fixture.service_with_drain(0).unwrap();
+        let mut server_bytes = fixture.service_with_drain(0, 4096).unwrap();
         server_bytes.clear();
         let mut garbage = vec!(1, 2, 3, 4, 5, 6, 7, 8);
         server_bytes.append(&mut garbage);
@@ -918,7 +950,7 @@ mod operational_state_tests {
 
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 0));
 
-        let mut server_bytes = fixture.service_with_drain(0).unwrap();
+        let mut server_bytes = fixture.service_with_drain(0, 4096).unwrap();
         server_bytes.clear();
 
         assert_eq!(Ok(()), encode_packet_to_buffer(packet, &mut server_bytes));
@@ -1211,7 +1243,7 @@ mod operational_state_tests {
 
             // trigger a ping, verify it goes out and a pingresp comes back
             current_time = rolling_ping_time + request_delay_millis;
-            let server_bytes = fixture.service_with_drain(current_time).unwrap();
+            let server_bytes = fixture.service_with_drain(current_time, 4096).unwrap();
             assert_eq!(2 + i, fixture.to_broker_packet_stream.len());
             let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pingreq, i + 1, None, None).unwrap();
             assert_eq!(1 + i, index);
@@ -1287,7 +1319,7 @@ mod operational_state_tests {
         };
 
         let subscribe_result_receiver = fixture.subscribe(0, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time, 4096));
 
         let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Subscribe, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -1326,7 +1358,7 @@ mod operational_state_tests {
         };
 
         let publish_result_receiver = fixture.publish(0, publish.clone(), PublishOptions{ ..Default::default() }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time, 4096));
 
         let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -1339,7 +1371,7 @@ mod operational_state_tests {
 
         // pubrel/pubcomp needs another full service cycle
         if qos == QualityOfService::ExactlyOnce {
-            assert_eq!(Ok(()), fixture.service_round_trip(response_time, response_time));
+            assert_eq!(Ok(()), fixture.service_round_trip(response_time, response_time, 4096));
         }
 
         let result = publish_result_receiver.blocking_recv();
@@ -1405,7 +1437,7 @@ mod operational_state_tests {
         };
 
         let unsubscribe_result_receiver = fixture.unsubscribe(0, unsubscribe.clone(), UnsubscribeOptions{ ..Default::default() }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time));
+        assert_eq!(Ok(()), fixture.service_round_trip(transmission_time, response_time, 4096));
 
         let (index, to_broker_packet) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Unsubscribe, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -1505,7 +1537,7 @@ mod operational_state_tests {
         assert_eq!(Some(expected_ping_time), fixture.get_next_service_time(CONNACK_TIME));
 
         // trigger a ping
-        assert!(fixture.service_with_drain(expected_ping_time).is_ok());
+        assert!(fixture.service_with_drain(expected_ping_time, 4096).is_ok());
         let ping_timeout_timepoint = CONNACK_TIME + KEEP_ALIVE_MILLIS + PING_TIMEOUT_MILLIS as u64;
         assert_eq!(ping_timeout_timepoint, fixture.get_next_service_time(expected_ping_time).unwrap());
         let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Pingreq, 1, None, None).unwrap();
@@ -1533,7 +1565,7 @@ mod operational_state_tests {
 
         for i in 0..3600 {
             let elapsed_millis : u64 = i * 1000;
-            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis, 4096));
             assert_eq!(None, fixture.get_next_service_time(0));
             assert_eq!(1, fixture.to_broker_packet_stream.len());
             assert_eq!(1, fixture.to_client_packet_stream.len());
@@ -1611,8 +1643,8 @@ mod operational_state_tests {
                 assert!(operation_result_receiver.try_recv().is_err());
                 assert_eq!(1, fixture.client_state.user_operation_queue.len());
 
-                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
-                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20, 4096));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40, 4096)); // qos 2
 
                 if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
                     $verify_function_name(&ack);
@@ -1804,8 +1836,8 @@ mod operational_state_tests {
                 assert!(operation_result_receiver.try_recv().is_err());
                 assert_eq!(1, fixture.client_state.user_operation_queue.len());
 
-                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
-                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20, 4096));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40, 4096)); // qos 2
 
                 if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
                     $verify_function_name(&ack);
@@ -1922,8 +1954,8 @@ mod operational_state_tests {
                 assert!(operation_result_receiver.try_recv().is_err());
                 assert_eq!(1, fixture.client_state.user_operation_queue.len());
 
-                assert_eq!(Ok(()), fixture.service_round_trip(10, 20));
-                assert_eq!(Ok(()), fixture.service_round_trip(30, 40)); // qos 2
+                assert_eq!(Ok(()), fixture.service_round_trip(10, 20, 4096));
+                assert_eq!(Ok(()), fixture.service_round_trip(30, 40, 4096)); // qos 2
 
                 if let Ok(Ok(ack)) = operation_result_receiver.blocking_recv() {
                     $verify_function_name(&ack);
@@ -2076,7 +2108,7 @@ mod operational_state_tests {
                 let packet = $build_operation_function_name();
 
                 let operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{ ..Default::default() }).unwrap();
-                assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+                assert_eq!(Ok(()), fixture.service_round_trip(0, 0, 4096));
 
                 let result = operation_result_receiver.blocking_recv();
                 assert!(!result.is_err());
@@ -2217,7 +2249,7 @@ mod operational_state_tests {
                 let mut operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{
                     timeout_in_millis : Some(30000)
                 }).unwrap();
-                assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
+                assert_eq!(Ok(()), fixture.service_round_trip(0, 0, 4096));
 
                 let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::$packet_type, 1, None, None).unwrap();
                 assert_eq!(1, index);
@@ -2227,11 +2259,11 @@ mod operational_state_tests {
                 for i in 0..30 {
                     let elapsed_millis = i * 1000;
                     assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
-                    assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+                    assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis, 4096));
                     assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
                 }
 
-                assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
+                assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000, 4096));
                 let result = operation_result_receiver.blocking_recv();
                 assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
                 verify_operational_state_empty(&fixture);
@@ -2303,8 +2335,8 @@ mod operational_state_tests {
         let mut operation_result_receiver = fixture.publish(0, packet, PublishOptions {
             timeout_in_millis : Some(30000)
         }).unwrap();
-        assert_eq!(Ok(()), fixture.service_round_trip(0, 0));
-        assert_eq!(Ok(()), fixture.service_round_trip(10, 10));
+        assert_eq!(Ok(()), fixture.service_round_trip(0, 0, 4096));
+        assert_eq!(Ok(()), fixture.service_round_trip(10, 10, 4096));
 
         let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, None, None).unwrap();
         assert_eq!(1, index);
@@ -2317,14 +2349,14 @@ mod operational_state_tests {
         for i in 0..30 {
             let elapsed_millis = i * 1000;
             assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
-            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis));
+            assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis, 4096));
             assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
         }
 
-        assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000));
+        assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000, 4096));
         let result = operation_result_receiver.blocking_recv();
         assert_eq!(Mqtt5Error::AckTimeout, result.unwrap().unwrap_err());
-        assert_eq!(Ok(()), fixture.service_round_trip(30010, 30010));
+        assert_eq!(Ok(()), fixture.service_round_trip(30010, 30010, 4096));
         verify_operational_state_empty(&fixture);
     }
 
@@ -2715,7 +2747,7 @@ mod operational_state_tests {
                 assert!(service_result.is_ok());
                 if $qos2_pubrel_timeout {
                     assert!(fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()).is_ok());
-                    assert!(fixture.service_with_drain(30).is_ok());
+                    assert!(fixture.service_with_drain(30, 4096).is_ok());
                 }
 
                 assert!(operation_result_receiver.try_recv().is_err());
@@ -2737,8 +2769,8 @@ mod operational_state_tests {
                 }
 
                 assert_eq!(Ok(()), fixture.on_connection_opened(10));
-                assert_eq!(Ok(()), fixture.service_round_trip(20, 30));
-                assert_eq!(Ok(()), fixture.service_round_trip(40, 50));
+                assert_eq!(Ok(()), fixture.service_round_trip(20, 30, 4096));
+                assert_eq!(Ok(()), fixture.service_round_trip(40, 50, 4096));
 
                 let result = operation_result_receiver.blocking_recv();
                 assert!(!result.is_err());
@@ -2803,11 +2835,11 @@ mod operational_state_tests {
                 assert!(operation_result_receiver.try_recv().is_err());
                 assert_eq!(1, fixture.client_state.user_operation_queue.len());
 
-                let service_result = fixture.service_with_drain(10);
+                let service_result = fixture.service_with_drain(10, 4096);
                 assert!(service_result.is_ok());
                 if $qos2_pubrel_timeout { // we want to interrupt pubrel
                     assert!(fixture.on_incoming_bytes(20, service_result.unwrap().as_slice()).is_ok());
-                    assert!(fixture.service_with_drain(30).is_ok());
+                    assert!(fixture.service_with_drain(30, 4096).is_ok());
                 }
 
                 assert!(operation_result_receiver.try_recv().is_err());
@@ -2833,9 +2865,9 @@ mod operational_state_tests {
                 }
 
                 assert_eq!(Ok(()), fixture.on_connection_opened(10));
-                assert_eq!(Ok(()), fixture.service_round_trip(20, 30)); // connect -> connack
-                assert_eq!(Ok(()), fixture.service_round_trip(40, 50)); // publish -> puback/pubrec
-                assert_eq!(Ok(()), fixture.service_round_trip(60, 70)); // Optional: pubrel -> pubcomp
+                assert_eq!(Ok(()), fixture.service_round_trip(20, 30, 4096)); // connect -> connack
+                assert_eq!(Ok(()), fixture.service_round_trip(40, 50, 4096)); // publish -> puback/pubrec
+                assert_eq!(Ok(()), fixture.service_round_trip(60, 70, 4096)); // Optional: pubrel -> pubcomp
 
                 let result = operation_result_receiver.blocking_recv();
                 assert!(!result.is_err());
@@ -2962,54 +2994,91 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
-    /*
+
     #[test]
     fn connected_state_user_disconnect_success_non_empty_queues() {
-        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        let mut config = build_standard_test_config();
+        config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
+        config.rejoin_session_policy = RejoinSessionPolicy::RejoinPostSuccess;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
+
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        // (1)-(5) set up so that there's a user operation, resubmit operation and high priority operation
+        // (1)-(6) set up so that there's a user operation, resubmit operation and high priority operation
 
-        // (1) submit three publishes, qos2 in the lead
+        // (1) submit three publishes
+        //     qos2 in the lead; the pubrel will become the high priority operation
         let qos2_publish = PublishPacket {
             qos: QualityOfService::ExactlyOnce,
             topic: "hello/world".to_string(),
-            payload: "qos2".to_string().as_vec(),
+            payload: Some("qos2".as_bytes().to_vec()),
             ..Default::default()
         };
 
-        assert_eq!(Ok(()), fixture.publish(10, qos2_publish, PublishOptions{ ..Default::default() }));
+        assert!(fixture.publish(10, qos2_publish, PublishOptions{ ..Default::default() }).is_ok());
 
+        // the second publish will become the current operation (no easy way to prevent that)
         let first_qos1_publish = PublishPacket {
             qos: QualityOfService::AtLeastOnce,
             topic: "hello/world".to_string(),
-            payload: "qos1-1".to_string().as_vec(),
+            payload: Some("qos1-1".as_bytes().to_vec()),
             ..Default::default()
         };
 
-        assert_eq!(Ok(()), fixture.publish(10, first_qos1_publish, PublishOptions{ ..Default::default() }));
+        assert!(fixture.publish(10, first_qos1_publish, PublishOptions{ ..Default::default() }).is_ok());
 
+        // the third publish will become a resubmit queue entry
         let second_qos1_publish = PublishPacket {
             qos: QualityOfService::AtLeastOnce,
             topic: "hello/world".to_string(),
-            payload: "qos1-2".to_string().as_vec(),
+            payload: Some("qos1-2".as_bytes().to_vec()),
             ..Default::default()
         };
 
-        assert_eq!(Ok(()), fixture.publish(10, second_qos1_publish, PublishOptions{ ..Default::default() }));
+        assert!(fixture.publish(10, second_qos1_publish, PublishOptions{ ..Default::default() }).is_ok());
         assert_eq!(3, fixture.client_state.user_operation_queue.len());
 
         // (2) service so that all three are processed and moved to the unacked_publish list
+        assert!(fixture.service_once(20, 4096).is_ok());
+        assert_eq!(3, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
 
-        // (3) disconnect, which should move all three to the resubmit queue
+        // (3) connection closed, which should move all three to the resubmit queue
+        assert!(fixture.on_connection_closed(30).is_ok());
+        assert_eq!(0, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(3, fixture.client_state.resubmit_operation_queue.len());
 
-        // (4) reconnect
+        // (4) reconnect and rejoin the session
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 40));
+        assert_eq!(3, fixture.client_state.resubmit_operation_queue.len());
 
-        // (5) service carefully so that the qos2 is unacked and waiting on its pubcomp
-        // the first qos1 is the current operation
-        // and the second qos1 is still in the resubmitqueue
+        // (5) service carefully so that only the qos2 goes out and we process the response from
+        //     the fake broker.
+        let to_broker_bytes = fixture.service_once(50,25).unwrap();
+        let to_client_bytes = fixture.write_to_socket(55, to_broker_bytes.as_slice()).unwrap();
+        assert!(fixture.on_incoming_bytes(55, to_client_bytes.as_slice()).is_ok());
 
-        // (6) submit a disconnect
+        // we should be partway through the second operation and we should have received a pubrec
+        // leading to the pubrel going into the high priority operation queue
+        assert!(fixture.client_state.current_operation.is_some());
+        assert_eq!(1, fixture.client_state.resubmit_operation_queue.len());
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+
+        // (6) add a publish so that something is in the user queue
+        let third_qos1_publish = PublishPacket {
+            qos: QualityOfService::AtLeastOnce,
+            topic: "hello/world".to_string(),
+            payload: Some("qos1-3".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        assert!(fixture.publish(60, third_qos1_publish, PublishOptions{ ..Default::default() }).is_ok());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+
+        // (7) submit a disconnect
         let disconnect = DisconnectPacket {
             reason_code: DisconnectReasonCode::DisconnectWithWillMessage,
             ..Default::default()
@@ -3018,14 +3087,43 @@ mod operational_state_tests {
         assert_eq!(Ok(()), fixture.disconnect(0, disconnect));
         assert_eq!(2, fixture.client_state.high_priority_operation_queue.len());
 
-        // (7) do a complete service
-        assert!(fixture.service_with_round_trip(10, 20).is_ok());
+        // (8) do a complete service
+        let disconnect_service_result = fixture.service_round_trip(70, 80, 4096);
+        assert_eq!(Err(Mqtt5Error::UserInitiatedDisconnect), disconnect_service_result);
 
-        // (8) verify the current operation got sent, the disconnect was sent and nothing else happened
+        // (9) verify the current operation got sent, the disconnect was sent and nothing else happened
         assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+        assert_eq!(1, fixture.client_state.resubmit_operation_queue.len());
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+
+
+        // After the second connect, the outbound packet stream should be:
+        //   connect, qos 2 publish, qos 1 publish 1, disconnect
+        let (second_connect_index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Connect, 2, None, None).unwrap();
+
+        let packet_types = vec!(PacketType::Connect, PacketType::Publish, PacketType::Publish, PacketType::Disconnect);
+        verify_packet_type_sequence(fixture.to_broker_packet_stream.iter(), packet_types.into_iter(), Some(second_connect_index));
+
+        let (_, expected_qos2_publish) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 1, Some(second_connect_index), None).unwrap();
+        if let MqttPacket::Publish(expected_qos2) = &**expected_qos2_publish {
+            assert_eq!(QualityOfService::ExactlyOnce, expected_qos2.qos);
+            assert_eq!(Some("qos2".as_bytes().to_vec()), expected_qos2.payload);
+        } else {
+            panic!("Expected qos 2 publish after reconnect");
+        }
+
+        let (_, expected_qos1_publish) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Publish, 2, Some(second_connect_index), None).unwrap();
+        if let MqttPacket::Publish(expected_qos1) = &**expected_qos1_publish {
+            assert_eq!(QualityOfService::AtLeastOnce, expected_qos1.qos);
+            assert_eq!(Some("qos1-1".as_bytes().to_vec()), expected_qos1.payload);
+        } else {
+            panic!("Expected qos 1 publish after reconnect");
+        }
     }
-*/
-    
+
+
     #[test]
     fn connected_state_user_disconnect_failure_invalid_packet() {
 
