@@ -164,9 +164,9 @@ pub enum OfflineQueuePolicy {
 #[derive(Default)]
 pub enum RejoinSessionPolicy {
     #[default]
-    RejoinPostSuccess,
-    RejoinAlways,
-    RejoinNever
+    PostSuccess,
+    Always,
+    Never
 }
 
 #[cfg_attr(test, derive(Eq, PartialEq))]

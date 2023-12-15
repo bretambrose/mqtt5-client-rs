@@ -1787,13 +1787,13 @@ impl OperationalState {
         }
 
         match self.config.rejoin_session_policy {
-            RejoinSessionPolicy::RejoinPostSuccess => {
+            RejoinSessionPolicy::PostSuccess => {
                 connect.clean_start = !self.has_connected_successfully;
             }
-            RejoinSessionPolicy::RejoinAlways => {
+            RejoinSessionPolicy::Always => {
                 connect.clean_start = false;
             }
-            RejoinSessionPolicy::RejoinNever => {
+            RejoinSessionPolicy::Never => {
                 connect.clean_start = true;
             }
         }
@@ -1802,8 +1802,33 @@ impl OperationalState {
         return Box::new(MqttPacket::Connect(connect));
     }
 
+    fn acquire_free_packet_id(&mut self, operation_id: u64) -> Mqtt5Result<u16> {
+        let start_id = self.next_packet_id;
+        let mut check_id = start_id;
+
+        loop {
+            if self.next_packet_id == u16::MAX {
+                self.next_packet_id = 1;
+            } else {
+                self.next_packet_id += 1;
+            }
+
+            if !self.allocated_packet_ids.contains_key(&check_id) {
+                self.allocated_packet_ids.insert(check_id, operation_id);
+                return Ok(check_id);
+            }
+
+            if self.next_packet_id == start_id {
+                error!("[{} ms] acquire_packet_id_for_operation - operation {} could not find an unbound packet id", self.elapsed_time_ms, operation_id);
+                return Err(Mqtt5Error::PacketIdSpaceExhausted);
+            }
+
+            check_id = self.next_packet_id;
+        }
+    }
+
     fn acquire_packet_id_for_operation(&mut self, operation_id: u64) -> Mqtt5Result<()> {
-        let operation = self.operations.get_mut(&operation_id).unwrap();
+        let operation = self.operations.get(&operation_id).unwrap();
 
         if let Some(packet_id) = operation.packet_id {
             debug!("[{} ms] acquire_packet_id_for_operation - operation {} reusing existing packet id binding: {}", self.elapsed_time_ms, operation_id, packet_id);
@@ -1820,28 +1845,12 @@ impl OperationalState {
             _ => { return Ok(()); }
         }
 
-        let start_id = self.next_packet_id;
-        let mut check_id = start_id;
+        let packet_id = self.acquire_free_packet_id(operation_id)?;
 
-        loop {
-            self.next_packet_id += 1;
-            if self.next_packet_id == 0 {
-                self.next_packet_id = 1;
-            }
+        let operation = self.operations.get_mut(&operation_id).unwrap();
+        operation.bind_packet_id(packet_id);
 
-            if !self.allocated_packet_ids.contains_key(&check_id) {
-                operation.bind_packet_id(check_id);
-                self.allocated_packet_ids.insert(check_id, operation.id);
-                return Ok(());
-            }
-
-            if self.next_packet_id == start_id {
-                error!("[{} ms] acquire_packet_id_for_operation - operation {} could not find an unbound packet id", self.elapsed_time_ms, operation_id);
-                return Err(Mqtt5Error::PacketIdSpaceExhausted);
-            }
-
-            check_id = self.next_packet_id;
-        }
+        Ok(())
     }
 
     // Test accessors
@@ -2013,6 +2022,7 @@ fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use crate::RejoinSessionPolicy::Always;
     use super::*;
 
     fn build_operational_state_config_for_settings_test(connect: Box<ConnectPacket>) -> OperationalStateConfig {
@@ -2020,7 +2030,7 @@ mod tests {
             connect,
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveAll,
-            rejoin_session_policy: RejoinSessionPolicy::RejoinAlways,
+            rejoin_session_policy: RejoinSessionPolicy::Always,
             connack_timeout_millis: 30,
             ping_timeout_millis: 30000,
             outbound_resolver: None,
@@ -2288,5 +2298,81 @@ mod tests {
             vec!(),
             vec!(3, 5, 17, 23, 43, 666, 1023, 1024)
         );
+    }
+
+    fn build_operational_state_for_acquire_packet_id_test() -> OperationalState {
+        let config = OperationalStateConfig {
+            connect: Box::new(ConnectPacket{ ..Default::default() }),
+            base_timestamp: Instant::now(),
+            offline_queue_policy: OfflineQueuePolicy::PreserveNothing,
+            rejoin_session_policy: RejoinSessionPolicy::Always,
+            connack_timeout_millis: 0,
+            ping_timeout_millis: 0,
+            outbound_resolver: None,
+        };
+
+        OperationalState::new(config)
+    }
+
+    #[test]
+    fn acquire_free_packet_id_start() {
+        let mut operational_state = build_operational_state_for_acquire_packet_id_test();
+
+        assert_eq!(Ok(1), operational_state.acquire_free_packet_id(1));
+        assert_eq!(Ok(2), operational_state.acquire_free_packet_id(2));
+        assert_eq!(Ok(3), operational_state.acquire_free_packet_id(3));
+    }
+
+    #[test]
+    fn acquire_free_packet_id_with_skips() {
+        let mut operational_state = build_operational_state_for_acquire_packet_id_test();
+
+        operational_state.next_packet_id = 5;
+        operational_state.allocated_packet_ids.insert(5, 10);
+        operational_state.allocated_packet_ids.insert(6, 12);
+        operational_state.allocated_packet_ids.insert(7, 14);
+        operational_state.allocated_packet_ids.insert(9, 18);
+        operational_state.allocated_packet_ids.insert(11, 22);
+
+        assert_eq!(Ok(8), operational_state.acquire_free_packet_id(1));
+        assert_eq!(Ok(10), operational_state.acquire_free_packet_id(2));
+        assert_eq!(Ok(12), operational_state.acquire_free_packet_id(3));
+    }
+
+    #[test]
+    fn acquire_free_packet_id_with_wrap_around() {
+        let mut operational_state = build_operational_state_for_acquire_packet_id_test();
+
+        operational_state.next_packet_id = 65534;
+
+        assert_eq!(Ok(65534), operational_state.acquire_free_packet_id(1));
+        assert_eq!(Ok(65535), operational_state.acquire_free_packet_id(2));
+        assert_eq!(Ok(1), operational_state.acquire_free_packet_id(3));
+        assert_eq!(Ok(2), operational_state.acquire_free_packet_id(4));
+    }
+
+    #[test]
+    fn acquire_free_packet_id_with_wrap_around_with_skips() {
+        let mut operational_state = build_operational_state_for_acquire_packet_id_test();
+
+        operational_state.next_packet_id = 65534;
+        operational_state.allocated_packet_ids.insert(65534, 10);
+        operational_state.allocated_packet_ids.insert(65535, 12);
+        operational_state.allocated_packet_ids.insert(1, 14);
+        operational_state.allocated_packet_ids.insert(2, 18);
+        operational_state.allocated_packet_ids.insert(4, 22);
+
+        assert_eq!(Ok(3), operational_state.acquire_free_packet_id(1));
+        assert_eq!(Ok(5), operational_state.acquire_free_packet_id(2));
+    }
+
+    #[test]
+    fn acquire_free_packet_id_no_space() {
+        let mut operational_state = build_operational_state_for_acquire_packet_id_test();
+        for i in 0..u16::MAX {
+            operational_state.allocated_packet_ids.insert(i + 1, i as u64);
+        }
+
+        assert_eq!(Err(Mqtt5Error::PacketIdSpaceExhausted), operational_state.acquire_free_packet_id(1));
     }
 }

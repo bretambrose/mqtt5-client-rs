@@ -20,7 +20,7 @@ mod operational_state_tests {
             }),
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveAll,
-            rejoin_session_policy: RejoinSessionPolicy::RejoinAlways,
+            rejoin_session_policy: RejoinSessionPolicy::Always,
             connack_timeout_millis: 10000,
             ping_timeout_millis: 30000,
             outbound_resolver: None,
@@ -58,6 +58,26 @@ mod operational_state_tests {
             let response = Box::new(MqttPacket::Connack(ConnackPacket {
                 assigned_client_identifier,
                 session_present : !connect.clean_start,
+                ..Default::default()
+            }));
+            response_packets.push_back(response);
+
+            return Ok(());
+        }
+
+        Err(Mqtt5Error::ProtocolError)
+    }
+
+    fn handle_connect_with_low_receive_maximum(packet: &Box<MqttPacket>, response_packets: &mut VecDeque<Box<MqttPacket>>) -> Mqtt5Result<()> {
+        if let MqttPacket::Connect(connect) = &**packet {
+            let mut assigned_client_identifier = None;
+            if connect.client_id.is_none() {
+                assigned_client_identifier = Some("auto-assigned-client-id".to_string());
+            }
+
+            let response = Box::new(MqttPacket::Connack(ConnackPacket {
+                assigned_client_identifier,
+                receive_maximum: Some(1),
                 ..Default::default()
             }));
             response_packets.push_back(response);
@@ -2821,7 +2841,7 @@ mod operational_state_tests {
             fn $test_helper_name() {
                 let mut config = build_standard_test_config();
                 config.offline_queue_policy = OfflineQueuePolicy::PreserveNothing;
-                config.rejoin_session_policy = RejoinSessionPolicy::RejoinPostSuccess;
+                config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
 
                 let mut fixture = OperationalStateTestFixture::new(config);
                 fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
@@ -2999,7 +3019,7 @@ mod operational_state_tests {
     fn connected_state_user_disconnect_success_non_empty_queues() {
         let mut config = build_standard_test_config();
         config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
-        config.rejoin_session_policy = RejoinSessionPolicy::RejoinPostSuccess;
+        config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
 
         let mut fixture = OperationalStateTestFixture::new(config);
         fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
@@ -3174,6 +3194,157 @@ mod operational_state_tests {
         assert_eq!(EncodeResult::Complete, encode_result);
 
         assert_eq!(Err(Mqtt5Error::ServerSideDisconnect), fixture.on_incoming_bytes(10, encoded_buffer.as_slice()));
+        verify_operational_state_empty(&fixture);
+    }
+
+    fn rejoin_session_test_build_clean_start_sequence(rejoin_policy : RejoinSessionPolicy) -> Vec<bool> {
+        let mut config = build_standard_test_config();
+        config.rejoin_session_policy = rejoin_policy;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
+
+        for i in 0..4 {
+            assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, i * 10));
+            assert_eq!(Ok(()), fixture.on_connection_closed(i * 10));
+        }
+
+        assert_eq!(4, fixture.to_broker_packet_stream.len());
+
+        return fixture.to_broker_packet_stream.iter().map(|packet| {
+            if let MqttPacket::Connect(connect) = &**packet {
+                return connect.clean_start;
+            } else {
+                panic!("Expected connect packet");
+            }
+        }).collect();
+    }
+
+    #[test]
+    fn connected_state_rejoin_session_policy_always() {
+        let clean_starts = rejoin_session_test_build_clean_start_sequence(RejoinSessionPolicy::Always);
+        assert_eq!(vec!(false, false, false, false), clean_starts);
+    }
+
+    #[test]
+    fn connected_state_rejoin_session_policy_never() {
+        let clean_starts = rejoin_session_test_build_clean_start_sequence(RejoinSessionPolicy::Never);
+        assert_eq!(vec!(true, true, true, true), clean_starts);
+    }
+
+    #[test]
+    fn connected_state_rejoin_session_policy_post_success() {
+        let clean_starts = rejoin_session_test_build_clean_start_sequence(RejoinSessionPolicy::PostSuccess);
+        assert_eq!(vec!(true, false, false, false), clean_starts);
+    }
+
+    #[test]
+    fn connected_state_maximum_inflight_publish_limit_respected() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_low_receive_maximum));
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+        if let Some(settings) = &fixture.client_state.current_settings {
+            assert_eq!(1, settings.receive_maximum_from_server);
+        } else {
+            panic!("Expected settings");
+        }
+
+        let publish1 = PublishPacket {
+            qos: QualityOfService::ExactlyOnce,
+            topic: "hello/world".to_string(),
+            payload: Some("qos2".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        let publish2 = PublishPacket {
+            qos: QualityOfService::AtLeastOnce,
+            topic: "hello/world".to_string(),
+            payload: Some("qos1-1".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        let publish3 = PublishPacket {
+            qos: QualityOfService::AtLeastOnce,
+            topic: "hello/world".to_string(),
+            payload: Some("qos1-2".as_bytes().to_vec()),
+            ..Default::default()
+        };
+
+        let mut result1 = fixture.publish(10, publish1, PublishOptions{ ..Default::default() }).unwrap();
+        let mut result2 = fixture.publish(10, publish2, PublishOptions{ ..Default::default() }).unwrap();
+        let mut result3 = fixture.publish(10, publish3, PublishOptions{ ..Default::default() }).unwrap();
+
+        let response1a_bytes = fixture.service_with_drain(20, 4096).unwrap();
+        assert!(fixture.get_next_service_time(20).is_none());
+        assert_eq!(0, fixture.service_with_drain(30, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(300, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(3000, 4096).unwrap().len());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(2, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert!(result1.try_recv().is_err());
+        assert!(result2.try_recv().is_err());
+        assert!(result3.try_recv().is_err());
+
+        assert!(fixture.on_incoming_bytes(3000, response1a_bytes.as_slice()).is_ok());
+        assert_eq!(Some(3000), fixture.get_next_service_time(3000));
+
+        let response1b_bytes = fixture.service_with_drain(4000, 4096).unwrap();
+        assert!(fixture.get_next_service_time(4000).is_none());
+        assert_eq!(0, fixture.service_with_drain(5000, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(6000, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(7000, 4096).unwrap().len());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(2, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert!(result1.try_recv().is_err());
+        assert!(result2.try_recv().is_err());
+        assert!(result3.try_recv().is_err());
+
+        assert!(fixture.on_incoming_bytes(10000, response1b_bytes.as_slice()).is_ok());
+        assert_eq!(Some(10000), fixture.get_next_service_time(10000));
+        assert_eq!(0, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(0, fixture.client_state.pending_publish_operations.len());
+        assert!(result1.try_recv().is_ok());
+        assert!(result2.try_recv().is_err());
+        assert!(result3.try_recv().is_err());
+
+        let response2_bytes = fixture.service_with_drain(15000, 4096).unwrap();
+        assert!(fixture.get_next_service_time(15000).is_none());
+        assert_eq!(0, fixture.service_with_drain(16000, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(17000, 4096).unwrap().len());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(1, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert!(result2.try_recv().is_err());
+        assert!(result3.try_recv().is_err());
+
+        assert!(fixture.on_incoming_bytes(20000, response2_bytes.as_slice()).is_ok());
+        assert_eq!(Some(20000), fixture.get_next_service_time(20000));
+        assert_eq!(0, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(0, fixture.client_state.pending_publish_operations.len());
+        assert!(result2.try_recv().is_ok());
+        assert!(result3.try_recv().is_err());
+
+        let response3_bytes = fixture.service_with_drain(25000, 4096).unwrap();
+        assert!(fixture.get_next_service_time(25000).is_none());
+        assert_eq!(0, fixture.service_with_drain(26000, 4096).unwrap().len());
+        assert_eq!(0, fixture.service_with_drain(27000, 4096).unwrap().len());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(1, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(0, fixture.client_state.user_operation_queue.len());
+        assert!(fixture.client_state.current_operation.is_none());
+        assert!(result3.try_recv().is_err());
+
+        assert!(fixture.on_incoming_bytes(30000, response3_bytes.as_slice()).is_ok());
+        assert_eq!(0, fixture.client_state.allocated_packet_ids.len());
+        assert_eq!(0, fixture.client_state.pending_publish_operations.len());
+        assert!(result3.try_recv().is_ok());
+
         verify_operational_state_empty(&fixture);
     }
 }
