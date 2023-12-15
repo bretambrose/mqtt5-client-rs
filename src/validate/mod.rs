@@ -189,6 +189,7 @@ pub(crate) mod testing {
         let encoded_bytes = encode_packet_for_test(packet);
 
         let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_qos = QualityOfService::ExactlyOnce;
 
         let outbound_context1 = create_outbound_validation_context_from_pinned(&test_validation_context);
 

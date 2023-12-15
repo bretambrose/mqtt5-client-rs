@@ -3129,13 +3129,4 @@ mod operational_state_tests {
 
     }
 
-    #[test]
-    fn connected_state_user_disconnect_failure_interrupted_by_server_disconnect() {
-
-    }
-
-    #[test]
-    fn connected_state_user_disconnect_failure_interrupted_by_protocol_error() {
-
-    }
 }
