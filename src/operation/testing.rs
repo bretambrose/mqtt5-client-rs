@@ -3126,7 +3126,54 @@ mod operational_state_tests {
 
     #[test]
     fn connected_state_user_disconnect_failure_invalid_packet() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_tiny_maximum_packet_size));
 
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let disconnect = DisconnectPacket {
+            reason_code: DisconnectReasonCode::DisconnectWithWillMessage,
+            reason_string: Some("This exceeds the maximum packet length".to_string()),
+            ..Default::default()
+        };
+
+        assert!(fixture.disconnect(10, disconnect).is_ok());
+
+        assert_eq!(Err(Mqtt5Error::UserInitiatedDisconnect), fixture.service_round_trip(0, 0, 4096));
+        assert_eq!(OperationalStateType::Halted, fixture.client_state.state);
+
+        verify_operational_state_empty(&fixture);
+
+        // we didn't send it, it was invalid
+        assert!(find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Disconnect, 1, None, None).is_none());
     }
 
+    #[test]
+    fn connected_state_server_disconnect() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let server_disconnect = DisconnectPacket {
+            reason_code: DisconnectReasonCode::UseAnotherServer,
+            reason_string: Some("You're weird".to_string()),
+            ..Default::default()
+        };
+
+        let encoding_context = EncodingContext {
+            outbound_alias_resolution: OutboundAliasResolution {
+                skip_topic: false,
+                alias: None,
+            }
+        };
+
+        let packet = MqttPacket::Disconnect(server_disconnect);
+        assert!(fixture.broker_encoder.reset(&packet, &encoding_context).is_ok());
+
+        let mut encoded_buffer = Vec::with_capacity(4096);
+        let encode_result = fixture.broker_encoder.encode(&packet, &mut encoded_buffer).unwrap();
+        assert_eq!(EncodeResult::Complete, encode_result);
+
+        assert_eq!(Err(Mqtt5Error::ServerSideDisconnect), fixture.on_incoming_bytes(10, encoded_buffer.as_slice()));
+        verify_operational_state_empty(&fixture);
+    }
 }
