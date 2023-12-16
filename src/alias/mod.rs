@@ -404,6 +404,26 @@ mod tests {
     }
 
     #[test]
+    fn inbound_topic_alias_resolve_success_rebind_existing() {
+        let mut resolver = InboundAliasResolver::new(2);
+
+        let mut topic1 = "topic1".to_string();
+        let mut topic3 = "topic3".to_string();
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut topic1), Ok(()));
+        assert_eq!(topic1, "topic1");
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut topic3), Ok(()));
+        assert_eq!(topic3, "topic3");
+
+        let mut unresolved_topic3 = "".to_string();
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut unresolved_topic3), Ok(()));
+        assert_eq!(unresolved_topic3, "topic3");
+    }
+
+
+    #[test]
     fn inbound_topic_alias_resolve_failures() {
         let mut resolver = InboundAliasResolver::new(10);
 
