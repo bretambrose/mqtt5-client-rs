@@ -3186,7 +3186,7 @@ mod operational_state_tests {
             }
         };
 
-        let packet = MqttPacket::Disconnect(server_disconnect);
+        let packet = MqttPacket::Disconnect(server_disconnect.clone());
         assert!(fixture.broker_encoder.reset(&packet, &encoding_context).is_ok());
 
         let mut encoded_buffer = Vec::with_capacity(4096);
@@ -3195,6 +3195,14 @@ mod operational_state_tests {
 
         assert_eq!(Err(Mqtt5Error::ServerSideDisconnect), fixture.on_incoming_bytes(10, encoded_buffer.as_slice()));
         verify_operational_state_empty(&fixture);
+
+        assert_eq!(2, fixture.client_packet_events.len());
+        let client_event = fixture.client_packet_events.get(1).unwrap();
+        if let PacketEvent::Disconnect(incoming_disconnect) = client_event {
+            assert_eq!(server_disconnect, *incoming_disconnect);
+        } else {
+            panic!("Expected disconnect client event")
+        }
     }
 
     fn rejoin_session_test_build_clean_start_sequence(rejoin_policy : RejoinSessionPolicy) -> Vec<bool> {
@@ -3346,5 +3354,16 @@ mod operational_state_tests {
         assert!(result3.try_recv().is_ok());
 
         verify_operational_state_empty(&fixture);
+    }
+
+    fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) {
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+
+    }
+
+    #[test]
+    fn connected_state_multi_operation_sequence_simple_success() {
+
     }
 }
