@@ -911,7 +911,14 @@ impl OperationalState {
             return decode_result;
         }
 
-        for packet in decoded_packets {
+        for mut packet in decoded_packets {
+            if let MqttPacket::Publish(publish) = &mut(*packet) {
+                if let Err(_) = self.inbound_alias_resolver.resolve_topic_alias(&publish.topic_alias, &mut publish.topic) {
+                    error!("[{} ms] handle_network_event_incoming_data - topic alias resolution failure", self.elapsed_time_ms);
+                    return Err(Mqtt5Error::ProtocolError);
+                }
+            }
+
             let mut validation_context = InboundValidationContext {
                 negotiated_settings : None
             };

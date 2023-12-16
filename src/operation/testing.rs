@@ -945,12 +945,16 @@ mod operational_state_tests {
     }
 
     fn encode_packet_to_buffer(packet: MqttPacket, buffer: &mut Vec<u8>) -> Mqtt5Result<()> {
+        encode_packet_to_buffer_with_alias_resolution(packet, buffer, OutboundAliasResolution{
+            skip_topic: false,
+            alias: None,
+        })
+    }
+
+    fn encode_packet_to_buffer_with_alias_resolution(packet: MqttPacket, buffer: &mut Vec<u8>, alias_resolution: OutboundAliasResolution) -> Mqtt5Result<()> {
         let mut encode_buffer = Vec::with_capacity(4096);
         let encoding_context = EncodingContext {
-            outbound_alias_resolution: OutboundAliasResolution {
-                skip_topic: false,
-                alias: None,
-            }
+            outbound_alias_resolution: alias_resolution
         };
 
         let mut encoder = Encoder::new();
@@ -3356,6 +3360,148 @@ mod operational_state_tests {
         verify_operational_state_empty(&fixture);
     }
 
+    #[test]
+    fn connected_state_ack_order() {
+        let mut config = build_standard_test_config();
+        config.connect = Box::new(ConnectPacket {
+            topic_alias_maximum: Some(2),
+            ..Default::default()
+        });
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let mut incoming_packet_buffer = Vec::with_capacity(4096);
+
+        let incoming_packets: Vec<MqttPacket> = vec!(
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::ExactlyOnce,
+                packet_id: 1,
+                topic: "topic1".to_string(),
+                payload: Some("1".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket {
+                qos: QualityOfService::AtLeastOnce,
+                packet_id: 2,
+                topic: "topic1".to_string(),
+                payload: Some("2".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket {
+                qos: QualityOfService::ExactlyOnce,
+                packet_id: 3,
+                topic: "topic2".to_string(),
+                payload: Some("3".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket {
+                qos: QualityOfService::AtMostOnce,
+                packet_id: 0,
+                topic: "topic3".to_string(),
+                payload: Some("4".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket {
+                qos: QualityOfService::AtLeastOnce,
+                packet_id: 4,
+                topic: "topic3".to_string(),
+                payload: Some("5".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Pubrel(PubrelPacket {
+                packet_id: 1,
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket {
+                qos: QualityOfService::AtLeastOnce,
+                packet_id: 5,
+                topic: "topic3".to_string(),
+                payload: Some("5".as_bytes().to_vec()),
+                ..Default::default()
+            }));
+
+        let qos2_publish1_topic = "topic1".to_string();
+        let mut lru_resolver = LruOutboundAliasResolver::new(2);
+
+        let qos2_publish1 = incoming_packets[0].clone();
+
+        assert!(encode_packet_to_buffer_with_alias_resolution(qos2_publish1, &mut incoming_packet_buffer, lru_resolver.resolve_and_apply_topic_alias(&None, &qos2_publish1_topic)).is_ok());
+        assert!(fixture.on_incoming_bytes(10, incoming_packet_buffer.as_slice()).is_ok());
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+        assert!(fixture.service_with_drain(15, 4096).is_ok());
+        assert_eq!(0, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(2, fixture.to_broker_packet_stream.len());
+
+        incoming_packet_buffer.clear();
+
+        incoming_packets.iter().skip(1).for_each(|packet| {
+            let mut topic = "Panic".to_string();
+            if let MqttPacket::Publish(publish) = packet {
+                topic = publish.topic.clone();
+            }
+            assert!(encode_packet_to_buffer_with_alias_resolution(packet.clone(), &mut incoming_packet_buffer, lru_resolver.resolve_and_apply_topic_alias(&None, &topic)).is_ok());
+        });
+
+        assert!(fixture.on_incoming_bytes(20, incoming_packet_buffer.as_slice()).is_ok());
+        assert!(fixture.service_round_trip(30, 40, 4096).is_ok());
+
+        // check client events
+        let packet_event_count = fixture.client_packet_events.len();
+        assert_eq!(7, packet_event_count); // connack + 6 publishes
+        let mut event_index = 1; // skip the connack
+        for packet in &incoming_packets {
+            if let MqttPacket::Publish(publish) = packet {
+                let client_event = &fixture.client_packet_events[event_index];
+                if let PacketEvent::Publish(publish_event) = client_event {
+                    assert_eq!(publish_event.packet_id, publish.packet_id);
+                    assert_eq!(publish_event.qos, publish.qos);
+                    assert_eq!(publish_event.topic, publish.topic);
+                    assert_eq!(publish_event.payload, publish.payload);
+                } else {
+                    panic!("Expected publish client event");
+                }
+
+                event_index += 1;
+            }
+        }
+
+        // check outbound ack sequence
+        let expected_ack_sequence = vec!(
+            MqttPacket::Pubrec(PubrecPacket{
+                packet_id: 1,
+                ..Default::default()
+            }),
+            MqttPacket::Puback(PubackPacket{
+                packet_id: 2,
+                ..Default::default()
+            }),
+            MqttPacket::Pubrec(PubrecPacket{
+                packet_id: 3,
+                ..Default::default()
+            }),
+            MqttPacket::Puback(PubackPacket{
+                packet_id: 4,
+                ..Default::default()
+            }),
+            MqttPacket::Pubcomp(PubcompPacket{
+                packet_id: 1,
+                ..Default::default()
+            }),
+            MqttPacket::Puback(PubackPacket{
+                packet_id: 5,
+                ..Default::default()
+            }),
+        );
+
+        let sent_acks: Vec<MqttPacket> = fixture.to_broker_packet_stream.iter().skip(1).map(|boxed_packet|{ *boxed_packet.clone() }).collect();
+        assert_eq!(expected_ack_sequence, sent_acks);
+    }
+
+
+
+
+    /*
     fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) {
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
@@ -3365,5 +3511,5 @@ mod operational_state_tests {
     #[test]
     fn connected_state_multi_operation_sequence_simple_success() {
 
-    }
+    }*/
 }

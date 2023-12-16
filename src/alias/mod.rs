@@ -215,18 +215,18 @@ impl InboundAliasResolver {
 
     pub(crate) fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &mut String) -> Mqtt5Result<()> {
         if let Some(alias_value) = alias {
-            if let Some(existing_topic) = self.current_aliases.get(alias_value) {
-                *topic = existing_topic.clone();
-                return Ok(());
+            if topic.len() == 0 {
+                if let Some(existing_topic) = self.current_aliases.get(alias_value) {
+                    *topic = existing_topic.clone();
+                    return Ok(());
+                }
+
+                error!("Topic Alias Resolution - zero length topic");
+                return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
             if *alias_value == 0 || *alias_value > self.maximum_alias_value {
                 error!("Topic Alias Resolution - inbound alias out of range");
-                return Err(Mqtt5Error::InboundTopicAliasNotValid);
-            }
-
-            if topic.len() == 0 {
-                error!("Topic Alias Resolution - zero length topic");
                 return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
