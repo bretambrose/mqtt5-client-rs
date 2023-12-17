@@ -420,7 +420,7 @@ mod operational_state_tests {
             Ok(to_socket)
         }
 
-        pub(crate) fn write_to_socket(&mut self, elapsed_millis: u64, bytes: &[u8]) -> Mqtt5Result<Vec<u8>> {
+        pub(crate) fn write_to_socket(&mut self, bytes: &[u8]) -> Mqtt5Result<Vec<u8>> {
             let mut response_bytes = Vec::new();
             let mut broker_packets = VecDeque::new();
 
@@ -530,6 +530,8 @@ mod operational_state_tests {
         }
 
         pub(crate) fn on_connection_closed(&mut self, elapsed_millis: u64) -> Mqtt5Result<()> {
+            self.broker_decoder.reset_for_new_connection();
+
             let mut context = NetworkEventContext {
                 current_time : self.base_timestamp + Duration::from_millis(elapsed_millis),
                 event: NetworkEvent::ConnectionClosed,
@@ -3074,7 +3076,7 @@ mod operational_state_tests {
         // (5) service carefully so that only the qos2 goes out and we process the response from
         //     the fake broker.
         let to_broker_bytes = fixture.service_once(50,25).unwrap();
-        let to_client_bytes = fixture.write_to_socket(55, to_broker_bytes.as_slice()).unwrap();
+        let to_client_bytes = fixture.write_to_socket(to_broker_bytes.as_slice()).unwrap();
         assert!(fixture.on_write_completion(55).is_ok());
         assert!(fixture.on_incoming_bytes(55, to_client_bytes.as_slice()).is_ok());
 
@@ -3538,6 +3540,18 @@ mod operational_state_tests {
                 unsubscribe_receivers: HashMap::new(),
             }
         }
+
+        fn find_packet_with_sequence_number(&self, sequence_number: u64) -> Option<&MqttPacket> {
+            for packet in self.outbound_packets.iter() {
+                if let Ok(Some(number)) = packet_to_sequence_number(packet) {
+                    if number == sequence_number {
+                        return Some(packet);
+                    }
+                }
+            }
+
+            None
+        }
     }
 
     fn submit_sequenced_packet(fixture: &mut OperationalStateTestFixture, context: &mut MultiOperationContext, packet_index: usize, elapsed: u64) {
@@ -3548,10 +3562,12 @@ mod operational_state_tests {
                 context.publish_receivers.insert(packet_to_sequence_number(packet).unwrap().unwrap(), result);
             }
             MqttPacket::Subscribe(subscribe) => {
-                assert!(fixture.subscribe(elapsed, subscribe.clone(), SubscribeOptions{ ..Default::default() }).is_ok());
+                let result = fixture.subscribe(elapsed, subscribe.clone(), SubscribeOptions{ ..Default::default() }).unwrap();
+                context.subscribe_receivers.insert(packet_to_sequence_number(packet).unwrap().unwrap(), result);
             }
             MqttPacket::Unsubscribe(unsubscribe) => {
-                assert!(fixture.unsubscribe(elapsed, unsubscribe.clone(), UnsubscribeOptions{ ..Default::default() }).is_ok());
+                let result = fixture.unsubscribe(elapsed, unsubscribe.clone(), UnsubscribeOptions{ ..Default::default() }).unwrap();
+                context.unsubscribe_receivers.insert(packet_to_sequence_number(packet).unwrap().unwrap(), result);
             }
             _ => {}
         }
@@ -3650,7 +3666,7 @@ mod operational_state_tests {
         }
 
         let to_server = fixture.service_once(50, 4096).unwrap();
-        context.to_client_bytes = fixture.write_to_socket(100, to_server.as_slice()).unwrap();
+        context.to_client_bytes = fixture.write_to_socket(to_server.as_slice()).unwrap();
         assert_eq!(0, fixture.client_state.high_priority_operation_queue.len());
         assert_eq!(1, fixture.client_state.pending_write_completion_operations.len());
         assert_eq!(3, fixture.client_state.pending_publish_operations.len());
@@ -3683,17 +3699,16 @@ mod operational_state_tests {
 
         verify_operational_state_empty(&fixture);
 
-        for (sequence_id, result) in context.publish_receivers.iter_mut() {
+        for (_, result) in context.publish_receivers.iter_mut() {
             let result_value = result.try_recv().unwrap();
             assert!(result_value.is_ok());
         }
 
-        for (sequence_id, result) in context.subscribe_receivers.iter_mut() {
+        for (_, result) in context.subscribe_receivers.iter_mut() {
             let result_value = result.try_recv().unwrap();
             assert!(result_value.is_ok());
         }
-
-        for (sequence_id, result) in context.unsubscribe_receivers.iter_mut() {
+        for (_, result) in context.unsubscribe_receivers.iter_mut() {
             let result_value = result.try_recv().unwrap();
             assert!(result_value.is_ok());
         }
@@ -3708,5 +3723,149 @@ mod operational_state_tests {
         }
 
         assert_eq!(13, expected_next_sequence_id);
+    }
+
+    fn is_qos1plus_publish(packet: &MqttPacket) -> bool {
+        if let MqttPacket::Publish(publish) = packet {
+            return publish.qos != QualityOfService::AtMostOnce;
+        }
+
+        false
+    }
+
+    fn verify_offline_failures_and_build_sorted_successful_sequence_id_list(context: &mut MultiOperationContext, session_present: bool, offline_queue_policy: OfflineQueuePolicy) -> Vec<u64> {
+        // start off by dividing into successful and unsuccessful groups
+        let mut failing_sequence_ids = Vec::new();
+        let mut successful_sequence_ids = Vec::new();
+
+        for (sequence_id, result) in context.publish_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            if result_value.is_ok() {
+                successful_sequence_ids.push(*sequence_id);
+            } else {
+                assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result_value);
+                failing_sequence_ids.push(*sequence_id);
+            }
+        }
+
+        for (sequence_id, result) in context.subscribe_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            if result_value.is_ok() {
+                successful_sequence_ids.push(*sequence_id);
+            } else {
+                assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result_value);
+                failing_sequence_ids.push(*sequence_id);
+            }
+        }
+
+        for (sequence_id, result) in context.unsubscribe_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            if result_value.is_ok() {
+                successful_sequence_ids.push(*sequence_id);
+            } else {
+                assert_eq!(Err(Mqtt5Error::OfflineQueuePolicyFailed), result_value);
+                failing_sequence_ids.push(*sequence_id);
+            }
+        }
+
+        // for each unsuccessful operation, verify that the associated packet fails the offline
+        // queue policy
+        for failing_sequence_id in &failing_sequence_ids {
+            if let Some(packet) = context.find_packet_with_sequence_number(*failing_sequence_id) {
+                assert!(!does_packet_pass_offline_queue_policy(packet, &offline_queue_policy));
+            } else {
+                panic!("Expected packet with given sequence number");
+            }
+        }
+
+        // for each successful operation, verify that the associated packet passes the offline
+        // queue policy or we protocol compliance forced us to keep and resubmit it
+        for successful_sequence_id in &successful_sequence_ids {
+            if let Some(packet) = context.find_packet_with_sequence_number(*successful_sequence_id) {
+                let passes_offline_policy = does_packet_pass_offline_queue_policy(packet, &offline_queue_policy);
+                let was_required_to_resubmit = *successful_sequence_id < 7 && session_present && is_qos1plus_publish(packet);
+
+                assert!(passes_offline_policy || was_required_to_resubmit);
+            } else {
+                panic!("Expected packet with given sequence number");
+            }
+        }
+
+        successful_sequence_ids.sort();
+        successful_sequence_ids
+    }
+
+
+    fn verify_successful_reconnect_sequencing(fixture: &OperationalStateTestFixture, successful_sequence_ids: &[u64], second_connect_index: usize) {
+        let mut expected_next_sequence_id_index = 0;
+        for packet in fixture.to_broker_packet_stream.iter().skip(second_connect_index + 1) {
+            let sequence_id_option = packet_to_sequence_number(&**packet).unwrap();
+            if let Some(sequence_id) = sequence_id_option {
+                assert_eq!(successful_sequence_ids[expected_next_sequence_id_index], sequence_id);
+                expected_next_sequence_id_index += 1;
+            }
+        }
+
+        assert_eq!(successful_sequence_ids.len(), expected_next_sequence_id_index);
+    }
+
+    fn do_connected_state_multi_operation_reconnect_test(offline_queue_policy: OfflineQueuePolicy, rejoin_session: bool) {
+        let mut config = build_standard_test_config();
+        config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
+        config.offline_queue_policy = offline_queue_policy;
+
+        let mut fixture = OperationalStateTestFixture::new(config);
+        if rejoin_session {
+            fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
+        }
+
+        let mut context = initialize_multi_operation_sequence_test(&mut fixture);
+        assert!(fixture.on_connection_closed(150).is_ok());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 200));
+        assert!(fixture.service_round_trip(500, 500, 65536).is_ok());
+        assert!(fixture.service_round_trip(600, 500, 65536).is_ok());
+
+        verify_operational_state_empty(&fixture);
+        if let Some(settings) = &fixture.client_state.current_settings {
+            assert_eq!(rejoin_session, settings.rejoined_session);
+        } else {
+            panic!("Supposed to have settings");
+        }
+
+        let successful_sequence_ids = verify_offline_failures_and_build_sorted_successful_sequence_id_list(&mut context, true, OfflineQueuePolicy::PreserveNothing);
+
+        let (second_connect_index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Connect, 2, None, None).unwrap();
+
+        // If we rejoin a session then we resume the qos 2 publish at the pubrel stage which
+        // means the publish won't be present in the packet stream after the reconnect and so
+        // we should skip it when verifying post-reconnect sequencing.  In the case though,
+        // verify that the first post-connect packet we send is that pubrel.
+        if rejoin_session {
+            assert_eq!(1, successful_sequence_ids[0]);
+            if let MqttPacket::Pubrel(_) = &*fixture.to_broker_packet_stream[second_connect_index + 1] {
+            } else {
+                panic!("Expected a pubrel after the reconnect");
+            }
+        }
+
+        let check_sequence =
+            if rejoin_session {
+                &successful_sequence_ids.as_slice()[1..]
+            } else {
+                &successful_sequence_ids.as_slice()
+            };
+
+        verify_successful_reconnect_sequencing(&fixture, check_sequence, second_connect_index);
+    }
+
+    #[test]
+    fn connected_state_multi_operation_sequence_disconnect_no_session_present_offline_preserve_nothing () {
+        do_connected_state_multi_operation_reconnect_test(OfflineQueuePolicy::PreserveNothing, false);
+    }
+
+    #[test]
+    fn connected_state_multi_operation_sequence_disconnect_session_present_offline_preserve_nothing () {
+        do_connected_state_multi_operation_reconnect_test(OfflineQueuePolicy::PreserveNothing, true);
     }
 }
