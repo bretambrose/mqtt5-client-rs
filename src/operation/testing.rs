@@ -3498,18 +3498,159 @@ mod operational_state_tests {
         assert_eq!(expected_ack_sequence, sent_acks);
     }
 
+    fn packet_to_sequence_number(packet: &MqttPacket) -> Mqtt5Result<Option<u64>> {
+        match packet {
+            MqttPacket::Publish(publish) => {
+                if let Some(payload) = &publish.payload {
+                    let payload_string = String::from_utf8(payload.clone()).unwrap();
+                    return Ok(Some(payload_string.parse::<u64>().unwrap()));
+                }
+            }
+            MqttPacket::Subscribe(subscribe) => {
+                if let Some(subscription) = subscribe.subscriptions.get(0) {
+                    return Ok(Some(subscription.topic_filter.parse::<u64>().unwrap()));
+                }
+            }
+            MqttPacket::Unsubscribe(unsubscribe) => {
+                if let Some(filter) = unsubscribe.topic_filters.get(0) {
+                    return Ok(Some(filter.parse::<u64>().unwrap()));
+                }
+            }
+            MqttPacket::Pubrel(_) => {
+                return Ok(None);
+            }
+            _ => {}
+        }
 
+        Err(Mqtt5Error::InternalStateError)
+    }
 
+    fn submit_sequenced_packet(fixture: &mut OperationalStateTestFixture, packet: &MqttPacket, elapsed: u64) {
+        match packet {
+            MqttPacket::Publish(publish) => {
+                assert!(fixture.publish(elapsed, publish.clone(), PublishOptions{ ..Default::default() }).is_ok());
+            }
+            MqttPacket::Subscribe(subscribe) => {
+                assert!(fixture.subscribe(elapsed, subscribe.clone(), SubscribeOptions{ ..Default::default() }).is_ok());
+            }
+            MqttPacket::Unsubscribe(unsubscribe) => {
+                assert!(fixture.unsubscribe(elapsed, unsubscribe.clone(), UnsubscribeOptions{ ..Default::default() }).is_ok());
+            }
+            _ => {}
+        }
+    }
 
-    /*
-    fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) {
+    fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) -> (Vec<MqttPacket>, Vec<u8>) {
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
+        let outbound_packets: Vec<MqttPacket> = vec!(
+            // in-progress
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::ExactlyOnce,
+                topic: "topic1".to_string(),
+                payload: Some("1".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtLeastOnce,
+                topic: "topic1".to_string(),
+                payload: Some("2".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Unsubscribe(UnsubscribePacket{
+                topic_filters: vec!("3".to_string()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::ExactlyOnce,
+                topic: "topic1".to_string(),
+                payload: Some("4".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Subscribe(SubscribePacket{
+                subscriptions: vec!(Subscription{
+                    topic_filter: "5".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtMostOnce,
+                topic: "topic1".to_string(),
+                payload: Some("6".as_bytes().to_vec()),
+                ..Default::default()
+            }),
 
+            // current
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtLeastOnce,
+                topic: "topic1".to_string().repeat(1024),
+                payload: Some("7".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+
+            // user queue
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::ExactlyOnce,
+                topic: "topic1".to_string(),
+                payload: Some("8".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Unsubscribe(UnsubscribePacket{
+                topic_filters: vec!("9".to_string()),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtLeastOnce,
+                topic: "topic1".to_string(),
+                payload: Some("10".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+            MqttPacket::Subscribe(SubscribePacket{
+                subscriptions: vec!(Subscription{
+                    topic_filter: "11".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            MqttPacket::Publish(PublishPacket{
+                qos: QualityOfService::AtMostOnce,
+                topic: "topic1".to_string(),
+                payload: Some("12".as_bytes().to_vec()),
+                ..Default::default()
+            }),
+        );
+
+        submit_sequenced_packet(fixture, &outbound_packets[0], 10);
+        assert!(fixture.service_round_trip(20, 30, 4096).is_ok());
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+
+        for i in 1..7 {
+            submit_sequenced_packet(fixture, &outbound_packets[i], 50);
+        }
+
+        let to_server = fixture.service_once(50, 4096).unwrap();
+        let to_client = fixture.write_to_socket(100, to_server.as_slice()).unwrap();
+
+        for packet in outbound_packets.iter().skip(7) {
+            submit_sequenced_packet(fixture, packet, 150);
+        }
+
+        (outbound_packets, to_client)
     }
 
     #[test]
     fn connected_state_multi_operation_sequence_simple_success() {
+        let config = build_standard_test_config();
+        let mut fixture = OperationalStateTestFixture::new(config);
 
-    }*/
+        let (packet_sequence, to_client) = initialize_multi_operation_sequence_test(&mut fixture);
+
+        let to_client2 = fixture.service_with_drain(200, 65536).unwrap();
+        assert!(fixture.on_incoming_bytes(300, to_client.as_slice()).is_ok());
+        assert!(fixture.on_incoming_bytes(300, to_client2.as_slice()).is_ok());
+        assert!(fixture.service_round_trip(500, 500, 65536).is_ok());
+
+        verify_operational_state_empty(&fixture);
+    }
 }

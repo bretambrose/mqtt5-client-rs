@@ -1909,18 +1909,14 @@ fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, 
             }
 
             let sender = publish_options.response_sender.take().unwrap();
-            if sender.send(Ok(publish_response)).is_err() {
-                return Err(Mqtt5Error::OperationChannelSendError);
-            }
+            let _ = sender.send(Ok(publish_response));
 
             return Ok(());
         }
         MqttOperationOptions::Subscribe(subscribe_options) => {
             if let OperationResponse::Subscribe(suback) = completion_result.unwrap() {
                 let sender = subscribe_options.response_sender.take().unwrap();
-                if sender.send(Ok(suback)).is_err() {
-                    return Err(Mqtt5Error::OperationChannelSendError);
-                }
+                let _ = sender.send(Ok(suback));
 
                 return Ok(());
             }
@@ -1928,9 +1924,8 @@ fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, 
         MqttOperationOptions::Unsubscribe(unsubscribe_options) => {
             if let OperationResponse::Unsubscribe(unsuback) = completion_result.unwrap() {
                 let sender = unsubscribe_options.response_sender.take().unwrap();
-                if sender.send(Ok(unsuback)).is_err() {
-                    return Err(Mqtt5Error::OperationChannelSendError);
-                }
+                let _ = sender.send(Ok(unsuback));
+
                 return Ok(());
             }
         }
