@@ -424,13 +424,6 @@ mod operational_state_tests {
             let mut response_bytes = Vec::new();
             let mut broker_packets = VecDeque::new();
 
-            let mut network_event = NetworkEventContext {
-                event: NetworkEvent::WriteCompletion,
-                current_time: self.base_timestamp + Duration::from_millis(elapsed_millis),
-                packet_events: &mut self.client_packet_events,
-            };
-
-            self.client_state.handle_network_event(&mut network_event)?;
             let mut maximum_packet_size_to_server : u32 = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
             if let Some(settings) = self.client_state.get_negotiated_settings() {
                 maximum_packet_size_to_server = settings.maximum_packet_size_to_server;
@@ -3082,6 +3075,7 @@ mod operational_state_tests {
         //     the fake broker.
         let to_broker_bytes = fixture.service_once(50,25).unwrap();
         let to_client_bytes = fixture.write_to_socket(55, to_broker_bytes.as_slice()).unwrap();
+        assert!(fixture.on_write_completion(55).is_ok());
         assert!(fixture.on_incoming_bytes(55, to_client_bytes.as_slice()).is_ok());
 
         // we should be partway through the second operation and we should have received a pubrec
@@ -3525,10 +3519,33 @@ mod operational_state_tests {
         Err(Mqtt5Error::InternalStateError)
     }
 
-    fn submit_sequenced_packet(fixture: &mut OperationalStateTestFixture, packet: &MqttPacket, elapsed: u64) {
+    struct MultiOperationContext {
+        outbound_packets: Vec<MqttPacket>,
+        to_client_bytes: Vec<u8>,
+
+        publish_receivers: HashMap<u64, oneshot::Receiver<PublishResult>>,
+        subscribe_receivers: HashMap<u64, oneshot::Receiver<SubscribeResult>>,
+        unsubscribe_receivers: HashMap<u64, oneshot::Receiver<UnsubscribeResult>>,
+    }
+
+    impl MultiOperationContext {
+        fn new() -> Self {
+            MultiOperationContext {
+                outbound_packets: Vec::new(),
+                to_client_bytes: Vec::new(),
+                publish_receivers: HashMap::new(),
+                subscribe_receivers: HashMap::new(),
+                unsubscribe_receivers: HashMap::new(),
+            }
+        }
+    }
+
+    fn submit_sequenced_packet(fixture: &mut OperationalStateTestFixture, context: &mut MultiOperationContext, packet_index: usize, elapsed: u64) {
+        let packet = &context.outbound_packets[packet_index];
         match packet {
             MqttPacket::Publish(publish) => {
-                assert!(fixture.publish(elapsed, publish.clone(), PublishOptions{ ..Default::default() }).is_ok());
+                let result = fixture.publish(elapsed, publish.clone(), PublishOptions{ ..Default::default() }).unwrap();
+                context.publish_receivers.insert(packet_to_sequence_number(packet).unwrap().unwrap(), result);
             }
             MqttPacket::Subscribe(subscribe) => {
                 assert!(fixture.subscribe(elapsed, subscribe.clone(), SubscribeOptions{ ..Default::default() }).is_ok());
@@ -3540,10 +3557,12 @@ mod operational_state_tests {
         }
     }
 
-    fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) -> (Vec<MqttPacket>, Vec<u8>) {
+    fn initialize_multi_operation_sequence_test(fixture: &mut OperationalStateTestFixture) -> MultiOperationContext {
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
 
-        let outbound_packets: Vec<MqttPacket> = vec!(
+        let mut context = MultiOperationContext::new();
+
+        context.outbound_packets = vec!(
             // in-progress
             MqttPacket::Publish(PublishPacket{
                 qos: QualityOfService::ExactlyOnce,
@@ -3621,22 +3640,32 @@ mod operational_state_tests {
             }),
         );
 
-        submit_sequenced_packet(fixture, &outbound_packets[0], 10);
+        submit_sequenced_packet(fixture, &mut context, 0, 10);
         assert!(fixture.service_round_trip(20, 30, 4096).is_ok());
         assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(1, fixture.client_state.allocated_packet_ids.len());
 
         for i in 1..7 {
-            submit_sequenced_packet(fixture, &outbound_packets[i], 50);
+            submit_sequenced_packet(fixture, &mut context, i, 50);
         }
 
         let to_server = fixture.service_once(50, 4096).unwrap();
-        let to_client = fixture.write_to_socket(100, to_server.as_slice()).unwrap();
+        context.to_client_bytes = fixture.write_to_socket(100, to_server.as_slice()).unwrap();
+        assert_eq!(0, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(1, fixture.client_state.pending_write_completion_operations.len());
+        assert_eq!(3, fixture.client_state.pending_publish_operations.len());
+        assert_eq!(2, fixture.client_state.pending_non_publish_operations.len());
+        assert!(fixture.client_state.current_operation.is_some());
+        assert_eq!(6, fixture.client_state.allocated_packet_ids.len()); // the current operation is also bound
 
-        for packet in outbound_packets.iter().skip(7) {
-            submit_sequenced_packet(fixture, packet, 150);
+        let packet_len = context.outbound_packets.len();
+        for i in 7..packet_len {
+            submit_sequenced_packet(fixture, &mut context, i, 150);
         }
 
-        (outbound_packets, to_client)
+        assert_eq!(5, fixture.client_state.user_operation_queue.len());
+
+        context
     }
 
     #[test]
@@ -3644,13 +3673,40 @@ mod operational_state_tests {
         let config = build_standard_test_config();
         let mut fixture = OperationalStateTestFixture::new(config);
 
-        let (packet_sequence, to_client) = initialize_multi_operation_sequence_test(&mut fixture);
+        let mut context = initialize_multi_operation_sequence_test(&mut fixture);
+        assert!(fixture.on_write_completion(150).is_ok());
+        assert!(fixture.on_incoming_bytes(300, context.to_client_bytes.as_slice()).is_ok());
 
         let to_client2 = fixture.service_with_drain(200, 65536).unwrap();
-        assert!(fixture.on_incoming_bytes(300, to_client.as_slice()).is_ok());
         assert!(fixture.on_incoming_bytes(300, to_client2.as_slice()).is_ok());
         assert!(fixture.service_round_trip(500, 500, 65536).is_ok());
 
         verify_operational_state_empty(&fixture);
+
+        for (sequence_id, result) in context.publish_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            assert!(result_value.is_ok());
+        }
+
+        for (sequence_id, result) in context.subscribe_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            assert!(result_value.is_ok());
+        }
+
+        for (sequence_id, result) in context.unsubscribe_receivers.iter_mut() {
+            let result_value = result.try_recv().unwrap();
+            assert!(result_value.is_ok());
+        }
+
+        let mut expected_next_sequence_id = 1;
+        for packet in fixture.to_broker_packet_stream.iter().skip(1) {
+            let sequence_id_option = packet_to_sequence_number(&**packet).unwrap();
+            if let Some(sequence_id) = sequence_id_option {
+                assert_eq!(expected_next_sequence_id, sequence_id);
+                expected_next_sequence_id += 1;
+            }
+        }
+
+        assert_eq!(13, expected_next_sequence_id);
     }
 }
