@@ -49,10 +49,10 @@ define_ack_packet_reason_string_accessor!(get_pubcomp_packet_reason_string, Pubc
 define_ack_packet_user_property_accessor!(get_pubcomp_packet_user_property, Pubcomp);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, PubcompReasonCode, PACKET_TYPE_PUBCOMP, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubcomp_encoding_steps, PubcompPacket, PubcompReasonCode, PUBCOMP_FIRST_BYTE, compute_pubcomp_packet_length_properties, get_pubcomp_packet_reason_string, get_pubcomp_packet_user_property);
 
 define_ack_packet_decode_properties_function!(decode_pubcomp_properties, PubcompPacket, "Pubcomp");
-define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, "Pubcomp", PACKET_TYPE_PUBCOMP, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
+define_ack_packet_decode_function!(decode_pubcomp_packet, Pubcomp, PubcompPacket, "Pubcomp", PUBCOMP_FIRST_BYTE, convert_u8_to_pubcomp_reason_code, decode_pubcomp_properties);
 
 validate_ack_outbound!(validate_pubcomp_packet_outbound, PubcompPacket, Mqtt5Error::PubcompPacketValidation, "Pubcomp");
 validate_ack_outbound_internal!(validate_pubcomp_packet_outbound_internal, PubcompPacket, PubcompPacketValidation, compute_pubcomp_packet_length_properties, "Puback");

@@ -66,7 +66,13 @@ pub const CONNECT_PACKET_HAS_USERNAME_FLAG_MASK : u8 = 1 << 7;
 pub const CONNECT_PACKET_HAS_PASSWORD_FLAG_MASK : u8 = 1 << 6;
 
 pub const UNSUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_UNSUBSCRIBE << 4) | (0x02u8);
-pub const SUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_SUBSCRIBE << 4) | (0x0Au8);
+pub const UNSUBACK_FIRST_BYTE : u8 = PACKET_TYPE_UNSUBACK << 4;
+pub const SUBSCRIBE_FIRST_BYTE : u8 = (PACKET_TYPE_SUBSCRIBE << 4) | (0x02u8);
+pub const SUBACK_FIRST_BYTE : u8 = PACKET_TYPE_SUBACK << 4;
+pub const PUBREL_FIRST_BYTE : u8 = (PACKET_TYPE_PUBREL << 4) | (0x02u8);
+pub const PUBACK_FIRST_BYTE : u8 = PACKET_TYPE_PUBACK << 4;
+pub const PUBREC_FIRST_BYTE : u8 = PACKET_TYPE_PUBREC << 4;
+pub const PUBCOMP_FIRST_BYTE : u8 = PACKET_TYPE_PUBCOMP << 4;
 
 pub const SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK : u8 = 1u8 << 2;
 pub const SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK : u8 = 1u8 << 3;
@@ -446,6 +452,45 @@ pub(crate) fn retain_handling_type_to_str (rht: RetainHandlingType) -> &'static 
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum PacketType {
+    Connect,
+    Connack,
+    Publish,
+    Puback,
+    Pubrec,
+    Pubrel,
+    Pubcomp,
+    Subscribe,
+    Suback,
+    Unsubscribe,
+    Unsuback,
+    Pingreq,
+    Pingresp,
+    Disconnect,
+    Auth,
+}
+
+pub(crate) fn mqtt_packet_to_packet_type(packet: &MqttPacket) -> PacketType {
+    match packet {
+        MqttPacket::Connect(_) => { PacketType::Connect }
+        MqttPacket::Connack(_) => { PacketType::Connack }
+        MqttPacket::Publish(_) => { PacketType::Publish}
+        MqttPacket::Puback(_) => { PacketType::Puback }
+        MqttPacket::Pubrec(_) => { PacketType::Pubrec }
+        MqttPacket::Pubrel(_) => { PacketType::Pubrel }
+        MqttPacket::Pubcomp(_) => { PacketType::Pubcomp }
+        MqttPacket::Subscribe(_) => { PacketType::Subscribe }
+        MqttPacket::Suback(_) => { PacketType::Suback }
+        MqttPacket::Unsubscribe(_) => { PacketType::Unsubscribe }
+        MqttPacket::Unsuback(_) => { PacketType::Unsuback }
+        MqttPacket::Pingreq(_) => { PacketType::Pingreq }
+        MqttPacket::Pingresp(_) => { PacketType::Pingresp }
+        MqttPacket::Disconnect(_) => { PacketType::Disconnect }
+        MqttPacket::Auth(_) => { PacketType::Auth }
+    }
+}
+
 pub(crate) fn packet_type_to_str(packet_type: u8) -> &'static str {
     match packet_type {
         PACKET_TYPE_CONNECT => { "Connect" }
@@ -466,5 +511,25 @@ pub(crate) fn packet_type_to_str(packet_type: u8) -> &'static str {
         _ => {
             "Unknown"
         }
+    }
+}
+
+pub(crate) fn mqtt_packet_to_str(packet: &MqttPacket) -> &'static str {
+    match packet {
+        MqttPacket::Connect(_) => { "CONNECT" }
+        MqttPacket::Connack(_) => { "CONNACK" }
+        MqttPacket::Publish(_) => { "PUBLISH" }
+        MqttPacket::Puback(_) => { "PUBACK" }
+        MqttPacket::Pubrec(_) => { "PUBREC" }
+        MqttPacket::Pubrel(_) => { "PUBREL" }
+        MqttPacket::Pubcomp(_) => { "PUBCOMP" }
+        MqttPacket::Subscribe(_) => { "SUBSCRIBE" }
+        MqttPacket::Suback(_) => { "SUBACK" }
+        MqttPacket::Unsubscribe(_) => { "UNSUBSCRIBE" }
+        MqttPacket::Unsuback(_) => { "UNSUBACK" }
+        MqttPacket::Pingreq(_) => { "PINGREQ" }
+        MqttPacket::Pingresp(_) => { "PINGRESP" }
+        MqttPacket::Disconnect(_) => { "DISCONNECT" }
+        MqttPacket::Auth(_) => { "AUTH" }
     }
 }

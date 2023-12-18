@@ -73,7 +73,7 @@ macro_rules! validate_ack_outbound_internal {
 
             let (total_remaining_length, _) = $packet_length_function_name(packet)?;
             let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-            if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+            if total_packet_length > context.negotiated_settings.unwrap().maximum_packet_size_to_server {
                 error!("{}Packet Validation - packet length exceeds allowed maximum to server", $packet_type_string);
                 return Err(Mqtt5Error::$error);
             }
@@ -206,7 +206,7 @@ pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundVal
     }
 
     if topic_filter_properties.is_shared {
-        if !context.negotiated_settings.shared_subscriptions_available {
+        if !context.negotiated_settings.unwrap().shared_subscriptions_available {
             return false;
         }
 
@@ -217,7 +217,7 @@ pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundVal
         }
     }
 
-    if topic_filter_properties.has_wildcard && !context.negotiated_settings.wildcard_subscriptions_available {
+    if topic_filter_properties.has_wildcard && !context.negotiated_settings.unwrap().wildcard_subscriptions_available {
         return false;
     }
 

@@ -49,10 +49,10 @@ define_ack_packet_reason_string_accessor!(get_pubrec_packet_reason_string, Pubre
 define_ack_packet_user_property_accessor!(get_pubrec_packet_user_property, Pubrec);
 
 #[rustfmt::skip]
-define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, PubrecReasonCode, PACKET_TYPE_PUBREC, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
+define_ack_packet_encoding_impl!(write_pubrec_encoding_steps, PubrecPacket, PubrecReasonCode, PUBREC_FIRST_BYTE, compute_pubrec_packet_length_properties, get_pubrec_packet_reason_string, get_pubrec_packet_user_property);
 
 define_ack_packet_decode_properties_function!(decode_pubrec_properties, PubrecPacket, "Pubrec");
-define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, "Pubrec", PACKET_TYPE_PUBREC, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
+define_ack_packet_decode_function!(decode_pubrec_packet, Pubrec, PubrecPacket, "Pubrec", PUBREC_FIRST_BYTE, convert_u8_to_pubrec_reason_code, decode_pubrec_properties);
 
 validate_ack_outbound!(validate_pubrec_packet_outbound, PubrecPacket, Mqtt5Error::PubrecPacketValidation, "Pubrec");
 validate_ack_outbound_internal!(validate_pubrec_packet_outbound_internal, PubrecPacket, PubrecPacketValidation, compute_pubrec_packet_length_properties, "Pubrec");

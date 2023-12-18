@@ -34,10 +34,10 @@ pub(crate) const MAXIMUM_BINARY_PROPERTY_LENGTH : usize = 65535;
 pub(crate) struct OutboundValidationContext<'a> {
 
     // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
-    pub negotiated_settings : &'a NegotiatedSettings,
+    pub negotiated_settings : Option<&'a NegotiatedSettings>,
 
     // session_expiry_interval for disconnect constraints
-    pub client_config: &'a Mqtt5ClientOptions,
+    pub client_connect: Option<&'a ConnectPacket>,
 
     pub outbound_alias_resolution: Option<OutboundAliasResolution>
 }
@@ -45,7 +45,7 @@ pub(crate) struct OutboundValidationContext<'a> {
 pub(crate) struct InboundValidationContext<'a> {
 
     // Maximum packet size, maximum qos, retained, wildcard, sub ids, shared subs
-    pub negotiated_settings : &'a NegotiatedSettings,
+    pub negotiated_settings : Option<&'a NegotiatedSettings>,
 }
 
 fn validate_user_property(property: &UserProperty, error: Mqtt5Error, packet_type: &str) -> Mqtt5Result<()> {
@@ -121,7 +121,7 @@ pub(crate) fn validate_packet_outbound_internal(packet: &MqttPacket, context: &O
 pub(crate) fn validate_packet_inbound_internal(packet: &MqttPacket, context: &InboundValidationContext) -> Mqtt5Result<()> {
     match packet {
         MqttPacket::Auth(auth) => { validate_auth_packet_inbound_internal(auth, context) }
-        MqttPacket::Connack(connack) => { validate_connack_packet_inbound_internal(connack, context) }
+        MqttPacket::Connack(connack) => { validate_connack_packet_inbound_internal(connack) }
         MqttPacket::Disconnect(disconnect) => { validate_disconnect_packet_inbound_internal(disconnect, context) }
         MqttPacket::Pingresp(_) => { Ok(()) }
         MqttPacket::Puback(puback) => { validate_puback_packet_inbound_internal(puback, context) }
@@ -145,13 +145,13 @@ pub(crate) mod testing {
 
     pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
-        pub config : Mqtt5ClientOptions,
+        pub connect : ConnectPacket,
     }
 
     pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
         let mut pinned_context = PinnedValidationContext {
             settings : NegotiatedSettings {..Default::default() },
-            config : Mqtt5ClientOptions{ ..Default::default() },
+            connect : ConnectPacket{ ..Default::default() },
         };
 
         pinned_context.settings.maximum_packet_size_to_server = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
@@ -164,15 +164,15 @@ pub(crate) mod testing {
 
     pub(crate) fn create_outbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> OutboundValidationContext {
         OutboundValidationContext {
-            negotiated_settings : &pinned.settings,
-            client_config : &pinned.config,
+            negotiated_settings : Some(&pinned.settings),
+            client_connect : Some(&pinned.connect),
             outbound_alias_resolution : None,
         }
     }
 
     pub(crate) fn create_inbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> InboundValidationContext {
         InboundValidationContext {
-            negotiated_settings : &pinned.settings,
+            negotiated_settings : Some(&pinned.settings),
         }
     }
 
@@ -189,6 +189,7 @@ pub(crate) mod testing {
         let encoded_bytes = encode_packet_for_test(packet);
 
         let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_qos = QualityOfService::ExactlyOnce;
 
         let outbound_context1 = create_outbound_validation_context_from_pinned(&test_validation_context);
 

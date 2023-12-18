@@ -170,7 +170,7 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
 
     let (total_remaining_length, _) = compute_unsubscribe_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+    if total_packet_length > context.negotiated_settings.unwrap().maximum_packet_size_to_server {
         error!("UnsubscribePacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }

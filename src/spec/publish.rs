@@ -408,7 +408,7 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
 
     let (total_remaining_length, _) = compute_publish_packet_length_properties(packet, &context.outbound_alias_resolution.unwrap_or(OutboundAliasResolution{..Default::default() }))?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+    if total_packet_length > context.negotiated_settings.unwrap().maximum_packet_size_to_server {
         error!("PublishPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
@@ -418,9 +418,26 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
-    if packet.retain && !context.negotiated_settings.retain_available {
+    let settings = context.negotiated_settings.unwrap();
+    if packet.retain && !settings.retain_available {
         error!("PublishPacket Outbound Validation - retained messages not allowed on this connection");
         return Err(Mqtt5Error::PublishPacketValidation);
+    }
+
+    match settings.maximum_qos {
+        QualityOfService::AtMostOnce => {
+            if packet.qos != QualityOfService::AtMostOnce {
+                error!("PublishPacket Outbound Validation - quality of service exceeds established maximum");
+                return Err(Mqtt5Error::PublishPacketValidation);
+            }
+        }
+        QualityOfService::AtLeastOnce => {
+            if packet.qos == QualityOfService::ExactlyOnce {
+                error!("PublishPacket Outbound Validation - quality of service exceeds established maximum");
+                return Err(Mqtt5Error::PublishPacketValidation);
+            }
+        }
+        _ => {}
     }
 
     Ok(())
@@ -818,7 +835,8 @@ mod tests {
 
         let outbound_internal_packet = MqttPacket::Publish(packet2);
 
-        let test_validation_context = create_pinned_validation_context();
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_qos = QualityOfService::ExactlyOnce;
 
         let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
         assert_eq!(validate_packet_outbound_internal(&outbound_internal_packet, &outbound_validation_context), Ok(()));
@@ -938,6 +956,34 @@ mod tests {
 
         let mut test_validation_context = create_pinned_validation_context();
         test_validation_context.settings.retain_available = false;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_outbound_internal_maximum_qos_qos0_exceeded() {
+        let mut packet = create_outbound_publish_with_all_fields();
+        packet.qos = QualityOfService::AtLeastOnce;
+
+        let packet = MqttPacket::Publish(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_qos = QualityOfService::AtMostOnce;
+
+        let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
+        assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::PublishPacketValidation));
+    }
+
+    #[test]
+    fn publish_validate_failure_outbound_internal_maximum_qos_qos1_exceeded() {
+        let mut packet = create_outbound_publish_with_all_fields();
+        packet.qos = QualityOfService::ExactlyOnce;
+
+        let packet = MqttPacket::Publish(packet);
+
+        let mut test_validation_context = create_pinned_validation_context();
+        test_validation_context.settings.maximum_qos = QualityOfService::AtLeastOnce;
 
         let outbound_validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
         assert_eq!(validate_packet_outbound_internal(&packet, &outbound_validation_context), Err(Mqtt5Error::PublishPacketValidation));

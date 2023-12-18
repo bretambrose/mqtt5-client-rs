@@ -21,7 +21,7 @@ pub struct OutboundAliasResolution {
     pub alias : Option<u16>,
 }
 
-pub trait OutboundAliasResolver {
+pub trait OutboundAliasResolver : Send {
     fn get_maximum_alias_value(&self) -> u16;
 
     fn reset_for_new_connection(&mut self, max_aliases : u16);
@@ -154,6 +154,13 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
     }
 
     fn resolve_topic_alias(&self, _: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        if self.maximum_alias_value == 0 {
+            return OutboundAliasResolution{
+                skip_topic: false,
+                alias : None
+            };
+        }
+
         if let Some(cached_alias_value) = self.cache.peek(topic) {
             let alias_value = *cached_alias_value;
 
@@ -180,7 +187,9 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
 
     fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
         let resolution = self.resolve_topic_alias(alias, topic);
-        let resolved_alias = resolution.alias.unwrap();
+        if resolution.alias.is_none() {
+            return resolution;
+        }
 
         if resolution.skip_topic {
             self.cache.promote(topic);
@@ -188,6 +197,8 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
             if self.cache.len() == self.maximum_alias_value as usize {
                 self.cache.pop_lru();
             }
+
+            let resolved_alias = resolution.alias.unwrap();
             self.cache.push(topic.clone(), resolved_alias);
         }
 
@@ -215,18 +226,18 @@ impl InboundAliasResolver {
 
     pub(crate) fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &mut String) -> Mqtt5Result<()> {
         if let Some(alias_value) = alias {
-            if let Some(existing_topic) = self.current_aliases.get(alias_value) {
-                *topic = existing_topic.clone();
-                return Ok(());
+            if topic.len() == 0 {
+                if let Some(existing_topic) = self.current_aliases.get(alias_value) {
+                    *topic = existing_topic.clone();
+                    return Ok(());
+                }
+
+                error!("Topic Alias Resolution - zero length topic");
+                return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
             if *alias_value == 0 || *alias_value > self.maximum_alias_value {
                 error!("Topic Alias Resolution - inbound alias out of range");
-                return Err(Mqtt5Error::InboundTopicAliasNotValid);
-            }
-
-            if topic.len() == 0 {
-                error!("Topic Alias Resolution - zero length topic");
                 return Err(Mqtt5Error::InboundTopicAliasNotValid);
             }
 
@@ -381,6 +392,18 @@ mod tests {
     }
 
     #[test]
+    fn outbound_topic_alias_lru_disabled_by_zero_maximum() {
+        let mut resolver = LruOutboundAliasResolver::new(2);
+
+        assert_eq!(resolver.get_maximum_alias_value(), 2);
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        resolver.reset_for_new_connection(0);
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+    }
+
+    #[test]
     fn inbound_topic_alias_resolve_success() {
         let mut resolver = InboundAliasResolver::new(10);
 
@@ -402,6 +425,26 @@ mod tests {
         assert_eq!(resolver.resolve_topic_alias(&Some(10), &mut unresolved_topic2), Ok(()));
         assert_eq!(unresolved_topic2, "topic2");
     }
+
+    #[test]
+    fn inbound_topic_alias_resolve_success_rebind_existing() {
+        let mut resolver = InboundAliasResolver::new(2);
+
+        let mut topic1 = "topic1".to_string();
+        let mut topic3 = "topic3".to_string();
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut topic1), Ok(()));
+        assert_eq!(topic1, "topic1");
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut topic3), Ok(()));
+        assert_eq!(topic3, "topic3");
+
+        let mut unresolved_topic3 = "".to_string();
+
+        assert_eq!(resolver.resolve_topic_alias(&Some(1), &mut unresolved_topic3), Ok(()));
+        assert_eq!(unresolved_topic3, "topic3");
+    }
+
 
     #[test]
     fn inbound_topic_alias_resolve_failures() {

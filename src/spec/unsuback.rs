@@ -75,7 +75,7 @@ fn get_unsuback_packet_user_property(packet: &MqttPacket, index: usize) -> &User
 pub(crate) fn write_unsuback_encoding_steps(packet: &UnsubackPacket, _: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
     let (total_remaining_length, unsuback_property_length) = compute_unsuback_packet_length_properties(packet)?;
 
-    encode_integral_expression!(steps, Uint8, PACKET_TYPE_UNSUBACK << 4);
+    encode_integral_expression!(steps, Uint8, UNSUBACK_FIRST_BYTE);
     encode_integral_expression!(steps, Vli, total_remaining_length);
 
     encode_integral_expression!(steps, Uint16, packet.packet_id);
@@ -114,7 +114,7 @@ fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacke
 
 pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
 
-    if first_byte != (PACKET_TYPE_UNSUBACK << 4) {
+    if first_byte != UNSUBACK_FIRST_BYTE {
         error!("UnsubackPacket Decode - invalid first byte");
         return Err(Mqtt5Error::MalformedPacket);
     }

@@ -192,7 +192,7 @@ pub(crate) fn validate_disconnect_packet_outbound_internal(packet: &DisconnectPa
 
     let (total_remaining_length, _) = compute_disconnect_packet_length_properties(packet)?;
     let total_packet_length = 1 + total_remaining_length + compute_variable_length_integer_encode_size(total_remaining_length as usize)? as u32;
-    if total_packet_length > context.negotiated_settings.maximum_packet_size_to_server {
+    if total_packet_length > context.negotiated_settings.unwrap().maximum_packet_size_to_server {
         error!("DisconnectPacket Outbound Validation - packet length exceeds maximum packet size allowed to server");
         return Err(Mqtt5Error::DisconnectPacketValidation);
     }
@@ -202,7 +202,7 @@ pub(crate) fn validate_disconnect_packet_outbound_internal(packet: &DisconnectPa
      * was sent in the CONNECT.
      */
     let mut connect_session_expiry_interval = 0;
-    if let Some(connect) = &context.client_config.connect {
+    if let Some(connect) = &context.client_connect {
         connect_session_expiry_interval = connect.session_expiry_interval_seconds.unwrap_or(0);
     }
     let disconnect_session_expiry_interval = packet.session_expiry_interval_seconds.unwrap_or(connect_session_expiry_interval);
@@ -470,9 +470,9 @@ mod tests {
         let packet = create_disconnect_packet_all_properties();
 
         let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.config.connect = Some(Box::new(ConnectPacket{
+        test_validation_context.connect = ConnectPacket{
             ..Default::default()
-        }));
+        };
         let validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
 
         assert_eq!(validate_packet_outbound_internal(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
@@ -483,10 +483,10 @@ mod tests {
         let packet = create_disconnect_packet_all_properties();
 
         let mut test_validation_context = create_pinned_validation_context();
-        test_validation_context.config.connect = Some(Box::new(ConnectPacket{
+        test_validation_context.connect = ConnectPacket{
             session_expiry_interval_seconds : Some(0),
             ..Default::default()
-        }));
+        };
         let validation_context = create_outbound_validation_context_from_pinned(&test_validation_context);
 
         assert_eq!(validate_packet_outbound_internal(&MqttPacket::Disconnect(packet), &validation_context), Err(Mqtt5Error::DisconnectPacketValidation));
