@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+// Internal module that implements most of the MQTT5 spec with respect to client protocol behavior
+
 pub(crate) mod testing;
 
 extern crate log;
@@ -15,7 +17,7 @@ use crate::decode::*;
 use crate::encode::*;
 use crate::encode::utils::*;
 use crate::spec::*;
-use crate::spec::connack::validate_connack_packet_inbound_internal;
+use crate::spec::connack::*;
 use crate::spec::utils::*;
 use crate::validate::*;
 
@@ -26,7 +28,6 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::*;
 use std::fmt::*;
 use std::mem;
-use std::sync::Arc;
 use std::time::*;
 
 enum MqttOperationOptions {
@@ -35,14 +36,29 @@ enum MqttOperationOptions {
     Unsubscribe(UnsubscribeOptionsInternal),
 }
 
+// Data structure that tracks the state of an MQTT operation.  This includes both user-submitted
+// operations and internally-generated ones.  Every outbound packet corresponds to an operation.
+// This packet correspondence is 1-1 with the single exception of a pubrel being associated with a
+// qos2 publish.
 pub(crate) struct MqttOperation {
+
+    // Every operation has a unique id, starting at 1.  Id allocation is serialized based on
+    // time-of-submission.  In this way, complying with MQTT spec ordering requirements ends up
+    // being sorts of id sequences.
     id: u64,
+
+    // The base packet associated with this operation.
     packet: Box<MqttPacket>,
 
-    // unpleasant hack to let the same operation track both the original qos 2 pulish and the pubrel
-    secondary_packet: Option<Box<MqttPacket>>,
+    // unpleasant hack to let the same operation track both the original qos 2 publish and the
+    // followup pubrel
+    qos2_pubrel: Option<Box<MqttPacket>>,
 
+    // MQTT packet id that has been assigned to this operation.  Assignment is also reflected in
+    // the packet itself.
     packet_id: Option<u16>,
+
+    // Additional options (primarily completion channel) for an operation
     options: Option<MqttOperationOptions>,
 
     // Always starts as None
@@ -103,6 +119,8 @@ impl MqttOperation {
     }
 }
 
+// Most received packets stay internal or are routed to an operation's result channel.  But
+// Connack, Publish, and Disconnect are all surfaced to the user through the client.
 #[cfg_attr(test, derive(Eq, PartialEq, Debug))]
 pub(crate) enum PacketEvent {
     Connack(ConnackPacket),
@@ -110,6 +128,8 @@ pub(crate) enum PacketEvent {
     Disconnect(DisconnectPacket)
 }
 
+// The client's operational state is completely uncoupled from networking data types.  We offer
+// a simple interface that models and handles all relevant events.
 pub(crate) enum NetworkEvent<'a> {
     ConnectionOpened,
     ConnectionClosed,
@@ -120,9 +140,13 @@ pub(crate) enum NetworkEvent<'a> {
 pub(crate) struct NetworkEventContext<'a> {
     event: NetworkEvent<'a>,
     current_time: Instant,
+
+    // output field for packets that the client is interested in
     packet_events: &'a mut VecDeque<PacketEvent>,
 }
 
+// The four actions users can take with respect to operational state.  Start/stop is handled
+// by the containing client.
 pub(crate) enum UserEvent {
     Publish(Box<MqttPacket>, PublishOptionsInternal),
     Subscribe(Box<MqttPacket>, SubscribeOptionsInternal),
@@ -136,6 +160,9 @@ pub(crate) struct UserEventContext {
 }
 
 pub(crate) struct ServiceContext<'a> {
+    // output field for all data that should be written to the socket.  This vector is fixed-sized.
+    // Because we wait for write completion before encoding more, the capacity of this vector
+    // represents a bound on the amount of data between the client and the socket.
     to_socket: &'a mut Vec<u8>,
     current_time: Instant,
 }
@@ -178,7 +205,6 @@ pub(crate) struct OperationalStateConfig {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum OperationalQueueType {
     User,
-    Resubmit,
     HighPriority,
 }
 
@@ -186,7 +212,6 @@ impl Display for OperationalQueueType {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             OperationalQueueType::User => { write!(f, "User") }
-            OperationalQueueType::Resubmit => { write!(f, "Resubmit") }
             OperationalQueueType::HighPriority => { write!(f, "HighPriority") }
         }
     }
@@ -237,45 +262,102 @@ impl Ord for OperationTimeoutRecord {
     }
 }
 
+// Primary data structure that tracks MQTT-related state for the containing client.
 pub(crate) struct OperationalState {
     config: OperationalStateConfig,
 
     state: OperationalStateType,
 
+    // the need to model time in a simple, test-controllable fashion leads to a solution where
+    // the state thinks in time based on elapsed milliseconds since the state was created.  This
+    // allows for simple time mocking which lets us simulate the passage of time "instantly."
     current_time: Instant,
     elapsed_time_ms: u128,
 
+    // Flag set by the service function after encoding bytes to be written to the socket.
+    // Unset when we receive notice that the socket has fully accepted all encoded bytes.
+    // No additional bytes are encoded while this flag is set.
     pending_write_completion: bool,
 
+    // All incomplete operations tracked by the client
     operations: HashMap<u64, MqttOperation>,
 
+    // (Optional) Timeouts for all ack-based operations (qos1+ publish, subscribe, unsubscribe)
+    // The timeout only covers the period between operation-written-to-socket and
+    // response-received-from-socket.  The time an operation spends in an intake queue is not
+    // bounded by anything.
     operation_ack_timeouts: BinaryHeap<Reverse<OperationTimeoutRecord>>,
 
+    // Intake queues
+
+    // lowest priority queue; all user operations are added to the end on submission
     user_operation_queue: VecDeque<u64>,
+
+    // contains qos1+ publishes that were interrupted by a disconnect; spec compliance requires
+    // these be re-sent first on session resumption using the original order and packet ids
     resubmit_operation_queue: VecDeque<u64>,
+
+    // highest priority queue; for acks, pings, disconnect
     high_priority_operation_queue: VecDeque<u64>,
+
+    // Service pulls operations from the intake queues based on priority order.  When an operation
+    // becomes current, we bind a packet id if necessary, and set up the encoder to encode it.  It
+    // stays there until the encoder has fully written all of the bytes to a buffer.  For larger
+    // packets this may take a number of [encode -> write to socket -> write completion] cycles.
     current_operation: Option<u64>,
 
+    // Tracks the packet ids of incoming qos2 publishes that haven't been released yet.  When
+    // we receive a qos2 publish whose packet id is in here, we can ignore it because it's a
+    // duplicate delivery.  Packet ids are removed when we receive a pubrel for it.
     qos2_incomplete_incoming_publishes: HashSet<u16>,
+
+    // Tracks the packet ids in use by the client for outbound ack-based operations.  Does not
+    // reset between connections.  Used to find unused packet ids for unbound operations.
+    // { packet id -> operation id }
     allocated_packet_ids: HashMap<u16, u64>,
+
+    // Tracks all qos1+ publishes that have been written to the socket but not yet completed
+    // { packet id -> operation id }
     pending_publish_operations: HashMap<u16, u64>,
+
+    // Tracks all subscribes and unsubscribes that have been written to the socket but not yet
+    // completed.
+    // { packet id -> operation id }
     pending_non_publish_operations: HashMap<u16, u64>,
+
+    // Tracks all incomplete operations that don't use acks that have been written to the socket.
+    // These operations will be completed on the next write completion event.
     pending_write_completion_operations: VecDeque<u64>,
 
+    // Connection-scoped set of negotiated protocol values
     current_settings: Option<NegotiatedSettings>,
 
+    // monotonically-increasing operation id value
     next_operation_id: u64,
+
+    // counter that helps us heuristically find an unused packet id with as little id-space
+    // search as possible
     next_packet_id: u16,
+
+    // Tracks if the containing client has previously successfully connected.  Used to conditionally
+    // rejoin sessions.
     has_connected_successfully: bool,
 
+    // MQTT packet encode and decode
     encoder: Encoder,
     decoder: Decoder,
 
+    // Point in time we should send another ping.  If None, we are in the middle of a ping.
     next_ping_timepoint: Option<Instant>,
+
+    // Point in time that our current ping will time out.  If none, we are not in the middle of a
+    // ping.
     ping_timeout_timepoint: Option<Instant>,
 
+    // Point in time that we will consider the initial CONNECT packet/request to have timed out.
     connack_timeout_timepoint: Option<Instant>,
 
+    // Topic aliasing support
     outbound_alias_resolver: RefCell<Box<dyn OutboundAliasResolver>>,
     inbound_alias_resolver: InboundAliasResolver
 }
@@ -349,6 +431,9 @@ impl OperationalState {
 
         self.log_operational_state();
 
+        // Any error state returned from an event handler halts the client.  This is not always
+        // an ERROR-error.  For example, write completion that includes a disconnect packet will
+        // return an error, allowing us to reset the client nicely.
         if result.is_err() {
             error!("[{} ms] handle_network_event - final result: {:?}", self.elapsed_time_ms, result);
             self.change_state(OperationalStateType::Halted);
@@ -373,6 +458,7 @@ impl OperationalState {
 
         self.log_operational_state();
 
+        // Any error state returned from an event handler halts the client.
         if result.is_err() {
             error!("[{} ms] service - final result: {:?}", self.elapsed_time_ms, result);
             self.change_state(OperationalStateType::Halted);
@@ -406,7 +492,7 @@ impl OperationalState {
         assert_ne!(op_id, 0);
 
         if let Some(check_operation) = self.operations.get(&op_id) {
-            if !self.operation_submit_passes_offline_queue_policy(&*check_operation.packet) {
+            if !self.operation_packet_passes_offline_queue_policy(&*check_operation.packet) {
                 debug!("[{} ms] handle_user_event - operation {} failed by offline queue policy", self.elapsed_time_ms, op_id);
                 self.complete_operation_as_failure(op_id, Mqtt5Error::OfflineQueuePolicyFailed)?;
                 return Ok(());
@@ -477,7 +563,7 @@ impl OperationalState {
 
     // Private Implementation
 
-    fn operation_submit_passes_offline_queue_policy(&self, packet: &MqttPacket) -> bool {
+    fn operation_packet_passes_offline_queue_policy(&self, packet: &MqttPacket) -> bool {
         if self.state == OperationalStateType::Connected {
             return true;
         }
@@ -579,7 +665,7 @@ impl OperationalState {
 
     fn should_retain_high_priority_operation(&self, id: u64) -> bool {
         if let Some(operation) = self.operations.get(&id) {
-            if let MqttPacket::Pubrel(_) = &*operation.packet {
+            if operation.qos2_pubrel.is_some() {
                 return true;
             }
         }
@@ -617,8 +703,8 @@ impl OperationalState {
     fn complete_operation_as_success(&mut self, id : u64, completion_result: Option<OperationResponse>) -> Mqtt5Result<()> {
         let operation_option = self.operations.remove(&id);
         if operation_option.is_none() {
-            warn!("[{} ms] complete_operation_as_success - operation id {} does not exist", self.elapsed_time_ms, id);
-            return Ok(())
+            error!("[{} ms] complete_operation_as_success - operation id {} does not exist", self.elapsed_time_ms, id);
+            return Err(Mqtt5Error::InternalStateError);
         }
 
         let operation = operation_option.unwrap();
@@ -643,6 +729,9 @@ impl OperationalState {
     fn complete_operation_as_failure(&mut self, id : u64, error: Mqtt5Error) -> Mqtt5Result<()> {
         let operation_option = self.operations.remove(&id);
         if operation_option.is_none() {
+            // not fatal; the limits of the priority queue implementation used for timeouts
+            // can result in situations where we try to fail an operation that has already
+            // completed
             warn!("[{} ms] complete_operation_as_failure ({}) - operation id {} does not exist", self.elapsed_time_ms, error, id);
             return Ok(())
         }
@@ -725,7 +814,7 @@ impl OperationalState {
                         if publish.duplicate {
                             self.resubmit_operation_queue.push_front(id);
                         } else {
-                            if publish.qos == QualityOfService::ExactlyOnce && operation.secondary_packet.is_some() {
+                            if publish.qos == QualityOfService::ExactlyOnce && operation.qos2_pubrel.is_some() {
                                 self.high_priority_operation_queue.push_front(id);
                             } else if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
                                 self.user_operation_queue.push_front(id);
@@ -943,6 +1032,14 @@ impl OperationalState {
         Ok(())
     }
 
+    // blocks packet processing if the next packet is a qos1+ publish and
+    // we are at the negotiated limit for unacknowledged qos1+ publishes.  This is technically
+    // not spec-compliant because the spec requires receive maximum to not block other non-publish
+    // packets from going out.  It is my opinion that the intent of that requirement was to
+    // keep acks, pings, disconnects, auth all flowing while at the maximum.  The fact that
+    // subscribes and unsubscribes are also blocked does not affect the user contract in a
+    // negative way.  I personally think the creators used a slightly-over-aggressive simple
+    // rule here because expressing this otherwise leads to a wall of text like this.
     fn does_operation_pass_receive_maximum_flow_control(&self, id: u64) -> bool {
         if let Some(settings) = &self.current_settings {
             if self.pending_publish_operations.len() >= settings.receive_maximum_from_server as usize {
@@ -1141,7 +1238,7 @@ impl OperationalState {
 
                 let operation = self.operations.get(&current_operation_id).unwrap();
                 let mut packet = &*operation.packet;
-                if let Some(pubrel) = &operation.secondary_packet {
+                if let Some(pubrel) = &operation.qos2_pubrel {
                     packet = &**pubrel;
                 }
 
@@ -1332,7 +1429,7 @@ impl OperationalState {
 
     fn clear_qos2_state(&mut self, id: u64) {
         if let Some(operation) = self.operations.get_mut(&id) {
-            operation.secondary_packet = None;
+            operation.qos2_pubrel = None;
         }
     }
 
@@ -1374,6 +1471,8 @@ impl OperationalState {
             info!("[{} ms] apply_session_present_to_connection - successfully rejoined a session", self.elapsed_time_ms);
         }
 
+        // at this point, anything in the user queue is starting over, so drop any packet id
+        // associations and reset qos2 publishes
         let mut user_queue = VecDeque::new();
         std::mem::swap(&mut user_queue, &mut self.user_operation_queue);
         user_queue.iter().for_each(|id| {
@@ -1382,6 +1481,7 @@ impl OperationalState {
         });
         self.user_operation_queue = user_queue;
 
+        // re-establish submission order after all the shuffling
         sort_operation_deque(&mut self.resubmit_operation_queue);
         sort_operation_deque(&mut self.user_operation_queue);
 
@@ -1556,7 +1656,7 @@ impl OperationalState {
                     if let Some(operation) = operation_option {
                         if let MqttPacket::Publish(publish) = &*operation.packet {
                             if publish.qos == QualityOfService::ExactlyOnce {
-                                operation.secondary_packet = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
+                                operation.qos2_pubrel = Some(Box::new(MqttPacket::Pubrel(PubrelPacket {
                                     packet_id: pubrec.packet_id,
                                     ..Default::default()
                                 })));
@@ -1749,7 +1849,6 @@ impl OperationalState {
     fn get_queue(&mut self, queue_type: OperationalQueueType) -> &mut VecDeque<u64> {
         match queue_type {
             OperationalQueueType::User => { &mut self.user_operation_queue }
-            OperationalQueueType::Resubmit => { &mut self.resubmit_operation_queue }
             OperationalQueueType::HighPriority => { &mut self.high_priority_operation_queue }
         }
     }
@@ -1780,7 +1879,7 @@ impl OperationalState {
         let operation = MqttOperation {
             id,
             packet,
-            secondary_packet: None,
+            qos2_pubrel: None,
             packet_id: None,
             options,
             ping_extension_base_timepoint : None,

@@ -465,6 +465,11 @@ mod operational_state_tests {
             Ok(response_bytes)
         }
 
+        pub(crate) fn reset(&mut self, elapsed_millis: u64) {
+            let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
+            self.client_state.reset(&current_time);
+        }
+
         pub(crate) fn service_with_drain(&mut self, elapsed_millis: u64, socket_buffer_size: usize) -> Mqtt5Result<Vec<u8>> {
             let current_time = self.base_timestamp + Duration::from_millis(elapsed_millis);
             let mut done = false;
@@ -707,47 +712,6 @@ mod operational_state_tests {
         let type_sequence = packet_sequence.skip(start).map(|packet|{ mqtt_packet_to_packet_type(packet) });
 
         assert!(expected_sequence.eq(type_sequence));
-    }
-
-    fn verify_packet_sequence<'a, T>(packet_sequence : T, expected_sequence : T, start_position : Option<usize>) where T : Iterator<Item = &'a Box<MqttPacket>> {
-        let start = start_position.unwrap_or(0);
-        assert!(expected_sequence.eq(packet_sequence.skip(start)));
-    }
-
-    fn find_nth_client_event_of_type<'a, T>(client_event_sequence : T, event_type : ClientEventType, count: usize, start_position : Option<usize>, end_position : Option<usize>) -> Option<(usize, &'a Arc<ClientEvent>)> where T : Iterator<Item = &'a Arc<ClientEvent>> {
-        let start = start_position.unwrap_or(0);
-        let mut index = start;
-        let mut seen = 0;
-
-        for event in client_event_sequence.skip(start) {
-            if client_event_to_client_event_type(&**event) == event_type {
-                seen += 1;
-                if seen == count {
-                    return Some((index, event));
-                }
-            }
-
-            index += 1;
-            if let Some(end) = end_position {
-                if index >= end {
-                    return None;
-                }
-            }
-        }
-
-        None
-    }
-
-    fn verify_client_event_type_sequence<'a, T, U>(client_event_sequence : T, expected_sequence : U, start_position : Option<usize>) where T : Iterator<Item = &'a Arc<ClientEvent>>, U : Iterator<Item = ClientEventType> {
-        let start = start_position.unwrap_or(0);
-        let type_sequence = client_event_sequence.skip(start).map(|event|{ client_event_to_client_event_type(event) });
-
-        assert!(expected_sequence.eq(type_sequence));
-    }
-
-    fn verify_client_event_sequence<'a, T>(client_event_sequence : T, expected_sequence : T, start_position : Option<usize>) where T : Iterator<Item = &'a Arc<ClientEventType>> {
-        let start = start_position.unwrap_or(0);
-        assert!(expected_sequence.eq(client_event_sequence.skip(start)));
     }
 
     fn verify_operational_state_empty(fixture: &OperationalStateTestFixture) {
@@ -2900,7 +2864,7 @@ mod operational_state_tests {
                 }
 
                 if $qos2_pubrel_timeout {
-                    assert!(operation.secondary_packet.is_some());
+                    assert!(operation.qos2_pubrel.is_some());
                 }
 
                 assert_eq!(Ok(()), fixture.on_connection_opened(10));
@@ -4113,5 +4077,15 @@ mod operational_state_tests {
             panic!("Expected publish");
         }
 
+    }
+
+    #[test]
+    fn connected_state_reset_test() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        let _ = initialize_multi_operation_sequence_test(&mut fixture);
+
+        fixture.reset(500);
+
+        verify_operational_state_empty(&fixture);
     }
 }
