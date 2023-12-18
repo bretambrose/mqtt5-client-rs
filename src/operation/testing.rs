@@ -3800,7 +3800,6 @@ mod operational_state_tests {
         successful_sequence_ids
     }
 
-
     fn verify_successful_reconnect_sequencing(fixture: &OperationalStateTestFixture, successful_sequence_ids: &[u64], second_connect_index: usize) {
         let mut expected_next_sequence_id_index = 0;
         for packet in fixture.to_broker_packet_stream.iter().skip(second_connect_index + 1) {
@@ -4087,5 +4086,39 @@ mod operational_state_tests {
         fixture.reset(500);
 
         verify_operational_state_empty(&fixture);
+    }
+
+    #[test]
+    fn connected_state_disconnect_with_high_priority_pubrel() {
+        let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
+
+        let publish = PublishPacket {
+            qos: QualityOfService::ExactlyOnce,
+            topic: "hello/world".to_string(),
+            ..Default::default()
+        };
+
+        let mut receiver = fixture.publish(100, publish, PublishOptions{ ..Default::default() }).unwrap();
+
+        assert!(fixture.service_round_trip(150, 200, 4096).is_ok());
+        assert_eq!(1, fixture.client_state.high_priority_operation_queue.len());
+
+        assert!(fixture.on_connection_closed(250).is_ok());
+        assert_eq!(0, fixture.client_state.high_priority_operation_queue.len());
+        assert_eq!(1, fixture.client_state.resubmit_operation_queue.len());
+
+        assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 300));
+        assert!(fixture.service_round_trip(350, 400, 4096).is_ok());
+        assert!(fixture.service_round_trip(450, 500, 4096).is_ok());
+
+        verify_operational_state_empty(&fixture);
+
+        let result = receiver.try_recv().unwrap();
+        if let Ok(PublishResponse::Qos2(Qos2Response::Pubcomp(pubcomp))) = &result {
+            assert_eq!(PubcompReasonCode::Success, pubcomp.reason_code);
+        } else {
+            panic!("Expected a pubcomp");
+        }
     }
 }

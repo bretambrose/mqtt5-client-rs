@@ -316,7 +316,9 @@ pub(crate) struct OperationalState {
     // { packet id -> operation id }
     allocated_packet_ids: HashMap<u16, u64>,
 
-    // Tracks all qos1+ publishes that have been written to the socket but not yet completed
+    // Tracks all qos1+ publishes that have been written to the socket but not yet completed.
+    // A Qos2 publish will be in this map from the time the publish is written until the pubcomp is
+    // received or there is a disconnection.
     // { packet id -> operation id }
     pending_publish_operations: HashMap<u16, u64>,
 
@@ -858,13 +860,14 @@ impl OperationalState {
          *
          *   puback, pingreq, pubrec, pubcomp, disconnect can all be failed without consequence
          *
-         *   pubrel is moved to the resubmit queue
+         *   pubrels are left alone but not requeued.  When the pending_publish table is
+         *   processed a few lines further down, the associated operation will be added to the
+         *   resubmit queue.
          */
         mem::swap(&mut completions, &mut self.high_priority_operation_queue);
         let (mut pubrels, failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
 
         result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(failures.into_iter(), Mqtt5Error::ConnectionClosed));
-        self.resubmit_operation_queue.append(&mut pubrels);
 
         /*
          * write completion pending operations can be processed immediately and either failed
