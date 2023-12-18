@@ -33,7 +33,6 @@ enum MqttOperationOptions {
     Publish(PublishOptionsInternal),
     Subscribe(SubscribeOptionsInternal),
     Unsubscribe(UnsubscribeOptionsInternal),
-    Disconnect,
 }
 
 pub(crate) struct MqttOperation {
@@ -218,7 +217,6 @@ enum OperationResponse {
     Publish(PublishResponse),
     Subscribe(SubackPacket),
     Unsubscribe(UnsubackPacket),
-    Disconnect
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1938,7 +1936,6 @@ fn complete_operation_with_result(operation_options: &mut MqttOperationOptions, 
                 return Ok(());
             }
         }
-        _ => { return Ok(()); }
     }
 
     Err(Mqtt5Error::InternalStateError)
@@ -1958,7 +1955,6 @@ fn complete_operation_with_error(operation_options: &mut MqttOperationOptions, e
             let sender = unsubscribe_options.response_sender.take().unwrap();
             let _ = sender.send(Err(error));
         }
-        _ => {}
     }
 
     Ok(())
@@ -2033,7 +2029,6 @@ fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::RejoinSessionPolicy::Always;
     use super::*;
 
     fn build_operational_state_config_for_settings_test(connect: Box<ConnectPacket>) -> OperationalStateConfig {

@@ -3842,7 +3842,7 @@ mod operational_state_tests {
         for packet in fixture.to_broker_packet_stream.iter().skip(second_connect_index + 1) {
             let sequence_id_option = packet_to_sequence_number(&**packet).unwrap();
             if let Some(sequence_id) = sequence_id_option {
-                //assert_eq!(successful_sequence_ids[expected_next_sequence_id_index], sequence_id);
+                assert_eq!(successful_sequence_ids[expected_next_sequence_id_index], sequence_id);
                 expected_next_sequence_id_index += 1;
             }
         }
@@ -3874,7 +3874,7 @@ mod operational_state_tests {
             panic!("Supposed to have settings");
         }
 
-        let successful_sequence_ids = verify_offline_failures_and_build_sorted_successful_sequence_id_list(&mut context, true, offline_queue_policy);
+        let successful_sequence_ids = verify_offline_failures_and_build_sorted_successful_sequence_id_list(&mut context, rejoin_session, offline_queue_policy);
 
         let (second_connect_index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::Connect, 2, None, None).unwrap();
 
