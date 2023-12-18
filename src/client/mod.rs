@@ -152,7 +152,7 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
 }
 
 #[derive(Default)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[cfg_attr(test, derive(Eq, PartialEq, Copy, Clone))]
 pub enum OfflineQueuePolicy {
     #[default]
     PreserveAll,

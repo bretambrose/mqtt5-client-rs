@@ -1332,6 +1332,12 @@ impl OperationalState {
         }
     }
 
+    fn clear_qos2_state(&mut self, id: u64) {
+        if let Some(operation) = self.operations.get_mut(&id) {
+            operation.secondary_packet = None;
+        }
+    }
+
     fn set_publish_duplicate_flag(&mut self, id: u64, value: bool) {
         if let Some(operation) = self.operations.get_mut(&id) {
             if let MqttPacket::Publish(publish) = &mut *operation.packet {
@@ -1372,7 +1378,10 @@ impl OperationalState {
 
         let mut user_queue = VecDeque::new();
         std::mem::swap(&mut user_queue, &mut self.user_operation_queue);
-        user_queue.iter().for_each(|id| { self.unbind_operation_packet_id(*id)});
+        user_queue.iter().for_each(|id| {
+            self.unbind_operation_packet_id(*id);
+            self.clear_qos2_state(*id);
+        });
         self.user_operation_queue = user_queue;
 
         sort_operation_deque(&mut self.resubmit_operation_queue);

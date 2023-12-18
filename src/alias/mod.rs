@@ -154,6 +154,13 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
     }
 
     fn resolve_topic_alias(&self, _: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+        if self.maximum_alias_value == 0 {
+            return OutboundAliasResolution{
+                skip_topic: false,
+                alias : None
+            };
+        }
+
         if let Some(cached_alias_value) = self.cache.peek(topic) {
             let alias_value = *cached_alias_value;
 
@@ -180,7 +187,9 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
 
     fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
         let resolution = self.resolve_topic_alias(alias, topic);
-        let resolved_alias = resolution.alias.unwrap();
+        if resolution.alias.is_none() {
+            return resolution;
+        }
 
         if resolution.skip_topic {
             self.cache.promote(topic);
@@ -188,6 +197,8 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
             if self.cache.len() == self.maximum_alias_value as usize {
                 self.cache.pop_lru();
             }
+
+            let resolved_alias = resolution.alias.unwrap();
             self.cache.push(topic.clone(), resolved_alias);
         }
 
@@ -378,6 +389,18 @@ mod tests {
         resolver.reset_for_new_connection(2);
         assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
         assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+    }
+
+    #[test]
+    fn outbound_topic_alias_lru_disabled_by_zero_maximum() {
+        let mut resolver = LruOutboundAliasResolver::new(2);
+
+        assert_eq!(resolver.get_maximum_alias_value(), 2);
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(1)});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: Some(2)});
+        resolver.reset_for_new_connection(0);
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"a".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
+        assert_eq!(resolver.resolve_and_apply_topic_alias(&None, &"b".to_string()), OutboundAliasResolution{skip_topic: false, alias: None});
     }
 
     #[test]
