@@ -138,11 +138,11 @@ pub(crate) enum NetworkEvent<'a> {
 }
 
 pub(crate) struct NetworkEventContext<'a> {
-    event: NetworkEvent<'a>,
-    current_time: Instant,
+    pub(crate) event: NetworkEvent<'a>,
+    pub(crate) current_time: Instant,
 
     // output field for packets that the client is interested in
-    packet_events: &'a mut VecDeque<PacketEvent>,
+    pub(crate) packet_events: &'a mut VecDeque<PacketEvent>,
 }
 
 // The four actions users can take with respect to operational state.  Start/stop is handled
@@ -155,16 +155,16 @@ pub(crate) enum UserEvent {
 }
 
 pub(crate) struct UserEventContext {
-    event: UserEvent,
-    current_time: Instant,
+    pub(crate) event: UserEvent,
+    pub(crate) current_time: Instant,
 }
 
 pub(crate) struct ServiceContext<'a> {
     // output field for all data that should be written to the socket.  This vector is fixed-sized.
     // Because we wait for write completion before encoding more, the capacity of this vector
     // represents a bound on the amount of data between the client and the socket.
-    to_socket: &'a mut Vec<u8>,
-    current_time: Instant,
+    pub(crate) to_socket: &'a mut Vec<u8>,
+    pub(crate) current_time: Instant,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -865,7 +865,7 @@ impl OperationalState {
          *   resubmit queue.
          */
         mem::swap(&mut completions, &mut self.high_priority_operation_queue);
-        let (mut pubrels, failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
+        let (_, failures) = self.partition_high_priority_queue_for_disconnect(completions.into_iter());
 
         result = fold_mqtt5_result(result, self.complete_operation_sequence_as_failure(failures.into_iter(), Mqtt5Error::ConnectionClosed));
 
@@ -2101,32 +2101,6 @@ fn partition_operations_by_queue_policy<'a, T>(iterator: T, policy: &OfflineQueu
 fn sort_operation_deque(operations: &mut VecDeque<u64>) {
     operations.rotate_right(operations.as_slices().1.len());
     operations.as_mut_slices().0.sort();
-}
-
-fn fold_timepoint(base: &Option<Instant>, new: &Instant) -> Option<Instant> {
-    if let Some(base_timepoint) = &base {
-        if base_timepoint < new {
-            return *base;
-        }
-    }
-
-    return Some(*new);
-}
-
-fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Option<Instant> {
-    if let Some(base_timepoint) = base {
-        if let Some(new_timepoint) = new {
-            if base_timepoint < new_timepoint {
-                return *base;
-            } else {
-                return *new;
-            }
-        }
-
-        return *base;
-    }
-
-    return *new;
 }
 
 #[cfg(test)]

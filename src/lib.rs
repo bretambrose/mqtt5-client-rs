@@ -49,6 +49,7 @@ pub use spec::unsubscribe::UnsubscribePacket;
 pub use client::*;
 
 use std::fmt;
+use std::time::Instant;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Mqtt5Error {
@@ -89,7 +90,8 @@ pub enum Mqtt5Error {
     AckTimeout,
     PacketIdSpaceExhausted,
     OperationalStateReset,
-    UserInitiatedDisconnect
+    UserInitiatedDisconnect,
+    ClientClosed
 }
 
 impl fmt::Display for Mqtt5Error {
@@ -133,6 +135,7 @@ impl fmt::Display for Mqtt5Error {
             Mqtt5Error::PacketIdSpaceExhausted => { write!(f, "PacketIdSpaceExhausted") }
             Mqtt5Error::OperationalStateReset => { write!(f, "OperationalStateReset") }
             Mqtt5Error::UserInitiatedDisconnect => { write!(f, "UserInitiatedDisconnect") }
+            Mqtt5Error::ClientClosed => { write!(f, "ClientClosed") }
         }
     }
 }
@@ -145,4 +148,30 @@ fn fold_mqtt5_result<T>(base: Mqtt5Result<T>, new_result: Mqtt5Result<T>) -> Mqt
     }
 
     base
+}
+
+fn fold_timepoint(base: &Option<Instant>, new: &Instant) -> Option<Instant> {
+    if let Some(base_timepoint) = &base {
+        if base_timepoint < new {
+            return *base;
+        }
+    }
+
+    return Some(*new);
+}
+
+fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Option<Instant> {
+    if let Some(base_timepoint) = base {
+        if let Some(new_timepoint) = new {
+            if base_timepoint < new_timepoint {
+                return *base;
+            } else {
+                return *new;
+            }
+        }
+
+        return *base;
+    }
+
+    return *new;
 }

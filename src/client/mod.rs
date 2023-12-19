@@ -234,6 +234,51 @@ pub enum ClientEventListener {
     Callback(Box<dyn Fn(Arc<ClientEvent>) -> () + Send + Sync>)
 }
 
+macro_rules! client_lifecycle_operation_body {
+    ($lifeycle_operation:ident, $self:ident) => {{
+        match $self
+            .operation_sender
+            .try_send(OperationOptions::$lifeycle_operation())
+        {
+            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
+            _ => Ok(()),
+        }
+    }};
+}
+
+macro_rules! client_mqtt_operation_body {
+    ($self:ident, $operation_type:ident, $options_internal_type: ident, $packet_name: ident, $packet_type: ident, $options_value: expr) => ({
+        let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name));
+        if let Err(error) = validate_packet_outbound(&*boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        let (response_sender, rx) = oneshot::channel();
+        let internal_options = $options_internal_type {
+            options : $options_value,
+            response_sender : Some(response_sender)
+        };
+        let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
+        Box::pin(async move {
+            match send_result {
+                Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
+                    match val {
+                        OperationOptions::$operation_type(_, _) => {
+                            Err(Mqtt5Error::OperationChannelSendError)
+                        }
+                        _ => {
+                            panic!("Illegal MQTT operation options type encountered in channel send error processing");
+                        }
+                    }
+                }
+                _ => {
+                    rx.await?
+                }
+            }
+        })
+    })
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
     pub connect : Option<Box<ConnectPacket>>,
@@ -256,15 +301,15 @@ pub struct Mqtt5Client {
 }
 
 impl Mqtt5Client {
-    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Arc<Mqtt5Client> {
+    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
         let (operation_sender, operation_receiver) = tokio::sync::mpsc::channel(100);
 
         spawn_client_impl(config, operation_receiver, &runtime_handle);
 
-        Arc::new(Mqtt5Client {
+        Mqtt5Client {
             operation_sender,
             listener_id_allocator: Mutex::new(1),
-        })
+        }
     }
 
     pub fn start(&self) -> Mqtt5Result<()> {
@@ -327,3 +372,4 @@ impl Mqtt5Client {
         }
     }
 }
+
