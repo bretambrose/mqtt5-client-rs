@@ -9,7 +9,6 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::{sleep};
 
-use crate::client::*;
 use crate::client::internal::*;
 
 pub(crate) struct AsyncUserState {
@@ -18,7 +17,7 @@ pub(crate) struct AsyncUserState {
 
 impl AsyncUserState {
     pub(crate) fn try_send(&self, operation_options: OperationOptions) -> Mqtt5Result<()> {
-        if let Err(error) = self.operation_sender.try_send(operation_options) {
+        if let Err(_) = self.operation_sender.try_send(operation_options) {
             return Err(Mqtt5Error::OperationChannelSendError);
         }
 
@@ -40,7 +39,7 @@ impl AsyncImplState {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options);
+                        client.handle_incoming_operation(operation_options)?;
                     }
                 }
             }
@@ -63,7 +62,7 @@ impl AsyncImplState {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options);
+                        client.handle_incoming_operation(operation_options)?;
                     }
                 }
                 () = &mut timeout => {
@@ -76,11 +75,11 @@ impl AsyncImplState {
         }
     }
 
-    async fn process_connected(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
+    async fn process_connected(&mut self, _: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
         Ok(())
     }
 
-    async fn process_pending_reconnect(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
+    async fn process_pending_reconnect(&mut self, _: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
         Ok(())
     }
 

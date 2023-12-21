@@ -15,7 +15,6 @@ use crate::operation::*;
 use crate::spec::*;
 
 use tokio::runtime;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 pub(crate) struct PublishOptionsInternal {
@@ -51,7 +50,7 @@ pub(crate) enum OperationOptions {
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
-enum ClientImplState {
+pub(crate) enum ClientImplState {
     Stopped,
     Connecting,
     Connected,
