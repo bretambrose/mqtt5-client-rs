@@ -7,8 +7,8 @@ pub(crate) mod tokio_impl;
 
 extern crate tokio;
 
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 use crate::*;
 use crate::client::*;
 use crate::operation::*;
@@ -16,6 +16,7 @@ use crate::spec::*;
 
 use tokio::runtime;
 use tokio::sync::oneshot;
+use tokio::net::TcpStream;
 
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
@@ -64,18 +65,30 @@ pub(crate) struct Mqtt5ClientImpl {
     listeners: HashMap<u64, ClientEventListener>,
 
     current_state: ClientImplState,
-    desired_state: ClientImplState
+    desired_state: ClientImplState,
+
+    connection: Option<TcpStream>,
+
+    packet_events: VecDeque<PacketEvent>
 }
 
 impl Mqtt5ClientImpl {
 
-    pub(crate) fn new(config: OperationalStateConfig) -> Self {
-        Mqtt5ClientImpl {
+    pub(crate) fn new(config: OperationalStateConfig, default_listener: Option<ClientEventListener>) -> Self {
+        let mut client_impl = Mqtt5ClientImpl {
             operational_state: OperationalState::new(config),
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
+            connection: None,
+            packet_events: VecDeque::new()
+        };
+
+        if let Some(listener) = default_listener {
+            client_impl.listeners.insert(0, listener);
         }
+
+        client_impl
     }
 
     pub(crate) fn get_current_state(&self) -> ClientImplState {
@@ -150,58 +163,102 @@ impl Mqtt5ClientImpl {
         Ok(())
     }
 
-    fn change_state_to_connecting(&mut self) -> Mqtt5Result<()> {
+    fn compute_optional_state_transition(&self) -> Option<ClientImplState> {
         match self.current_state {
-            ClientImplState::Stopped | ClientImplState::PendingReconnect => {
-                self.current_state = ClientImplState::Connecting;
-                Ok(())
+            ClientImplState::Stopped => {
+                match self.desired_state {
+                    ClientImplState::Connected => {
+                        Some(ClientImplState::Connecting)
+                    }
+                    ClientImplState::Shutdown => {
+                        Some(ClientImplState::Shutdown)
+                    }
+                    _ => { None }
+                }
             }
-            _ => {
-                Err(Mqtt5Error::InternalStateError)
+
+            ClientImplState::Connecting | ClientImplState::Connected | ClientImplState::PendingReconnect => {
+                if self.desired_state != ClientImplState::Connected {
+                    Some(ClientImplState::Stopped)
+                } else {
+                    None
+                }
             }
+
+            _ => { None }
         }
+    }
+
+    fn apply_connection_result(&mut self, connection_result: std::io::Result<TcpStream>) -> Mqtt5Result<ClientImplState> {
+        if let Ok(stream) = connection_result {
+            self.connection = Some(stream);
+            Ok(ClientImplState::Connected)
+        } else {
+            Ok(ClientImplState::PendingReconnect)
+        }
+    }
+
+    fn get_next_connected_service_time(&mut self) -> Option<Instant> {
+        if self.current_state == ClientImplState::Connected {
+            return self.operational_state.get_next_service_timepoint(&Instant::now());
+        }
+
+        None
+    }
+
+    fn transition_to_state(&mut self, next_state: ClientImplState) -> Mqtt5Result<()> {
+        if next_state == ClientImplState::Connected {
+            let mut connection_opened_context = NetworkEventContext {
+                event: NetworkEvent::ConnectionOpened,
+                current_time: Instant::now(),
+                packet_events: &mut self.packet_events
+            };
+
+            self.operational_state.handle_network_event(&mut connection_opened_context)?;
+        } else if self.current_state == ClientImplState::Connected {
+            let mut connection_closed_context = NetworkEventContext {
+                event: NetworkEvent::ConnectionClosed,
+                current_time: Instant::now(),
+                packet_events: &mut self.packet_events
+            };
+
+            self.operational_state.handle_network_event(&mut connection_closed_context)?;
+        }
+
+        Ok(())
     }
 }
 
-async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut AsyncImplState) {
+async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut ClientRuntimeState) {
     let mut done = false;
     while !done {
         let current_state = client_impl.get_current_state();
-        match current_state {
-            ClientImplState::Stopped => {
-                if let Err(_) = async_state.process_stopped(client_impl).await {
-                    done = true;
+        let next_state_result =
+            match current_state {
+                ClientImplState::Stopped => { async_state.process_stopped(client_impl).await }
+                ClientImplState::Connecting => { async_state.process_connecting(client_impl).await }
+                ClientImplState::Connected => { async_state.process_connected(client_impl).await }
+                ClientImplState::PendingReconnect => { async_state.process_pending_reconnect(client_impl, Duration::from_secs(5)).await }
+                _ => { Ok(ClientImplState::Shutdown) }
+            };
+
+        done = true;
+        if let Ok(next_state) = next_state_result {
+            if let Ok(_) = client_impl.transition_to_state(next_state) {
+                if next_state != ClientImplState::Shutdown {
+                    done = false;
                 }
             }
-            _ => {}
         }
     }
 }
 
 pub(crate) fn spawn_client_impl(
-    mut config: Mqtt5ClientOptions,
-    mut impl_state: AsyncImplState,
+    mut client_impl: Mqtt5ClientImpl,
+    mut runtime_state: ClientRuntimeState,
     runtime_handle: &runtime::Handle,
 ) {
-    let connect = config.connect.take().unwrap_or(Box::new(ConnectPacket{ ..Default::default() }));
-
-    let state_config = OperationalStateConfig {
-        connect,
-        base_timestamp: Instant::now(),
-        offline_queue_policy: config.offline_queue_policy,
-        rejoin_session_policy: config.rejoin_session_policy,
-        connack_timeout_millis: config.connack_timeout_millis,
-        ping_timeout_millis: config.ping_timeout_millis,
-        outbound_resolver: config.outbound_resolver.take(),
-    };
-
-    let mut client_impl = Mqtt5ClientImpl::new(state_config);
-
-    if let Some(listener) = config.default_event_listener {
-        client_impl.listeners.insert(0, listener);
-    }
-
     runtime_handle.spawn(async move {
-        client_event_loop(&mut client_impl, &mut impl_state).await;
+        client_event_loop(&mut client_impl, &mut runtime_state).await;
     });
 }

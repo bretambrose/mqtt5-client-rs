@@ -11,11 +11,11 @@ use tokio::time::{sleep};
 
 use crate::client::internal::*;
 
-pub(crate) struct AsyncUserState {
+pub(crate) struct UserRuntimeState {
     operation_sender: tokio::sync::mpsc::Sender<OperationOptions>
 }
 
-impl AsyncUserState {
+impl UserRuntimeState {
     pub(crate) fn try_send(&self, operation_options: OperationOptions) -> Mqtt5Result<()> {
         if let Err(_) = self.operation_sender.try_send(operation_options) {
             return Err(Mqtt5Error::OperationChannelSendError);
@@ -25,16 +25,17 @@ impl AsyncUserState {
     }
 }
 
-pub(crate) struct AsyncImplState {
+pub(crate) struct ClientRuntimeState {
     operation_receiver: tokio::sync::mpsc::Receiver<OperationOptions>,
 
 }
 
 
 
-impl AsyncImplState {
 
-    pub async fn process_stopped(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
+impl ClientRuntimeState {
+
+    pub(crate) async fn process_stopped(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
         loop {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
@@ -44,13 +45,13 @@ impl AsyncImplState {
                 }
             }
 
-            if client.desired_state != ClientImplState::Stopped {
-                return Ok(())
+            if let Some(transition_state) = client.compute_optional_state_transition() {
+                return Ok(transition_state);
             }
         }
     }
 
-    async fn process_connecting(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<std::io::Result<TcpStream>> {
+    pub(crate) async fn process_connecting(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
 
         let connect = TcpStream::connect("127.0.0.1:1883");
         tokio::pin!(connect);
@@ -66,21 +67,61 @@ impl AsyncImplState {
                     }
                 }
                 () = &mut timeout => {
-                    return Err(Mqtt5Error::ConnectionTimeout);
+                    return Ok(ClientImplState::PendingReconnect);
                 }
-                result = &mut connect => {
-                    return Ok(result);
+                connection_result = &mut connect => {
+                    return client.apply_connection_result(connection_result);
                 }
+            }
+
+            if let Some(transition_state) = client.compute_optional_state_transition() {
+                return Ok(transition_state);
             }
         }
     }
 
-    async fn process_connected(&mut self, _: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
-        Ok(())
+    pub(crate) async fn process_connected(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
+        let outbound_data : Vec<u8> = Vec::with_capacity(4096);
+        let inbound_data : Vec<u8> = Vec::with_capacity(4096);
+        let stream = client.connection.take().unwrap();
+
+        loop {
+            let next_service_time = client.get_next_connected_service_time();
+
+            tokio::select! {
+                operation_result = self.operation_receiver.recv() => {
+                    if let Some(operation_options) = operation_result {
+                        client.handle_incoming_operation(operation_options)?;
+                    }
+                }
+            }
+
+            if let Some(transition_state) = client.compute_optional_state_transition() {
+                return Ok(transition_state);
+            }
+        }
     }
 
-    async fn process_pending_reconnect(&mut self, _: &mut Mqtt5ClientImpl) -> Mqtt5Result<()> {
-        Ok(())
+    pub(crate) async fn process_pending_reconnect(&mut self, client: &mut Mqtt5ClientImpl, wait: Duration) -> Mqtt5Result<ClientImplState> {
+        let reconnect_timer = sleep(wait);
+        tokio::pin!(reconnect_timer);
+
+        loop {
+            tokio::select! {
+                operation_result = self.operation_receiver.recv() => {
+                    if let Some(operation_options) = operation_result {
+                        client.handle_incoming_operation(operation_options)?;
+                    }
+                }
+                () = &mut reconnect_timer => {
+                    return Ok(ClientImplState::Connecting);
+                }
+            }
+
+            if let Some(transition_state) = client.compute_optional_state_transition() {
+                return Ok(transition_state);
+            }
+        }
     }
 
     /*
@@ -158,14 +199,14 @@ async fn conditional_sleeper(t: Option<tokio::time::Sleep>) -> Option<()> {
 */
 
 
-pub(crate) fn create_async_state() -> (AsyncUserState, AsyncImplState) {
+pub(crate) fn create_runtime_states() -> (UserRuntimeState, ClientRuntimeState) {
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
 
-    let user_state = AsyncUserState {
+    let user_state = UserRuntimeState {
         operation_sender: sender
     };
 
-    let impl_state = AsyncImplState {
+    let impl_state = ClientRuntimeState {
         operation_receiver: receiver
     };
 

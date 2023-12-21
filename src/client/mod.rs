@@ -20,6 +20,7 @@ use std::task::{Context, Poll};
 use tokio::runtime;
 use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
+use crate::operation::OperationalStateConfig;
 
 use crate::spec::connect::ConnectPacket;
 use crate::spec::disconnect::validate_disconnect_packet_outbound;
@@ -282,16 +283,31 @@ pub struct Mqtt5ClientOptions {
 }
 
 pub struct Mqtt5Client {
-    user_state: AsyncUserState,
+    user_state: UserRuntimeState,
 
     listener_id_allocator: Mutex<u64>,
 }
 
 impl Mqtt5Client {
-    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
-        let (user_state, internal_state) = create_async_state();
+    pub fn new(mut config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
+        let (user_state, internal_state) = create_runtime_states();
 
-        spawn_client_impl(config, internal_state, &runtime_handle);
+        let connect = config.connect.take().unwrap_or(Box::new(ConnectPacket{ ..Default::default() }));
+
+        let state_config = OperationalStateConfig {
+            connect,
+            base_timestamp: Instant::now(),
+            offline_queue_policy: config.offline_queue_policy,
+            rejoin_session_policy: config.rejoin_session_policy,
+            connack_timeout_millis: config.connack_timeout_millis,
+            ping_timeout_millis: config.ping_timeout_millis,
+            outbound_resolver: config.outbound_resolver.take(),
+        };
+
+        let default_listener = config.default_event_listener.take();
+        let mut client_impl = Mqtt5ClientImpl::new(state_config, default_listener);
+
+        spawn_client_impl(client_impl, internal_state, &runtime_handle);
 
         Mqtt5Client {
             user_state,
