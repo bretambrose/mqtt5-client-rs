@@ -3,18 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-pub(crate) mod implementation;
+pub(crate) mod internal;
 
 extern crate tokio;
 
 use crate::*;
-use crate::client::implementation::*;
+use crate::client::internal::*;
+use crate::client::internal::tokio_impl::*;
 use crate::spec::*;
 use crate::spec::utils::*;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use tokio::runtime;
 use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
@@ -236,13 +238,7 @@ pub enum ClientEventListener {
 
 macro_rules! client_lifecycle_operation_body {
     ($lifeycle_operation:ident, $self:ident) => {{
-        match $self
-            .operation_sender
-            .try_send(OperationOptions::$lifeycle_operation())
-        {
-            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
-            _ => Ok(()),
-        }
+        $self.user_state.try_send(OperationOptions::$lifeycle_operation())
     }};
 }
 
@@ -258,19 +254,10 @@ macro_rules! client_mqtt_operation_body {
             options : $options_value,
             response_sender : Some(response_sender)
         };
-        let send_result = $self.operation_sender.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
+        let send_result = $self.user_state.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
         Box::pin(async move {
             match send_result {
-                Err(tokio::sync::mpsc::error::TrySendError::Full(val)) | Err(tokio::sync::mpsc::error::TrySendError::Closed(val)) => {
-                    match val {
-                        OperationOptions::$operation_type(_, _) => {
-                            Err(Mqtt5Error::OperationChannelSendError)
-                        }
-                        _ => {
-                            panic!("Illegal MQTT operation options type encountered in channel send error processing");
-                        }
-                    }
-                }
+                Err(error) => { Err(error) }
                 _ => {
                     rx.await?
                 }
@@ -295,19 +282,19 @@ pub struct Mqtt5ClientOptions {
 }
 
 pub struct Mqtt5Client {
-    operation_sender: tokio::sync::mpsc::Sender<OperationOptions>,
+    user_state: AsyncUserState,
 
     listener_id_allocator: Mutex<u64>,
 }
 
 impl Mqtt5Client {
     pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
-        let (operation_sender, operation_receiver) = tokio::sync::mpsc::channel(100);
+        let (user_state, internal_state) = create_async_state();
 
-        spawn_client_impl(config, operation_receiver, &runtime_handle);
+        spawn_client_impl(config, internal_state, &runtime_handle);
 
         Mqtt5Client {
-            operation_sender,
+            user_state,
             listener_id_allocator: Mutex::new(1),
         }
     }
@@ -330,10 +317,7 @@ impl Mqtt5Client {
             stop_options_internal.disconnect = Some(Box::new(MqttPacket::Disconnect(options.disconnect.unwrap())));
         }
 
-        match self.operation_sender.try_send(OperationOptions::Stop(stop_options_internal)) {
-            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
-            _ => Ok(())
-        }
+        self.user_state.try_send(OperationOptions::Stop(stop_options_internal))
     }
 
     pub fn close(&self) -> Mqtt5Result<()> {
@@ -357,19 +341,13 @@ impl Mqtt5Client {
         let listener_id = *current_id;
         *current_id += 1;
 
-        match self.operation_sender.try_send(OperationOptions::AddListener(listener_id, listener))
-        {
-            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
-            _ => Ok(listener_id),
-        }
+        self.user_state.try_send(OperationOptions::AddListener(listener_id, listener))?;
+
+        Ok(listener_id)
     }
 
     pub fn remove_event_listener(&self, listener_id: u64) -> Mqtt5Result<()> {
-        match self.operation_sender.try_send(OperationOptions::RemoveListener(listener_id))
-        {
-            Err(_) => Err(Mqtt5Error::OperationChannelSendError),
-            _ => Ok(()),
-        }
+        self.user_state.try_send(OperationOptions::RemoveListener(listener_id))
     }
 }
 

@@ -91,7 +91,8 @@ pub enum Mqtt5Error {
     PacketIdSpaceExhausted,
     OperationalStateReset,
     UserInitiatedDisconnect,
-    ClientClosed
+    ClientClosed,
+    ConnectionTimeout
 }
 
 impl fmt::Display for Mqtt5Error {
@@ -136,6 +137,7 @@ impl fmt::Display for Mqtt5Error {
             Mqtt5Error::OperationalStateReset => { write!(f, "OperationalStateReset") }
             Mqtt5Error::UserInitiatedDisconnect => { write!(f, "UserInitiatedDisconnect") }
             Mqtt5Error::ClientClosed => { write!(f, "ClientClosed") }
+            Mqtt5Error::ConnectionTimeout => { write!(f, "ConnectionTimeout") }
         }
     }
 }

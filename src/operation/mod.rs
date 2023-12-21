@@ -12,7 +12,7 @@ extern crate log;
 use crate::*;
 use crate::alias::*;
 use crate::client::*;
-use crate::client::implementation::*;
+use crate::client::internal::*;
 use crate::decode::*;
 use crate::encode::*;
 use crate::encode::utils::*;

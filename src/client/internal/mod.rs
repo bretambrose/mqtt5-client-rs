@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+pub(crate) mod tokio_impl;
+
 extern crate tokio;
 
 use std::collections::HashMap;
@@ -48,7 +50,7 @@ pub(crate) enum OperationOptions {
     RemoveListener(u64)
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 enum ClientImplState {
     Stopped,
     Connecting,
@@ -58,9 +60,8 @@ enum ClientImplState {
     // possibly need a pending stopped state for async connection shutdown
 }
 
-struct Mqtt5ClientImpl {
+pub(crate) struct Mqtt5ClientImpl {
     operational_state: OperationalState,
-    operation_receiver: mpsc::Receiver<OperationOptions>,
     listeners: HashMap<u64, ClientEventListener>,
 
     current_state: ClientImplState,
@@ -69,14 +70,17 @@ struct Mqtt5ClientImpl {
 
 impl Mqtt5ClientImpl {
 
-    pub(crate) fn new(config: OperationalStateConfig, operation_receiver: mpsc::Receiver<OperationOptions>) -> Self {
+    pub(crate) fn new(config: OperationalStateConfig) -> Self {
         Mqtt5ClientImpl {
             operational_state: OperationalState::new(config),
-            operation_receiver,
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
         }
+    }
+
+    pub(crate) fn get_current_state(&self) -> ClientImplState {
+        self.current_state
     }
 
     pub(crate) fn add_listener(&mut self, id: u64, listener: ClientEventListener) {
@@ -148,109 +152,36 @@ impl Mqtt5ClientImpl {
     }
 
     fn change_state_to_connecting(&mut self) -> Mqtt5Result<()> {
-        self.current_state = ClientImplState::Connecting;
-        Ok(())
-    }
-
-    async fn service_stopped(&mut self) -> Mqtt5Result<()> {
-        tokio::select! {
-            result = self.operation_receiver.recv() => {
-                if let Some(operation) = result {
-                    self.handle_incoming_operation(operation)?;
-                }
-            }
-        }
-
-        match self.desired_state {
-            ClientImplState::Connected => {
-                self.change_state_to_connecting()?;
-            }
-            ClientImplState::Shutdown => {
-                // If we're already stopped, there's nothing to clean up
-                self.current_state = ClientImplState::Shutdown;
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    async fn service_connecting(&mut self) -> Mqtt5Result<()> {
-        tokio::select! {
-            result = self.operation_receiver.recv() => {
-                if let Some(operation) = result {
-                    self.handle_incoming_operation(operation)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn service_connected(&mut self) -> Mqtt5Result<()> {
-        tokio::select! {
-            result = self.operation_receiver.recv() => {
-                if let Some(operation) = result {
-                    self.handle_incoming_operation(operation)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn service_pending_reconnect(&mut self) -> Mqtt5Result<()> {
-        tokio::select! {
-            result = self.operation_receiver.recv() => {
-                if let Some(operation) = result {
-                    self.handle_incoming_operation(operation)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn service_shutdown(&mut self) -> Mqtt5Result<()> {
-        Err(Mqtt5Error::ClientClosed)
-    }
-
-    pub(crate) async fn service(&mut self) -> Mqtt5Result<()> {
         match self.current_state {
-            ClientImplState::Stopped => {
-                self.service_stopped().await?
+            ClientImplState::Stopped | ClientImplState::PendingReconnect => {
+                self.current_state = ClientImplState::Connecting;
+                Ok(())
             }
-            ClientImplState::Connecting => {
-                self.service_stopped().await?
-            }
-            ClientImplState::Connected => {
-                self.service_stopped().await?
-            }
-            ClientImplState::PendingReconnect => {
-                self.service_stopped().await?
-            }
-            ClientImplState::Shutdown => {
-                self.service_stopped().await?
+            _ => {
+                Err(Mqtt5Error::InternalStateError)
             }
         }
-
-        Ok(())
     }
-
 }
 
-async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl) {
+async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut AsyncImplState) {
     let mut done = false;
     while !done {
-        if let Err(_) = client_impl.service().await {
-            done = true;
+        let current_state = client_impl.get_current_state();
+        match current_state {
+            ClientImplState::Stopped => {
+                if let Err(_) = async_state.process_stopped(client_impl).await {
+                    done = true;
+                }
+            }
+            _ => {}
         }
     }
 }
 
 pub(crate) fn spawn_client_impl(
     mut config: Mqtt5ClientOptions,
-    operation_receiver: mpsc::Receiver<OperationOptions>,
+    mut impl_state: AsyncImplState,
     runtime_handle: &runtime::Handle,
 ) {
     let connect = config.connect.take().unwrap_or(Box::new(ConnectPacket{ ..Default::default() }));
@@ -265,13 +196,13 @@ pub(crate) fn spawn_client_impl(
         outbound_resolver: config.outbound_resolver.take(),
     };
 
-    let mut client_impl = Mqtt5ClientImpl::new(state_config, operation_receiver);
+    let mut client_impl = Mqtt5ClientImpl::new(state_config);
 
     if let Some(listener) = config.default_event_listener {
         client_impl.listeners.insert(0, listener);
     }
 
     runtime_handle.spawn(async move {
-        client_event_loop(&mut client_impl).await;
+        client_event_loop(&mut client_impl, &mut impl_state).await;
     });
 }
