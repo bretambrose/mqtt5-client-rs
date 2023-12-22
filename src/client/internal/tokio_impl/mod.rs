@@ -92,13 +92,11 @@ impl ClientRuntimeState {
         let mut inbound_data: Vec<u8> = Vec::with_capacity(4096);
 
         let mut stream = self.stream.take().unwrap();
-        let (mut stream_reader, mut stream_writer) = stream.split();
+        let (stream_reader, mut stream_writer) = stream.split();
         tokio::pin!(stream_reader);
-        //tokio::pin!(stream_writer);
 
-        let mut next_state = ClientImplState::Connected;
-        let mut done = false;
-        while !done {
+        let mut next_state = None;
+        while next_state.is_none() {
             let next_service_time_option = client.get_next_connected_service_time();
             let service_wait: Option<tokio::time::Sleep> =
                 if let Some(next_service_time) = next_service_time_option {
@@ -107,7 +105,7 @@ impl ClientRuntimeState {
                     None
                 };
 
-            let mut outbound_slice_option: Option<&[u8]> =
+            let outbound_slice_option: Option<&[u8]> =
                 if cumulative_bytes_written < outbound_data.len() {
                     Some(&outbound_data[cumulative_bytes_written..])
                 } else {
@@ -115,33 +113,34 @@ impl ClientRuntimeState {
                 };
 
             tokio::select! {
+                // incoming user operations future
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
                         client.handle_incoming_operation(operation_options)?;
                     }
                 }
+                // incoming data on the socket future
                 read_result = stream_reader.read(inbound_data.as_mut_slice()) => {
                     match read_result {
                         Ok(bytes_read) => {
-                            if let Err(err) = client.handle_incoming_bytes(&inbound_data[..bytes_read]) {
-                                next_state = ClientImplState::PendingReconnect;
-                                done = true;
+                            if let Err(_) = client.handle_incoming_bytes(&inbound_data[..bytes_read]) {
+                                next_state = Some(ClientImplState::PendingReconnect);
                             }
                         }
-                        Err(error) => {
-                            next_state = ClientImplState::PendingReconnect;
-                            done = true;
+                        Err(_) => {
+                            next_state = Some(ClientImplState::PendingReconnect);
                         }
                     }
 
                     inbound_data.clear();
                 }
+                // client service future (if relevant)
                 Some(_) = conditional_wait(service_wait) => {
-                    if let Err(err) = client.handle_service(&mut outbound_data) {
-                        next_state = ClientImplState::PendingReconnect;
-                        done = true;
+                    if let Err(_) = client.handle_service(&mut outbound_data) {
+                        next_state = Some(ClientImplState::PendingReconnect);
                     }
                 }
+                // outbound data future (if relevant)
                 Some(bytes_written_result) = conditional_write(outbound_slice_option, &mut stream_writer) => {
                     match bytes_written_result {
                         Ok(bytes_written) => {
@@ -149,29 +148,26 @@ impl ClientRuntimeState {
                             if cumulative_bytes_written == outbound_data.len() {
                                 outbound_data.clear();
                                 cumulative_bytes_written = 0;
-                                if let Err(err) = client.handle_write_completion() {
-                                    next_state = ClientImplState::PendingReconnect;
-                                    done = true;
+                                if let Err(_) = client.handle_write_completion() {
+                                    next_state = Some(ClientImplState::PendingReconnect);
                                 }
                             }
                         }
-                        Err(e) => {
-                            next_state = ClientImplState::PendingReconnect;
-                            done = true;
+                        Err(_) => {
+                            next_state = Some(ClientImplState::PendingReconnect);
                         }
                     }
                 }
             }
 
-            if let Some(transition_state) = client.compute_optional_state_transition() {
-                next_state = transition_state;
-                done = true;
+            if next_state.is_none() {
+                next_state = client.compute_optional_state_transition();
             }
         }
 
-        //stream.close();
+        let _ = stream.shutdown().await;
 
-        return Ok(next_state);
+        return Ok(next_state.unwrap());
     }
 
     pub(crate) async fn process_pending_reconnect(&mut self, client: &mut Mqtt5ClientImpl, wait: Duration) -> Mqtt5Result<ClientImplState> {

@@ -16,7 +16,6 @@ use crate::spec::utils::*;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 use tokio::runtime;
 use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
@@ -305,7 +304,7 @@ impl Mqtt5Client {
         };
 
         let default_listener = config.default_event_listener.take();
-        let mut client_impl = Mqtt5ClientImpl::new(state_config, default_listener);
+        let client_impl = Mqtt5ClientImpl::new(state_config, default_listener);
 
         spawn_client_impl(client_impl, internal_state, &runtime_handle);
 
