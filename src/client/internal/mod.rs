@@ -8,6 +8,7 @@ pub(crate) mod tokio_impl;
 extern crate tokio;
 
 use std::collections::{HashMap, VecDeque};
+use std::mem;
 use std::time::{Duration, Instant};
 use crate::*;
 use crate::client::*;
@@ -16,7 +17,6 @@ use crate::spec::*;
 
 use tokio::runtime;
 use tokio::sync::oneshot;
-use tokio::net::TcpStream;
 
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
@@ -67,8 +67,6 @@ pub(crate) struct Mqtt5ClientImpl {
     current_state: ClientImplState,
     desired_state: ClientImplState,
 
-    connection: Option<TcpStream>,
-
     packet_events: VecDeque<PacketEvent>
 }
 
@@ -80,7 +78,6 @@ impl Mqtt5ClientImpl {
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
-            connection: None,
             packet_events: VecDeque::new()
         };
 
@@ -163,6 +160,67 @@ impl Mqtt5ClientImpl {
         Ok(())
     }
 
+    fn handle_packet_events(&mut self) {
+        let mut events = VecDeque::new();
+        mem::swap(&mut events, &mut self.packet_events);
+
+        for event in events {
+            match event {
+                PacketEvent::Publish(publish) => {
+                    let publish_event = PublishReceivedEvent {
+                        publish,
+                    };
+
+                    let publish_client_event = Arc::new(ClientEvent::PublishReceived(publish_event));
+                    self.broadcast_event(publish_client_event);
+                }
+                PacketEvent::Disconnect(_) => {
+                    // TODO
+                }
+                PacketEvent::Connack(_) => {
+                    // TODO
+                }
+            }
+        }
+
+        self.packet_events.clear();
+    }
+
+    pub(crate) fn handle_incoming_bytes(&mut self, bytes: &[u8]) -> Mqtt5Result<()> {
+        let mut context = NetworkEventContext {
+            event: NetworkEvent::IncomingData(bytes),
+            current_time: Instant::now(),
+            packet_events: &mut self.packet_events
+        };
+
+        let result = self.operational_state.handle_network_event(&mut context);
+
+        self.handle_packet_events();
+
+        result
+    }
+
+    pub(crate) fn handle_write_completion(&mut self) -> Mqtt5Result<()> {
+        let mut context = NetworkEventContext {
+            event: NetworkEvent::WriteCompletion,
+            current_time: Instant::now(),
+            packet_events: &mut self.packet_events
+        };
+
+        let result = self.operational_state.handle_network_event(&mut context);
+
+        result
+    }
+
+    pub(crate) fn handle_service(&mut self, outbound_data: &mut Vec<u8>) -> Mqtt5Result<()> {
+        let mut context = ServiceContext {
+            to_socket: outbound_data,
+            current_time: Instant::now(),
+        };
+
+        return self.operational_state.service(&mut context);
+    }
+
     fn compute_optional_state_transition(&self) -> Option<ClientImplState> {
         match self.current_state {
             ClientImplState::Stopped => {
@@ -186,15 +244,6 @@ impl Mqtt5ClientImpl {
             }
 
             _ => { None }
-        }
-    }
-
-    fn apply_connection_result(&mut self, connection_result: std::io::Result<TcpStream>) -> Mqtt5Result<ClientImplState> {
-        if let Ok(stream) = connection_result {
-            self.connection = Some(stream);
-            Ok(ClientImplState::Connected)
-        } else {
-            Ok(ClientImplState::PendingReconnect)
         }
     }
 

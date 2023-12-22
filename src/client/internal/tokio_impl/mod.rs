@@ -6,6 +6,8 @@
 extern crate tokio;
 
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpStream;
 use tokio::time::{sleep};
 
@@ -27,14 +29,13 @@ impl UserRuntimeState {
 
 pub(crate) struct ClientRuntimeState {
     operation_receiver: tokio::sync::mpsc::Receiver<OperationOptions>,
-
+    stream: Option<TcpStream>
 }
 
 
 
 
 impl ClientRuntimeState {
-
     pub(crate) async fn process_stopped(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
         loop {
             tokio::select! {
@@ -52,7 +53,6 @@ impl ClientRuntimeState {
     }
 
     pub(crate) async fn process_connecting(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
-
         let connect = TcpStream::connect("127.0.0.1:1883");
         tokio::pin!(connect);
 
@@ -70,7 +70,12 @@ impl ClientRuntimeState {
                     return Ok(ClientImplState::PendingReconnect);
                 }
                 connection_result = &mut connect => {
-                    return client.apply_connection_result(connection_result);
+                    if let Ok(stream) = connection_result {
+                        self.stream = Some(stream);
+                        return Ok(ClientImplState::Connected);
+                    } else {
+                        return Ok(ClientImplState::PendingReconnect);
+                    }
                 }
             }
 
@@ -81,12 +86,33 @@ impl ClientRuntimeState {
     }
 
     pub(crate) async fn process_connected(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
-        let outbound_data : Vec<u8> = Vec::with_capacity(4096);
-        let inbound_data : Vec<u8> = Vec::with_capacity(4096);
-        let stream = client.connection.take().unwrap();
+        let mut outbound_data: Vec<u8> = Vec::with_capacity(4096);
+        let mut cumulative_bytes_written : usize = 0;
 
-        loop {
-            let next_service_time = client.get_next_connected_service_time();
+        let mut inbound_data: Vec<u8> = Vec::with_capacity(4096);
+
+        let mut stream = self.stream.take().unwrap();
+        let (mut stream_reader, mut stream_writer) = stream.split();
+        tokio::pin!(stream_reader);
+        //tokio::pin!(stream_writer);
+
+        let mut next_state = ClientImplState::Connected;
+        let mut done = false;
+        while !done {
+            let next_service_time_option = client.get_next_connected_service_time();
+            let service_wait: Option<tokio::time::Sleep> =
+                if let Some(next_service_time) = next_service_time_option {
+                    Some(sleep(next_service_time - Instant::now()))
+                } else {
+                    None
+                };
+
+            let mut outbound_slice_option: Option<&[u8]> =
+                if cumulative_bytes_written < outbound_data.len() {
+                    Some(&outbound_data[cumulative_bytes_written..])
+                } else {
+                    None
+                };
 
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
@@ -94,12 +120,58 @@ impl ClientRuntimeState {
                         client.handle_incoming_operation(operation_options)?;
                     }
                 }
+                read_result = stream_reader.read(inbound_data.as_mut_slice()) => {
+                    match read_result {
+                        Ok(bytes_read) => {
+                            if let Err(err) = client.handle_incoming_bytes(&inbound_data[..bytes_read]) {
+                                next_state = ClientImplState::PendingReconnect;
+                                done = true;
+                            }
+                        }
+                        Err(error) => {
+                            next_state = ClientImplState::PendingReconnect;
+                            done = true;
+                        }
+                    }
+
+                    inbound_data.clear();
+                }
+                Some(_) = conditional_wait(service_wait) => {
+                    if let Err(err) = client.handle_service(&mut outbound_data) {
+                        next_state = ClientImplState::PendingReconnect;
+                        done = true;
+                    }
+                }
+                Some(bytes_written_result) = conditional_write(outbound_slice_option, &mut stream_writer) => {
+                    match bytes_written_result {
+                        Ok(bytes_written) => {
+                            cumulative_bytes_written += bytes_written;
+                            if cumulative_bytes_written == outbound_data.len() {
+                                outbound_data.clear();
+                                cumulative_bytes_written = 0;
+                                if let Err(err) = client.handle_write_completion() {
+                                    next_state = ClientImplState::PendingReconnect;
+                                    done = true;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            next_state = ClientImplState::PendingReconnect;
+                            done = true;
+                        }
+                    }
+                }
             }
 
             if let Some(transition_state) = client.compute_optional_state_transition() {
-                return Ok(transition_state);
+                next_state = transition_state;
+                done = true;
             }
         }
+
+        //stream.close();
+
+        return Ok(next_state);
     }
 
     pub(crate) async fn process_pending_reconnect(&mut self, client: &mut Mqtt5ClientImpl, wait: Duration) -> Mqtt5Result<ClientImplState> {
@@ -123,81 +195,21 @@ impl ClientRuntimeState {
             }
         }
     }
-
-    /*
-async fn select(&mut self, context: &mut AsyncImplSelectContext) -> Mqtt5Result<AsyncImplSelectResult> {
-
-let sleeper: Option<tokio::time::Sleep> =
-    if context.next_service_time.is_some() {
-        Some(sleep(context.next_service_time.unwrap() - Instant::now()))
-    } else {
-        None
-    };
-
-
-let mut optional_sleep =
-    if context.next_service_time.is_some() {
-        Some(sleep(context.next_service_time.unwrap() - Instant::now()))
-    } else {
-        None
-    };
-
-let mut pending = std::future::pending();
-let mut sleep_future: &mut dyn Future<Output = ()> = optional_sleep
-    .as_mut()
-    .unwrap_or(&mut pending);
-
-
-        //let service = sleep(context.next_service_time - Instant::now());
-        //tokio::pin!(service);
-        //pin!(service);
-
-
-        tokio::select! {
-            operation_result = self.operation_receiver.recv() => {
-                if let Some(operation_options) = operation_result {
-                    return Ok(AsyncImplSelectResult::Operation(operation_options));
-                }
-            }
-           Some(_) = conditional_sleeper(sleeper) => {
-                 return Ok(AsyncImplSelectResult::Service);
-            }
-            Some(result) = conditional_connector(connector) => {
-                return Ok(AsyncImplSelectResult::Connection(result));
-            }
-            stream = self.connect_future.await => {
-                return Ok(AsyncImplSelectResult::Connection(stream));
-            }
-            bytes_written = self.write_future.await => {
-                return Ok(AsyncImplSelectResult::BytesWritten(bytes_written));
-            }
-
-            () = &mut self.service_future => {
-                return Ok(AsyncImplSelectResult::Service);
-            }
-
-            _ = self.read_future.await => {
-                return Ok(AsyncImplSelectResult::BytesRead);
-            }
-        }
-
-        Err(Mqtt5Error::InternalStateError)
-    }
-
-     */
-
-
 }
 
-/*
-async fn conditional_sleeper(t: Option<tokio::time::Sleep>) -> Option<()> {
-    match t {
+async fn conditional_wait(wait_option: Option<tokio::time::Sleep>) -> Option<()> {
+    match wait_option {
         Some(timer) => Some(timer.await),
         None => None,
     }
 }
-*/
 
+async fn conditional_write(bytes_option: Option<&[u8]>, writer: &mut WriteHalf<'_>) -> Option<std::io::Result<usize>> {
+    match bytes_option {
+        Some(bytes) => Some(writer.write(bytes).await),
+        None => None,
+    }
+}
 
 pub(crate) fn create_runtime_states() -> (UserRuntimeState, ClientRuntimeState) {
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
@@ -207,7 +219,8 @@ pub(crate) fn create_runtime_states() -> (UserRuntimeState, ClientRuntimeState) 
     };
 
     let impl_state = ClientRuntimeState {
-        operation_receiver: receiver
+        operation_receiver: receiver,
+        stream: None
     };
 
     (user_state, impl_state)
