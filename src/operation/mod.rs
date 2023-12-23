@@ -471,7 +471,7 @@ impl OperationalState {
         result
     }
 
-    pub(crate) fn handle_user_event(&mut self, context: UserEventContext) -> Mqtt5Result<()> {
+    pub(crate) fn handle_user_event(&mut self, context: UserEventContext) {
         self.update_internal_clock(&context.current_time);
 
         let event = context.event;
@@ -496,18 +496,15 @@ impl OperationalState {
         if let Some(check_operation) = self.operations.get(&op_id) {
             if !self.operation_packet_passes_offline_queue_policy(&*check_operation.packet) {
                 debug!("[{} ms] handle_user_event - operation {} failed by offline queue policy", self.elapsed_time_ms, op_id);
-                self.complete_operation_as_failure(op_id, Mqtt5Error::OfflineQueuePolicyFailed)?;
-                return Ok(());
+                let _ = self.complete_operation_as_failure(op_id, Mqtt5Error::OfflineQueuePolicyFailed);
+                return;
             }
         }
 
         debug!("[{} ms] handle_user_event - queuing operation with id {} into {} of {} queue", self.elapsed_time_ms, op_id, position, queue);
-        let result = self.enqueue_operation(op_id, queue, position);
+        self.enqueue_operation(op_id, queue, position);
 
         self.log_operational_state();
-        debug!("[{} ms] handle_user_event - final result: {:?}", self.elapsed_time_ms, result);
-
-        result
     }
 
     pub(crate) fn get_next_service_timepoint(&mut self, current_time: &Instant) -> Option<Instant> {
@@ -791,7 +788,7 @@ impl OperationalState {
         let connect = self.create_connect();
         let connect_op_id = self.create_operation(connect, None);
 
-        self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
+        self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front);
 
         let connack_timeout = context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64);
 
@@ -1317,7 +1314,7 @@ impl OperationalState {
                 let ping = Box::new(MqttPacket::Pingreq(PingreqPacket{}));
                 let ping_op_id = self.create_operation(ping, None);
 
-                self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front)?;
+                self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front);
 
                 self.ping_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.ping_timeout_millis as u64));
 
@@ -1664,7 +1661,7 @@ impl OperationalState {
                                     ..Default::default()
                                 })));
 
-                                self.enqueue_operation(*operation_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+                                self.enqueue_operation(*operation_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back);
                                 return Ok(());
                             }
                         }
@@ -1705,7 +1702,7 @@ impl OperationalState {
             }));
             let pubcomp_op_id = self.create_operation(pubcomp, None);
 
-            self.enqueue_operation(pubcomp_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+            self.enqueue_operation(pubcomp_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back);
 
             return Ok(());
         }
@@ -1767,7 +1764,7 @@ impl OperationalState {
                     }));
                     let puback_op_id = self.create_operation(puback, None);
 
-                    self.enqueue_operation(puback_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+                    self.enqueue_operation(puback_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back);
 
                     return Ok(());
                 }
@@ -1784,7 +1781,7 @@ impl OperationalState {
                     }));
                     let pubrec_op_id = self.create_operation(pubrec, None);
 
-                    self.enqueue_operation(pubrec_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back)?;
+                    self.enqueue_operation(pubrec_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Back);
 
                     return Ok(());
                 }
@@ -1856,10 +1853,9 @@ impl OperationalState {
         }
     }
 
-    fn enqueue_operation(&mut self, id: u64, queue_type: OperationalQueueType, position: OperationalEnqueuePosition) -> Mqtt5Result<()> {
+    fn enqueue_operation(&mut self, id: u64, queue_type: OperationalQueueType, position: OperationalEnqueuePosition) {
         if !self.operations.contains_key(&id) {
-            error!("[{} ms] enqueue_operation - operation {} does not exist", self.elapsed_time_ms, id);
-            return Err(Mqtt5Error::InternalStateError);
+            panic!("Attempt to enqueue a non-existent operation");
         }
 
         debug!("[{} ms] enqueue_operation - operation {} added to {} of queue {} ", self.elapsed_time_ms, id, position, queue_type);
@@ -1868,8 +1864,6 @@ impl OperationalState {
             OperationalEnqueuePosition::Front => { queue.push_front(id); }
             OperationalEnqueuePosition::Back => { queue.push_back(id); }
         }
-
-        Ok(())
     }
 
     fn create_operation(&mut self, packet: Box<MqttPacket>, options: Option<MqttOperationOptions>) -> u64 {

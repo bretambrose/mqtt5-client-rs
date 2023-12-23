@@ -601,7 +601,7 @@ mod operational_state_tests {
             self.client_state.handle_user_event(UserEventContext {
                 event: subscribe_event,
                 current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
-            })?;
+            });
 
             Ok(receiver)
         }
@@ -619,7 +619,7 @@ mod operational_state_tests {
             self.client_state.handle_user_event(UserEventContext {
                 event: unsubscribe_event,
                 current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
-            })?;
+            });
 
             Ok(receiver)
         }
@@ -637,7 +637,7 @@ mod operational_state_tests {
             self.client_state.handle_user_event(UserEventContext {
                 event: publish_event,
                 current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
-            })?;
+            });
 
             Ok(receiver)
         }
@@ -649,7 +649,7 @@ mod operational_state_tests {
             self.client_state.handle_user_event(UserEventContext {
                 event: disconnect_event,
                 current_time: self.base_timestamp + Duration::from_millis(elapsed_millis)
-            })?;
+            });
 
             Ok(())
         }

@@ -41,7 +41,7 @@ impl ClientRuntimeState {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options)?;
+                        client.handle_incoming_operation(operation_options);
                     }
                 }
             }
@@ -63,7 +63,7 @@ impl ClientRuntimeState {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options)?;
+                        client.handle_incoming_operation(operation_options);
                     }
                 }
                 () = &mut timeout => {
@@ -116,7 +116,7 @@ impl ClientRuntimeState {
                 // incoming user operations future
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options)?;
+                        client.handle_incoming_operation(operation_options);
                     }
                 }
                 // incoming data on the socket future
@@ -178,7 +178,7 @@ impl ClientRuntimeState {
             tokio::select! {
                 operation_result = self.operation_receiver.recv() => {
                     if let Some(operation_options) = operation_result {
-                        client.handle_incoming_operation(operation_options)?;
+                        client.handle_incoming_operation(operation_options);
                     }
                 }
                 () = &mut reconnect_timer => {

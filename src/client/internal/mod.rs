@@ -67,8 +67,36 @@ pub(crate) struct Mqtt5ClientImpl {
     current_state: ClientImplState,
     desired_state: ClientImplState,
 
-    packet_events: VecDeque<PacketEvent>
+    packet_events: VecDeque<PacketEvent>,
+
+    last_connack: Option<ConnackPacket>,
+    last_disconnect: Option<DisconnectPacket>,
+    last_error: Option<Mqtt5Error>
 }
+
+/*
+
+On Enter Connecting: Emit AttemptingConnect, clear all last fields
+
+On Leave Connecting:
+    If not going to Connected, emit ConnectionFailure
+
+On Leave Connected:
+    If successful connack exists, emit Disconnected
+    Else emit Connection Failure
+
+On Successful connack received:
+    Emit ConnectionSuccess
+
+When do we set last error?
+  Pass through wrapper functions to operational state
+
+How do we propagate errors from async runtime logic?
+  Give a set function that only sets if None?
+
+What do we do if there's a disconnect or failure and no error code?
+  Add an unknown entry
+ */
 
 impl Mqtt5ClientImpl {
 
@@ -78,7 +106,10 @@ impl Mqtt5ClientImpl {
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
-            packet_events: VecDeque::new()
+            packet_events: VecDeque::new(),
+            last_connack: None,
+            last_disconnect: None,
+            last_error: None,
         };
 
         if let Some(listener) = default_listener {
@@ -113,7 +144,7 @@ impl Mqtt5ClientImpl {
         }
     }
 
-    pub(crate) fn handle_incoming_operation(&mut self, operation: OperationOptions) -> Mqtt5Result<()> {
+    pub(crate) fn handle_incoming_operation(&mut self, operation: OperationOptions) {
         match operation {
             OperationOptions::Publish(packet, internal_options) => {
                 let user_event_context = UserEventContext {
@@ -121,7 +152,7 @@ impl Mqtt5ClientImpl {
                     current_time: Instant::now()
                 };
 
-                return self.operational_state.handle_user_event(user_event_context);
+                self.operational_state.handle_user_event(user_event_context);
             }
             OperationOptions::Subscribe(packet, internal_options) => {
                 let user_event_context = UserEventContext {
@@ -129,7 +160,7 @@ impl Mqtt5ClientImpl {
                     current_time: Instant::now()
                 };
 
-                return self.operational_state.handle_user_event(user_event_context);
+                self.operational_state.handle_user_event(user_event_context);
             }
             OperationOptions::Unsubscribe(packet, internal_options) => {
                 let user_event_context = UserEventContext {
@@ -137,7 +168,7 @@ impl Mqtt5ClientImpl {
                     current_time: Instant::now()
                 };
 
-                return self.operational_state.handle_user_event(user_event_context);
+                self.operational_state.handle_user_event(user_event_context);
             }
             OperationOptions::Start() => {
                 self.desired_state = ClientImplState::Connected;
@@ -156,8 +187,6 @@ impl Mqtt5ClientImpl {
                 self.remove_listener(id);
             }
         }
-
-        Ok(())
     }
 
     fn handle_packet_events(&mut self) {
@@ -174,11 +203,11 @@ impl Mqtt5ClientImpl {
                     let publish_client_event = Arc::new(ClientEvent::PublishReceived(publish_event));
                     self.broadcast_event(publish_client_event);
                 }
-                PacketEvent::Disconnect(_) => {
-                    // TODO
+                PacketEvent::Disconnect(disconnect) => {
+                    self.last_disconnect = Some(disconnect);
                 }
-                PacketEvent::Connack(_) => {
-                    // TODO
+                PacketEvent::Connack(connack) => {
+                    self.last_connack = Some(connack);
                 }
             }
         }
