@@ -384,6 +384,8 @@ impl Mqtt5ClientImpl {
             self.emit_stopped_event();
         }
 
+        self.current_state = new_state;
+
         Ok(())
     }
 }

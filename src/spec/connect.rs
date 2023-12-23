@@ -36,7 +36,7 @@ pub struct ConnectPacket {
 
     /// Clean start is modeled but not under direct user control.  Instead it is controlled by client
     /// configuration that is outside the scope of the MQTT5 spec.
-    pub(crate) clean_start: bool,
+    pub clean_start: bool,
 
     /// A unique string identifying the client to the server.  Used to restore session state between connections.
     ///

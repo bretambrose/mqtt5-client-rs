@@ -69,7 +69,7 @@ pub(crate) fn decode_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut Stri
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let value_length : usize = u16::from_be_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
         error!("Packet Decode - Utf-8 string value has length larger than remaining packet bytes");
@@ -92,7 +92,7 @@ pub(crate) fn decode_optional_length_prefixed_string<'a>(bytes: &'a[u8], value: 
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let value_length : usize = u16::from_be_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
         error!("Packet Decode - Utf-8 string value has length larger than remaining packet bytes");
@@ -115,7 +115,7 @@ pub(crate) fn decode_length_prefixed_optional_string<'a>(bytes: &'a[u8], value: 
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let value_length : usize = u16::from_be_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
 
     if value_length == 0 {
@@ -144,7 +144,7 @@ pub(crate) fn decode_optional_length_prefixed_bytes<'a>(bytes: &'a[u8], value: &
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let value_length : usize = u16::from_be_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
     if value_length > mutable_bytes.len() {
         error!("Packet Decode - Binary data value has length larger than remaining packet bytes");
@@ -166,7 +166,7 @@ pub(crate) fn decode_length_prefixed_optional_bytes<'a>(bytes: &'a[u8], value: &
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    let value_length : usize = u16::from_le_bytes(bytes[..2].try_into().unwrap()) as usize;
+    let value_length : usize = u16::from_be_bytes(bytes[..2].try_into().unwrap()) as usize;
     let mutable_bytes = &bytes[2..];
 
     if value_length == 0 {
@@ -265,7 +265,7 @@ pub(crate) fn decode_u16<'a>(bytes: &'a[u8], value: &mut u16) -> Mqtt5Result<&'a
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    *value = u16::from_le_bytes(bytes[..2].try_into().unwrap());
+    *value = u16::from_be_bytes(bytes[..2].try_into().unwrap());
 
     Ok(&bytes[2..])
 }
@@ -281,7 +281,7 @@ pub(crate) fn decode_optional_u16<'a>(bytes: &'a[u8], value: &mut Option<u16>) -
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    *value = Some(u16::from_le_bytes(bytes[..2].try_into().unwrap()));
+    *value = Some(u16::from_be_bytes(bytes[..2].try_into().unwrap()));
 
     Ok(&bytes[2..])
 }
@@ -297,7 +297,7 @@ pub(crate) fn decode_optional_u32<'a>(bytes: &'a[u8], value: &mut Option<u32>) -
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    *value = Some(u32::from_le_bytes(bytes[..4].try_into().unwrap()));
+    *value = Some(u32::from_be_bytes(bytes[..4].try_into().unwrap()));
 
     Ok(&bytes[4..])
 }

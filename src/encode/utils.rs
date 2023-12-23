@@ -464,10 +464,10 @@ pub(crate) fn process_encoding_step(
             dest.push(val);
         }
         EncodingStep::Uint16(val) => {
-            dest.extend_from_slice(&val.to_le_bytes());
+            dest.extend_from_slice(&val.to_be_bytes());
         }
         EncodingStep::Uint32(val) => {
-            dest.extend_from_slice(&val.to_le_bytes());
+            dest.extend_from_slice(&val.to_be_bytes());
         }
         EncodingStep::Vli(val) => {
             return encode_vli(val, dest);

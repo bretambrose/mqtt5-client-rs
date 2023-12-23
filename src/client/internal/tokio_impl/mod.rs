@@ -91,7 +91,7 @@ impl ClientRuntimeState {
         let mut outbound_data: Vec<u8> = Vec::with_capacity(4096);
         let mut cumulative_bytes_written : usize = 0;
 
-        let mut inbound_data: Vec<u8> = Vec::with_capacity(4096);
+        let mut inbound_data: [u8; 4096] = [0; 4096];
 
         let mut stream = self.stream.take().unwrap();
         let (stream_reader, mut stream_writer) = stream.split();
@@ -134,8 +134,6 @@ impl ClientRuntimeState {
                             next_state = Some(ClientImplState::PendingReconnect);
                         }
                     }
-
-                    inbound_data.clear();
                 }
                 // client service future (if relevant)
                 Some(_) = conditional_wait(service_wait) => {

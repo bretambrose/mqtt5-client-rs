@@ -5,8 +5,6 @@
 
 extern crate tokio;
 
-use tokio::sync::oneshot;
-
 #[cfg(test)]
 mod operational_state_tests {
     use super::*;
