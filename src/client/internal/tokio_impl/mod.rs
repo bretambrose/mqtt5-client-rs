@@ -167,6 +167,7 @@ impl ClientRuntimeState {
             }
         }
 
+        let _ = stream.flush().await;
         let _ = stream.shutdown().await;
 
         return Ok(next_state.unwrap());

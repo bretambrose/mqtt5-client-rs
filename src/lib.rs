@@ -45,6 +45,7 @@ pub use spec::suback::SubackPacket;
 pub use spec::subscribe::SubscribePacket;
 pub use spec::unsuback::UnsubackPacket;
 pub use spec::unsubscribe::UnsubscribePacket;
+pub use spec::utils::{convert_u8_to_disconnect_reason_code, convert_u8_to_authenticate_reason_code, convert_u8_to_quality_of_service, convert_u8_to_retain_handling_type};
 
 pub use client::*;
 

@@ -36,6 +36,50 @@ fn client_event_callback(event: Arc<ClientEvent>) {
     }
 }
 
+fn print_help() {
+    // TODO
+}
+
+fn handle_start(client: &Mqtt5Client) {
+    let _ = client.start();
+}
+
+fn handle_stop(client: &Mqtt5Client, args: &[&str]) {
+    let mut stop_options = StopOptions {
+        disconnect: None,
+        mode: StopMode::Soft,
+    };
+
+    if args.len() > 0 {
+        if let Ok(reason_code_u8) = args[0].parse::<u8>() {
+            if let Ok(reason_code) = convert_u8_to_disconnect_reason_code(reason_code_u8) {
+                stop_options.disconnect = Some(DisconnectPacket{
+                    reason_code,
+                    ..Default::default()
+                })
+            }
+        }
+    }
+
+    let _ = client.stop(stop_options);
+}
+
+fn handle_shutdown(client: &Mqtt5Client, args: &[&str]) {
+
+}
+
+fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
+
+}
+
+fn handle_subscribe(client: &Mqtt5Client, args: &[&str]) {
+
+}
+
+fn handle_unsubscribe(client: &Mqtt5Client, args: &[&str]) {
+
+}
+
 async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     let fields : Vec<&str> = value.split_whitespace().collect();
 
@@ -44,16 +88,31 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     }
 
     let command = fields[0].to_string();
-    if command.to_lowercase() == "start" {
-        let _ = client.start();
-    } else if command.to_lowercase() == "stop" {
-        let stop_options = StopOptions {
-            disconnect: None,
-            mode: StopMode::Hard,
-        };
-        let _ = client.stop(stop_options);
-    } else if command.to_lowercase() == "quit" {
-        return true;
+    match command.to_lowercase().as_str() {
+        "start" => {
+            handle_start(client);
+        }
+        "stop" => {
+            handle_stop(client, &fields[1..]);
+        }
+        "quit" => {
+            return true;
+        }
+        "shutdown" => {
+            handle_shutdown(client, &fields[1..]);
+        }
+        "publish" => {
+            handle_publish(client, &fields[1..]);
+        }
+        "subscribe" => {
+            handle_subscribe(client, &fields[1..]);
+        }
+        "unsubscribe" => {
+            handle_unsubscribe(client, &fields[1..]);
+        }
+        _ => {
+            print_help();
+        }
     }
 
     false
@@ -90,32 +149,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
     }
-
-    /*
-    client.start().unwrap();
-
-    let result = client
-        .publish( PublishPacket { ..Default::default() } , client::PublishOptions { ..Default::default() })
-        .await;
-    match result {
-        Ok(_) => {
-            println!("Got a publish result!");
-        }
-        Err(_) => {
-            println!("Got a publish error");
-        }
-    }
-
-    loop {
-        thread::sleep(time::Duration::from_secs(1));
-    }
-
-    client.close().expect("Hello");
-
-    let sleep_duration = time::Duration::from_secs(2);
-
-    thread::sleep(sleep_duration);
-*/
 
     println!("Done");
 

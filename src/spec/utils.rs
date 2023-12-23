@@ -78,7 +78,7 @@ pub const SUBSCRIPTION_OPTIONS_NO_LOCAL_MASK : u8 = 1u8 << 2;
 pub const SUBSCRIPTION_OPTIONS_RETAIN_AS_PUBLISHED_MASK : u8 = 1u8 << 3;
 pub const SUBSCRIPTION_OPTIONS_RETAIN_HANDLING_SHIFT : u8 = 4;
 
-pub(crate) fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService> {
+pub fn convert_u8_to_quality_of_service(value: u8) -> Mqtt5Result<QualityOfService> {
     match value {
         0 => { Ok(QualityOfService::AtMostOnce) }
         1 => { Ok(QualityOfService::AtLeastOnce) }
@@ -98,7 +98,7 @@ pub(crate) fn quality_of_service_to_str (qos: QualityOfService) -> &'static str 
     }
 }
 
-pub(crate) fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<PayloadFormatIndicator> {
+pub fn convert_u8_to_payload_format_indicator(value: u8) -> Mqtt5Result<PayloadFormatIndicator> {
     match value {
         0 => { Ok(PayloadFormatIndicator::Bytes) }
         1 => { Ok(PayloadFormatIndicator::Utf8) }
@@ -274,7 +274,7 @@ pub(crate) fn connect_reason_code_to_str (reason_code: ConnectReasonCode) -> &'s
     }
 }
 
-pub(crate) fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<DisconnectReasonCode> {
+pub fn convert_u8_to_disconnect_reason_code(value: u8) -> Mqtt5Result<DisconnectReasonCode> {
     match value {
         0 => { Ok(DisconnectReasonCode::NormalDisconnection) }
         4 => { Ok(DisconnectReasonCode::DisconnectWithWillMessage) }
@@ -346,7 +346,7 @@ pub(crate) fn disconnect_reason_code_to_str (reason_code: DisconnectReasonCode) 
     }
 }
 
-pub(crate) fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<AuthenticateReasonCode> {
+pub fn convert_u8_to_authenticate_reason_code(value: u8) -> Mqtt5Result<AuthenticateReasonCode> {
     match value {
         0 => { Ok(AuthenticateReasonCode::Success) }
         24 => { Ok(AuthenticateReasonCode::ContinueAuthentication) }
@@ -432,7 +432,7 @@ pub(crate) fn suback_reason_code_to_str (reason_code: SubackReasonCode) -> &'sta
     }
 }
 
-pub(crate) fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<RetainHandlingType> {
+pub fn convert_u8_to_retain_handling_type(value: u8) -> Mqtt5Result<RetainHandlingType> {
     match value {
         0 => { Ok(RetainHandlingType::SendOnSubscribe) }
         1 => { Ok(RetainHandlingType::SendOnSubscribeIfNew) }

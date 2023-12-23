@@ -67,6 +67,8 @@ pub(crate) struct Mqtt5ClientImpl {
     current_state: ClientImplState,
     desired_state: ClientImplState,
 
+    desired_stop_options: Option<StopOptionsInternal>,
+
     packet_events: VecDeque<PacketEvent>,
 
     last_connack: Option<ConnackPacket>,
@@ -83,6 +85,7 @@ impl Mqtt5ClientImpl {
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
+            desired_stop_options: None,
             packet_events: VecDeque::new(),
             last_connack: None,
             last_disconnect: None,
@@ -154,9 +157,20 @@ impl Mqtt5ClientImpl {
                 self.operational_state.handle_user_event(user_event_context);
             }
             OperationOptions::Start() => {
+                self.desired_stop_options = None;
                 self.desired_state = ClientImplState::Connected;
             }
-            OperationOptions::Stop(_) => {
+            OperationOptions::Stop(options) => {
+                if let Some(disconnect) = &options.disconnect {
+                    let disconnect_context = UserEventContext {
+                        event: UserEvent::Disconnect(disconnect.clone()),
+                        current_time: Instant::now()
+                    };
+
+                    self.operational_state.handle_user_event(disconnect_context);
+                }
+
+                self.desired_stop_options = Some(options);
                 self.desired_state = ClientImplState::Stopped;
             }
             OperationOptions::Shutdown() => {
@@ -253,25 +267,35 @@ impl Mqtt5ClientImpl {
             ClientImplState::Stopped => {
                 match self.desired_state {
                     ClientImplState::Connected => {
-                        Some(ClientImplState::Connecting)
+                        return Some(ClientImplState::Connecting)
                     }
                     ClientImplState::Shutdown => {
-                        Some(ClientImplState::Shutdown)
+                        return Some(ClientImplState::Shutdown)
                     }
-                    _ => { None }
+                    _ => {}
                 }
             }
 
-            ClientImplState::Connecting | ClientImplState::Connected | ClientImplState::PendingReconnect => {
+            ClientImplState::Connecting | ClientImplState::PendingReconnect => {
                 if self.desired_state != ClientImplState::Connected {
-                    Some(ClientImplState::Stopped)
-                } else {
-                    None
+                    return Some(ClientImplState::Stopped)
                 }
             }
 
-            _ => { None }
+            ClientImplState::Connected => {
+                if self.desired_state != ClientImplState::Connected {
+                    if let Some(stop_options) = &self.desired_stop_options {
+                        if stop_options.disconnect.is_none() {
+                            return Some(ClientImplState::Stopped);
+                        }
+                    }
+                }
+            }
+
+            _ => { }
         }
+
+        None
     }
 
     fn get_next_connected_service_time(&mut self) -> Option<Instant> {
@@ -333,10 +357,16 @@ impl Mqtt5ClientImpl {
         self.broadcast_event(Arc::new(ClientEvent::Stopped(stopped_event)));
     }
 
-    fn transition_to_state(&mut self, new_state: ClientImplState) -> Mqtt5Result<()> {
+    fn transition_to_state(&mut self, mut new_state: ClientImplState) -> Mqtt5Result<()> {
         let old_state = self.current_state;
         if old_state == new_state {
             return Ok(());
+        }
+
+        if new_state == ClientImplState::PendingReconnect {
+            if self.desired_state != ClientImplState::Connected {
+                new_state = ClientImplState::Stopped;
+            }
         }
 
         if new_state == ClientImplState::Connected {
@@ -381,6 +411,7 @@ impl Mqtt5ClientImpl {
         }
 
         if new_state == ClientImplState::Stopped {
+            self.desired_stop_options = None;
             self.emit_stopped_event();
         }
 
