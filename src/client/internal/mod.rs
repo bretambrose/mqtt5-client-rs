@@ -74,29 +74,6 @@ pub(crate) struct Mqtt5ClientImpl {
     last_error: Option<Mqtt5Error>
 }
 
-/*
-
-On Enter Connecting: Emit AttemptingConnect, clear all last fields
-
-On Leave Connecting:
-    If not going to Connected, emit ConnectionFailure
-
-On Leave Connected:
-    If successful connack exists, emit Disconnected
-    Else emit Connection Failure
-
-On Successful connack received:
-    Emit ConnectionSuccess
-
-When do we set last error?
-  Pass through wrapper functions to operational state
-
-How do we propagate errors from async runtime logic?
-  Give a set function that only sets if None?
-
-What do we do if there's a disconnect or failure and no error code?
-  Add an unknown entry
- */
 
 impl Mqtt5ClientImpl {
 
@@ -141,6 +118,12 @@ impl Mqtt5ClientImpl {
                     callback(event.clone());
                 }
             }
+        }
+    }
+
+    pub(crate) fn apply_error(&mut self, error: Mqtt5Error) {
+        if self.last_error.is_none() {
+            self.last_error = Some(error);
         }
     }
 
@@ -207,7 +190,11 @@ impl Mqtt5ClientImpl {
                     self.last_disconnect = Some(disconnect);
                 }
                 PacketEvent::Connack(connack) => {
+                    let reason_code = connack.reason_code;
                     self.last_connack = Some(connack);
+                    if reason_code == ConnectReasonCode::Success {
+                        self.emit_connection_success_event();
+                    }
                 }
             }
         }
@@ -223,6 +210,9 @@ impl Mqtt5ClientImpl {
         };
 
         let result = self.operational_state.handle_network_event(&mut context);
+        if result.is_err() {
+            self.apply_error(result.unwrap_err());
+        }
 
         self.handle_packet_events();
 
@@ -237,6 +227,9 @@ impl Mqtt5ClientImpl {
         };
 
         let result = self.operational_state.handle_network_event(&mut context);
+        if result.is_err() {
+            self.apply_error(result.unwrap_err());
+        }
 
         result
     }
@@ -247,7 +240,12 @@ impl Mqtt5ClientImpl {
             current_time: Instant::now(),
         };
 
-        return self.operational_state.service(&mut context);
+        let result = self.operational_state.service(&mut context);
+        if result.is_err() {
+            self.apply_error(result.unwrap_err());
+        }
+
+        result
     }
 
     fn compute_optional_state_transition(&self) -> Option<ClientImplState> {
@@ -284,8 +282,64 @@ impl Mqtt5ClientImpl {
         None
     }
 
-    fn transition_to_state(&mut self, next_state: ClientImplState) -> Mqtt5Result<()> {
-        if next_state == ClientImplState::Connected {
+    fn emit_connection_attempt_event(&self) {
+        let connection_attempt_event = ConnectionAttemptEvent {
+        };
+
+        self.broadcast_event(Arc::new(ClientEvent::ConnectionAttempt(connection_attempt_event)));
+    }
+
+    fn emit_connection_success_event(&self) {
+        let settings = self.operational_state.get_negotiated_settings().as_ref().unwrap();
+
+        let connection_success_event = ConnectionSuccessEvent {
+            connack: self.last_connack.as_ref().unwrap().clone(),
+            settings: settings.clone(),
+        };
+
+        self.broadcast_event(Arc::new(ClientEvent::ConnectionSuccess(connection_success_event)));
+    }
+
+    fn emit_connection_failure_event(&self) {
+        let mut connection_failure_event = ConnectionFailureEvent {
+            error: self.last_error.unwrap_or(Mqtt5Error::Unknown),
+            connack: None,
+        };
+
+        if let Some(connack) = &self.last_connack {
+            connection_failure_event.connack = Some(connack.clone());
+        }
+
+        self.broadcast_event(Arc::new(ClientEvent::ConnectionFailure(connection_failure_event)));
+    }
+
+    fn emit_disconnection_event(&self) {
+        let mut disconnection_event = DisconnectionEvent {
+            error: self.last_error.unwrap_or(Mqtt5Error::Unknown),
+            disconnect: None,
+        };
+
+        if let Some(disconnect) = &self.last_disconnect {
+            disconnection_event.disconnect = Some(disconnect.clone());
+        }
+
+        self.broadcast_event(Arc::new(ClientEvent::Disconnection(disconnection_event)));
+    }
+
+    fn emit_stopped_event(&self) {
+        let stopped_event = StoppedEvent {
+        };
+
+        self.broadcast_event(Arc::new(ClientEvent::Stopped(stopped_event)));
+    }
+
+    fn transition_to_state(&mut self, new_state: ClientImplState) -> Mqtt5Result<()> {
+        let old_state = self.current_state;
+        if old_state == new_state {
+            return Ok(());
+        }
+
+        if new_state == ClientImplState::Connected {
             let mut connection_opened_context = NetworkEventContext {
                 event: NetworkEvent::ConnectionOpened,
                 current_time: Instant::now(),
@@ -293,7 +347,7 @@ impl Mqtt5ClientImpl {
             };
 
             self.operational_state.handle_network_event(&mut connection_opened_context)?;
-        } else if self.current_state == ClientImplState::Connected {
+        } else if old_state == ClientImplState::Connected {
             let mut connection_closed_context = NetworkEventContext {
                 event: NetworkEvent::ConnectionClosed,
                 current_time: Instant::now(),
@@ -301,6 +355,33 @@ impl Mqtt5ClientImpl {
             };
 
             self.operational_state.handle_network_event(&mut connection_closed_context)?;
+        }
+
+        if new_state == ClientImplState::Connecting {
+            self.last_error = None;
+            self.last_connack = None;
+            self.last_disconnect = None;
+            self.emit_connection_attempt_event();
+        }
+
+        if old_state == ClientImplState::Connecting && new_state != ClientImplState::Connected {
+            self.emit_connection_failure_event();
+        }
+
+        if old_state == ClientImplState::Connected {
+            if let Some(connack) = &self.last_connack {
+                if connack.reason_code == ConnectReasonCode::Success {
+                    self.emit_disconnection_event();
+                } else {
+                    self.emit_connection_failure_event();
+                }
+            } else {
+                self.emit_connection_failure_event();
+            }
+        }
+
+        if new_state == ClientImplState::Stopped {
+            self.emit_stopped_event();
         }
 
         Ok(())

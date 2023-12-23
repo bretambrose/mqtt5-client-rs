@@ -93,7 +93,10 @@ pub enum Mqtt5Error {
     UserInitiatedDisconnect,
     ClientClosed,
     ConnectionTimeout,
-    UserRequestedStop
+    UserRequestedStop,
+    ConnectionEstablishmentFailure,
+    StreamWriteFailure,
+    StreamReadFailure
 }
 
 impl fmt::Display for Mqtt5Error {
@@ -140,6 +143,9 @@ impl fmt::Display for Mqtt5Error {
             Mqtt5Error::ClientClosed => { write!(f, "ClientClosed") }
             Mqtt5Error::ConnectionTimeout => { write!(f, "ConnectionTimeout") }
             Mqtt5Error::UserRequestedStop => { write!(f, "UserRequestedStop") }
+            Mqtt5Error::ConnectionEstablishmentFailure => { write!(f, "ConnectionEstablishmentFailure") }
+            Mqtt5Error::StreamWriteFailure => { write!(f, "StreamWriteFailure") }
+            Mqtt5Error::StreamReadFailure => { write!(f, "StreamReadFailure") }
         }
     }
 }

@@ -67,6 +67,7 @@ impl ClientRuntimeState {
                     }
                 }
                 () = &mut timeout => {
+                    client.apply_error(Mqtt5Error::ConnectionTimeout);
                     return Ok(ClientImplState::PendingReconnect);
                 }
                 connection_result = &mut connect => {
@@ -74,6 +75,7 @@ impl ClientRuntimeState {
                         self.stream = Some(stream);
                         return Ok(ClientImplState::Connected);
                     } else {
+                        client.apply_error(Mqtt5Error::ConnectionEstablishmentFailure);
                         return Ok(ClientImplState::PendingReconnect);
                     }
                 }
@@ -128,6 +130,7 @@ impl ClientRuntimeState {
                             }
                         }
                         Err(_) => {
+                            client.apply_error(Mqtt5Error::StreamReadFailure);
                             next_state = Some(ClientImplState::PendingReconnect);
                         }
                     }
@@ -154,6 +157,7 @@ impl ClientRuntimeState {
                             }
                         }
                         Err(_) => {
+                            client.apply_error(Mqtt5Error::StreamWriteFailure);
                             next_state = Some(ClientImplState::PendingReconnect);
                         }
                     }
