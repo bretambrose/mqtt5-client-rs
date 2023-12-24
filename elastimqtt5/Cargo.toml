@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 mqtt5-client-rs = { path = "../mqtt5-client-rs" }
 tokio = { version = "1", features = ["full"] }
+simplelog = { version = "0.12.1" }

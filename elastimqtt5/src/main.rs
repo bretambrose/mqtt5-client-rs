@@ -5,9 +5,12 @@
 
 extern crate mqtt5_client_rs;
 extern crate tokio;
+extern crate simplelog;
 
 use mqtt5_client_rs::client;
+use simplelog::*;
 use std::sync::Arc;
+use std::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::runtime::Handle;
 
@@ -182,6 +185,14 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    let mut log_file = File::create("/tmp/elastimqtt5.txt")?;
+
+    let mut log_config_builder = simplelog::ConfigBuilder::new();
+    let log_config = log_config_builder.build();
+
+    WriteLogger::init(LevelFilter::Debug, log_config, log_file).unwrap();
+
     let function = |event|{client_event_callback(event)} ;
     let dyn_function = Box::new(function);
     let callback = ClientEventListener::Callback(dyn_function);
