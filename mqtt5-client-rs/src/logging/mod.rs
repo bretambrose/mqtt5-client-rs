@@ -130,7 +130,7 @@ macro_rules! define_ack_packet_display_trait {
                 log_enum!(self.reason_code, f, "reason_code", $reason_code_to_str_fn);
                 log_optional_string!(self.reason_string, f, "reason_string", value);
                 log_user_properties!(self.user_properties, f, "user_properties", value);
-                write!(f, "}}\n")
+                write!(f, "}}")
             }
         }
     };

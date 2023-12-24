@@ -262,7 +262,7 @@ impl fmt::Display for SubscribePacket {
             write!(f, "    {}: {}\n", i, build_subscription_log_string(subscription))?;
         }
         write!(f, "  ]\n")?;
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

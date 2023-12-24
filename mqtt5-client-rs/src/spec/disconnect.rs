@@ -233,7 +233,7 @@ impl fmt::Display for DisconnectPacket {
         log_optional_primitive_value!(self.session_expiry_interval_seconds, f, "session_expiry_interval_seconds", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);
         log_optional_string!(self.server_reference, f, "server_reference", value);
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

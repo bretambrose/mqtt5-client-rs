@@ -588,7 +588,7 @@ impl OperationalState {
         write!(f, "  pending_write_completion_operations: {} operations\n", self.pending_write_completion_operations.len())?;
         write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
         write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
-        write!(f, "}}\n")?;
+        write!(f, "}}")?;
 
         Ok(())
     }
@@ -627,7 +627,7 @@ impl OperationalState {
         write!(f, "  pending_write_completion_operations: {:?}\n", self.pending_write_completion_operations)?;
         write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
         write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
-        write!(f, "}}\n")?;
+        write!(f, "}}")?;
 
         Ok(())
     }

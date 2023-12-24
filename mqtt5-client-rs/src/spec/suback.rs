@@ -162,7 +162,7 @@ impl fmt::Display for SubackPacket {
             write!(f, "    {}: {}\n", i, suback_reason_code_to_str(*rc))?;
         }
         write!(f, "  ]\n")?;
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

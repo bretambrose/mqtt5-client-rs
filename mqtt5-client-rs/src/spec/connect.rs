@@ -597,7 +597,7 @@ impl fmt::Display for ConnectPacket {
             write!(f, "  }}\n")?;
         }
 
-        write!(f, "}}\n")?;
+        write!(f, "}}")?;
 
         Ok(())
     }

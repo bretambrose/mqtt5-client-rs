@@ -163,7 +163,7 @@ impl fmt::Display for UnsubackPacket {
             write!(f, "    {}: {}\n", i, unsuback_reason_code_to_str(*rc))?;
         }
         write!(f, "  ]\n")?;
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

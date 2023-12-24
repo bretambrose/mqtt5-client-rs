@@ -361,7 +361,7 @@ impl fmt::Display for ConnackPacket {
         log_optional_string!(self.server_reference, f, "server_reference", value);
         log_optional_string!(self.authentication_method, f, "authentication_method", value);
         log_optional_binary_data_sensitive!(self.authentication_data, f, "authentication_data");
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

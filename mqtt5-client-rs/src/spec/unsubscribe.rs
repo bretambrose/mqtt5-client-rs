@@ -200,7 +200,7 @@ impl fmt::Display for UnsubscribePacket {
             write!(f, "    {}: {}\n", i, topic_filter)?;
         }
         write!(f, "  ]\n")?;
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 

@@ -484,7 +484,7 @@ impl fmt::Display for PublishPacket {
 
         log_optional_string!(self.content_type, f, "content_type", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);
-        write!(f, "}}\n")
+        write!(f, "}}")
     }
 }
 
