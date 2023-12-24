@@ -175,18 +175,21 @@ pub enum RejoinSessionPolicy {
 pub struct ConnectionAttemptEvent {}
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct ConnectionSuccessEvent {
     pub connack: ConnackPacket,
     pub settings: NegotiatedSettings
 }
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct ConnectionFailureEvent {
     pub error: Mqtt5Error,
     pub connack: Option<ConnackPacket>,
 }
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct DisconnectionEvent {
     pub error: Mqtt5Error,
     pub disconnect: Option<DisconnectPacket>,
@@ -196,6 +199,7 @@ pub struct DisconnectionEvent {
 pub struct StoppedEvent {}
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug)]
 pub struct PublishReceivedEvent {
     pub publish: PublishPacket
 }
