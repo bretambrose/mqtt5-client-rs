@@ -5,9 +5,10 @@
 
 extern crate tokio;
 
+
 #[cfg(test)]
 mod operational_state_tests {
-    use super::*;
+    use tokio::sync::*;
     use crate::operation::*;
 
     fn build_standard_test_config() -> OperationalStateConfig {

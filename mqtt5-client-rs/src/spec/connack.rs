@@ -369,6 +369,7 @@ impl fmt::Display for ConnackPacket {
 mod tests {
     use super::*;
     use crate::decode::testing::*;
+    use crate::validate::*;
 
     #[test]
     fn connack_round_trip_encode_decode_default() {

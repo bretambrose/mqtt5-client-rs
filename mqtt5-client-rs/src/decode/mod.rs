@@ -228,6 +228,9 @@ impl Decoder {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use crate::spec::*;
+    use crate::alias::*;
+    use crate::encode::*;
 
     pub(crate) fn do_single_encode_decode_test(packet : &MqttPacket, encode_size : usize, decode_size : usize, encode_repetitions : u32) -> bool {
 
