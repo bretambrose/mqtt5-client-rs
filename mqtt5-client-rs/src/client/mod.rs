@@ -16,6 +16,7 @@ use crate::spec::utils::*;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::runtime;
 use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
@@ -33,9 +34,36 @@ use crate::spec::unsuback::UnsubackPacket;
 use crate::spec::unsubscribe::UnsubscribePacket;
 use crate::validate::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct PublishOptions {
-    pub timeout_in_millis: Option<u32>,
+    pub(crate) timeout: Option<Duration>,
+}
+
+pub struct PublishOptionsBuilder {
+    options: PublishOptions
+}
+
+impl PublishOptionsBuilder {
+    pub fn new() -> Self {
+        PublishOptionsBuilder {
+            options: PublishOptions{
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.options.timeout = Some(timeout);
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.options.timeout = Some(timeout);
+        self
+    }
+
+    pub fn build(&self) -> PublishOptions {
+        self.options.clone()
+    }
 }
 
 #[derive(Debug)]
@@ -57,35 +85,108 @@ pub type PublishResult = Mqtt5Result<PublishResponse>;
 
 pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct SubscribeOptions {
-    pub timeout_in_millis: Option<u32>,
+    pub(crate) timeout: Option<Duration>,
+}
+
+pub struct SubscribeOptionsBuilder {
+    options: SubscribeOptions
+}
+
+impl SubscribeOptionsBuilder {
+    pub fn new() -> Self {
+        SubscribeOptionsBuilder {
+            options: SubscribeOptions {
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.options.timeout = Some(timeout);
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.options.timeout = Some(timeout);
+        self
+    }
+
+    pub fn build(&self) -> SubscribeOptions {
+        self.options.clone()
+    }
 }
 
 pub type SubscribeResult = Mqtt5Result<SubackPacket>;
 
 pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct UnsubscribeOptions {
-    pub timeout_in_millis: Option<u32>,
+    pub(crate) timeout: Option<Duration>,
+}
+
+pub struct UnsubscribeOptionsBuilder {
+    options: UnsubscribeOptions
+}
+
+impl UnsubscribeOptionsBuilder {
+    pub fn new() -> Self {
+        UnsubscribeOptionsBuilder {
+            options: UnsubscribeOptions {
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.options.timeout = Some(timeout);
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.options.timeout = Some(timeout);
+        self
+    }
+
+    pub fn build(&self) -> UnsubscribeOptions {
+        self.options.clone()
+    }
 }
 
 pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;
 
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
-#[derive(Debug, Default)]
-pub enum StopMode {
-    #[default]
-    Soft,
-    Hard
+#[derive(Debug, Default, Clone)]
+pub struct StopOptions {
+    pub(crate) disconnect: Option<DisconnectPacket>,
 }
 
-#[derive(Debug, Default)]
-pub struct StopOptions {
-    pub disconnect: Option<DisconnectPacket>,
-    pub mode: StopMode
+pub struct StopOptionsBuilder {
+    options: StopOptions
+}
+
+impl StopOptionsBuilder {
+    pub fn new() -> Self {
+        StopOptionsBuilder {
+            options: StopOptions {
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn set_disconnect_packet(&mut self, disconnect: DisconnectPacket)  {
+        self.options.disconnect = Some(disconnect);
+    }
+
+    pub fn with_disconnect_packet(mut self, disconnect: DisconnectPacket) -> Self {
+        self.options.disconnect = Some(disconnect);
+        self
+    }
+
+    pub fn build(&self) -> StopOptions {
+        self.options.clone()
+    }
 }
 
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
@@ -153,8 +254,8 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
     }
 }
 
-#[derive(Default)]
-#[cfg_attr(test, derive(Eq, PartialEq, Copy, Clone))]
+#[derive(Default, Clone)]
+#[cfg_attr(test, derive(Eq, PartialEq, Copy))]
 pub enum OfflineQueuePolicy {
     #[default]
     PreserveAll,
@@ -163,7 +264,7 @@ pub enum OfflineQueuePolicy {
     PreserveNothing,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum RejoinSessionPolicy {
     #[default]
     PostSuccess,
@@ -249,19 +350,377 @@ macro_rules! client_mqtt_operation_body {
     })
 }
 
+/// Configuration options that will determine packet field values for the CONNECT packet sent out
+/// by the client on each connection attempt.  Almost equivalent to ConnectPacket, but there are a
+/// few differences that make exposing a ConnectPacket directly awkward and potentially misleading.
+///
+/// Auth-related fields are not yet exposed because we don't support authentication exchanges yet.
+#[derive(Default, Clone)]
+pub struct ConnectOptions {
+
+    /// The maximum time interval, in seconds, that is permitted to elapse between the point at which the client
+    /// finishes transmitting one MQTT packet and the point it starts sending the next.  The client will use
+    /// PINGREQ packets to maintain this property.
+    ///
+    /// If the responding CONNACK contains a keep alive property value, then that is the negotiated keep alive value.
+    /// Otherwise, the keep alive sent by the client is the negotiated value.
+    ///
+    /// See [MQTT5 Keep Alive](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901045)
+    ///
+    /// If the final negotiated value is 0, then that means no keep alive will be used.  Such a
+    /// state is not advised due to scenarios where TCP connections can be invisibly dropped by
+    /// routers/firewalls within the full connection circuit.
+    pub(crate) keep_alive_interval_seconds: Option<u16>,
+
+    /// Configuration value that determines how the client will attempt to rejoin sessions
+    pub(crate) rejoin_session_policy: RejoinSessionPolicy,
+
+    /// A unique string identifying the client to the server.  Used to restore session state between connections.
+    ///
+    /// If left empty, the broker will auto-assign a unique client id.  When reconnecting, the mqtt5 client will
+    /// always use the auto-assigned client id.
+    ///
+    /// See [MQTT5 Client Identifier](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901059)
+    pub(crate) client_id: Option<String>,
+
+    /// A string value that the server may use for client authentication and authorization.
+    ///
+    /// See [MQTT5 User Name](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901071)
+    username: Option<String>,
+
+    /// Opaque binary data that the server may use for client authentication and authorization.
+    ///
+    /// See [MQTT5 Password](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901072)
+    password: Option<Vec<u8>>,
+
+    /// A time interval, in seconds, that the client requests the server to persist this connection's MQTT session state
+    /// for.  Has no meaning if the client has not been configured to rejoin sessions.  Must be non-zero in order to
+    /// successfully rejoin a session.
+    ///
+    /// If the responding CONNACK contains a session expiry property value, then that is the negotiated session expiry
+    /// value.  Otherwise, the session expiry sent by the client is the negotiated value.
+    ///
+    /// See [MQTT5 Session Expiry Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901048)
+    pub(crate) session_expiry_interval_seconds: Option<u32>,
+
+    /// If set to true, requests that the server send response information in the subsequent CONNACK.  This response
+    /// information may be used to set up request-response implementations over MQTT, but doing so is outside
+    /// the scope of the MQTT5 spec and client.
+    ///
+    /// See [MQTT5 Request Response Information](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901052)
+    request_response_information: Option<bool>,
+
+    /// If set to true, requests that the server send additional diagnostic information (via response string or
+    /// user properties) in DISCONNECT or CONNACK packets from the server.
+    ///
+    /// See [MQTT5 Request Problem Information](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901053)
+    request_problem_information: Option<bool>,
+
+    /// Notifies the server of the maximum number of in-flight Qos 1 and 2 messages the client is willing to handle.  If
+    /// omitted, then no limit is requested.
+    ///
+    /// See [MQTT5 Receive Maximum](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901049)
+    receive_maximum: Option<u16>,
+
+    /// Maximum number of topic aliases that the client will accept for incoming publishes.  An inbound topic alias larger than
+    /// this number is a protocol error.  If this value is not specified, the client does not support inbound topic
+    /// aliasing.
+    ///
+    /// See [MQTT5 Topic Alias Maximum](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901051)
+    pub(crate) topic_alias_maximum: Option<u16>,
+
+    /// Notifies the server of the maximum packet size the client is willing to handle.  If
+    /// omitted, then no limit beyond the natural limits of MQTT packet size is requested.
+    ///
+    /// See [MQTT5 Maximum Packet Size](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901050)
+    pub(crate) maximum_packet_size_bytes: Option<u32>,
+
+    /// A time interval, in seconds, that the server should wait (for a session reconnection) before sending the
+    /// will message associated with the connection's session.  If omitted, the server will send the will when the
+    /// associated session is destroyed.  If the session is destroyed before a will delay interval has elapsed, then
+    /// the will must be sent at the time of session destruction.
+    ///
+    /// See [MQTT5 Will Delay Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901062)
+    will_delay_interval_seconds: Option<u32>,
+
+    /// The definition of a message to be published when the connection's session is destroyed by the server or when
+    /// the will delay interval has elapsed, whichever comes first.  If undefined, then nothing will be sent.
+    ///
+    /// See [MQTT5 Will](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901040)
+    ///
+    /// TODO: consider making this a builder function to allow dynamic will construction
+    will: Option<PublishPacket>,
+
+    /// Set of MQTT5 user properties to include with all CONNECT packets.
+    ///
+    /// See [MQTT5 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901054)
+    user_properties: Option<Vec<UserProperty>>,
+}
+
+impl ConnectOptions {
+    pub(crate) fn to_connect_packet(&self, connected_previously: bool) -> ConnectPacket {
+        let clean_start =
+            match self.rejoin_session_policy {
+                RejoinSessionPolicy::PostSuccess => {
+                    !connected_previously
+                }
+                RejoinSessionPolicy::Always => {
+                    false
+                }
+                RejoinSessionPolicy::Never => {
+                    true
+                }
+            };
+
+        ConnectPacket {
+            keep_alive_interval_seconds: self.keep_alive_interval_seconds.unwrap_or(0),
+            clean_start,
+            client_id: self.client_id.clone(),
+            username: self.username.clone(),
+            password: self.password.clone(),
+            session_expiry_interval_seconds: self.session_expiry_interval_seconds,
+            request_response_information: self.request_response_information,
+            request_problem_information: self.request_problem_information,
+            receive_maximum: self.receive_maximum,
+            topic_alias_maximum: self.topic_alias_maximum,
+            maximum_packet_size_bytes: self.maximum_packet_size_bytes,
+            authentication_method: None,
+            authentication_data: None,
+            will_delay_interval_seconds: self.will_delay_interval_seconds,
+            will: self.will.clone(),
+            user_properties: self.user_properties.clone(),
+        }
+    }
+}
+
+pub struct ConnectOptionsBuilder {
+    options: ConnectOptions
+}
+
+impl ConnectOptionsBuilder {
+    pub fn new() -> Self {
+        ConnectOptionsBuilder {
+            options: ConnectOptions {
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn with_keep_alive_interval_seconds(mut self, keep_alive: u16) -> Self {
+        self.options.keep_alive_interval_seconds = Some(keep_alive);
+        self
+    }
+
+    pub fn set_keep_alive_interval_seconds(&mut self, keep_alive: u16) {
+        self.options.keep_alive_interval_seconds = Some(keep_alive);
+    }
+
+    pub fn with_rejoin_session_policy(mut self, policy: RejoinSessionPolicy) -> Self {
+        self.options.rejoin_session_policy = policy;
+        self
+    }
+
+    pub fn set_rejoin_session_policy(&mut self, policy: RejoinSessionPolicy) {
+        self.options.rejoin_session_policy = policy;
+    }
+
+    pub fn with_client_id(mut self, client_id: &str) -> Self {
+        self.options.client_id = Some(client_id.to_string());
+        self
+    }
+
+    pub fn set_client_id(&mut self, client_id: &str) {
+        self.options.client_id = Some(client_id.to_string());
+    }
+
+    pub fn with_username(mut self, username: &str) -> Self {
+        self.options.username = Some(username.to_string());
+        self
+    }
+
+    pub fn set_username(&mut self, username: &str) {
+        self.options.username = Some(username.to_string());
+    }
+
+    pub fn with_password(mut self, password: &[u8]) -> Self {
+        self.options.password = Some(password.to_vec());
+        self
+    }
+
+    pub fn set_password(&mut self, password: &[u8]) {
+        self.options.password = Some(password.to_vec());
+    }
+
+    pub fn with_session_expiry_interval_seconds(mut self, session_expiry_interval_seconds: u32) -> Self {
+        self.options.session_expiry_interval_seconds = Some(session_expiry_interval_seconds);
+        self
+    }
+
+    pub fn set_session_expiry_interval_seconds(&mut self, session_expiry_interval_seconds: u32) {
+        self.options.session_expiry_interval_seconds = Some(session_expiry_interval_seconds);
+    }
+
+    pub fn with_request_response_information(mut self, request_response_information: bool) -> Self {
+        self.options.request_response_information = Some(request_response_information);
+        self
+    }
+
+    pub fn set_request_response_information(&mut self, request_response_information: bool) {
+        self.options.request_response_information = Some(request_response_information);
+    }
+
+    pub fn with_request_problem_information(mut self, request_problem_information: bool) -> Self {
+        self.options.request_problem_information = Some(request_problem_information);
+        self
+    }
+
+    pub fn set_request_problem_information(&mut self, request_problem_information: bool) {
+        self.options.request_problem_information = Some(request_problem_information);
+    }
+
+    pub fn with_receive_maximum(mut self, receive_maximum: u16) -> Self {
+        self.options.receive_maximum = Some(receive_maximum);
+        self
+    }
+
+    pub fn set_receive_maximum(&mut self, receive_maximum: u16) {
+        self.options.receive_maximum = Some(receive_maximum);
+    }
+
+    pub fn with_topic_alias_maximum(mut self, topic_alias_maximum: u16) -> Self {
+        self.options.topic_alias_maximum = Some(topic_alias_maximum);
+        self
+    }
+
+    pub fn set_topic_alias_maximum(&mut self, topic_alias_maximum: u16) {
+        self.options.topic_alias_maximum = Some(topic_alias_maximum);
+    }
+
+    pub fn with_maximum_packet_size_bytes(mut self, maximum_packet_size_bytes: u32) -> Self {
+        self.options.maximum_packet_size_bytes = Some(maximum_packet_size_bytes);
+        self
+    }
+
+    pub fn set_maximum_packet_size_bytes(&mut self, maximum_packet_size_bytes: u32) {
+        self.options.maximum_packet_size_bytes = Some(maximum_packet_size_bytes);
+    }
+
+    pub fn with_will_delay_interval_seconds(mut self, will_delay_interval_seconds: u32) -> Self {
+        self.options.will_delay_interval_seconds = Some(will_delay_interval_seconds);
+        self
+    }
+
+    pub fn set_will_delay_interval_seconds(&mut self, will_delay_interval_seconds: u32) {
+        self.options.will_delay_interval_seconds = Some(will_delay_interval_seconds);
+    }
+
+    pub fn with_will(mut self, will: PublishPacket) -> Self {
+        self.options.will = Some(will);
+        self
+    }
+
+    pub fn set_will(&mut self, will: PublishPacket) {
+        self.options.will = Some(will);
+    }
+
+    pub fn with_user_properties(mut self, user_properties: Vec<UserProperty>) -> Self {
+        self.options.user_properties = Some(user_properties);
+        self
+    }
+
+    pub fn set_user_properties(&mut self, user_properties: Vec<UserProperty>) {
+        self.options.user_properties = Some(user_properties);
+    }
+
+    pub fn build(&self) -> ConnectOptions {
+        self.options.clone()
+    }
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
-    pub connect : Option<Box<ConnectPacket>>,
+    pub(crate) connect_options : Option<ConnectOptions>,
 
-    pub offline_queue_policy: OfflineQueuePolicy,
-    pub rejoin_session_policy: RejoinSessionPolicy,
+    pub(crate) offline_queue_policy: OfflineQueuePolicy,
 
-    pub connack_timeout_millis: u32,
-    pub ping_timeout_millis: u32,
+    pub(crate) connack_timeout: Duration,
+    pub(crate) ping_timeout: Duration,
 
-    pub default_event_listener: Option<ClientEventListener>,
+    pub(crate) default_event_listener: Option<ClientEventListener>,
 
-    pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
+    pub(crate) outbound_alias_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
+}
+
+pub struct Mqtt5ClientOptionsBuilder {
+    options: Mqtt5ClientOptions
+}
+
+impl Mqtt5ClientOptionsBuilder {
+    pub fn new() -> Self {
+        Mqtt5ClientOptionsBuilder {
+            options: Mqtt5ClientOptions {
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn with_connect_options(mut self, connect_options: ConnectOptions) -> Self {
+        self.options.connect_options = Some(connect_options);
+        self
+    }
+
+    pub fn set_user_properties(&mut self, connect_options: ConnectOptions) {
+        self.options.connect_options = Some(connect_options);
+    }
+
+    pub fn with_offline_queue_policy(mut self, offline_queue_policy: OfflineQueuePolicy) -> Self {
+        self.options.offline_queue_policy = offline_queue_policy;
+        self
+    }
+
+    pub fn set_offline_queue_policy(&mut self, offline_queue_policy: OfflineQueuePolicy) {
+        self.options.offline_queue_policy = offline_queue_policy;
+    }
+
+    pub fn with_connack_timeout(mut self, connack_timeout: Duration) -> Self {
+        self.options.connack_timeout = connack_timeout;
+        self
+    }
+
+    pub fn set_connack_timeout(&mut self, connack_timeout: Duration) {
+        self.options.connack_timeout = connack_timeout;
+    }
+
+    pub fn with_ping_timeout(mut self, ping_timeout: Duration) -> Self {
+        self.options.ping_timeout = ping_timeout;
+        self
+    }
+
+    pub fn set_ping_timeout(&mut self, ping_timeout: Duration) {
+        self.options.ping_timeout = ping_timeout;
+    }
+
+    pub fn with_default_event_listener(mut self, default_event_listener: ClientEventListener) -> Self {
+        self.options.default_event_listener = Some(default_event_listener);
+        self
+    }
+
+    pub fn set_default_event_listener(&mut self, default_event_listener: ClientEventListener) {
+        self.options.default_event_listener = Some(default_event_listener);
+    }
+
+    pub fn with_outbound_alias_resolver(mut self, outbound_alias_resolver: Box<dyn OutboundAliasResolver + Send>) -> Self {
+        self.options.outbound_alias_resolver = Some(outbound_alias_resolver);
+        self
+    }
+
+    pub fn set_outbound_alias_resolver(&mut self, outbound_alias_resolver: Box<dyn OutboundAliasResolver + Send>) {
+        self.options.outbound_alias_resolver = Some(outbound_alias_resolver);
+    }
+
+    pub fn build(self) -> Mqtt5ClientOptions {
+        self.options
+    }
 }
 
 pub struct Mqtt5Client {
@@ -274,16 +733,13 @@ impl Mqtt5Client {
     pub fn new(mut config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
         let (user_state, internal_state) = create_runtime_states();
 
-        let connect = config.connect.take().unwrap_or(Box::new(ConnectPacket{ ..Default::default() }));
-
         let state_config = OperationalStateConfig {
-            connect,
+            connect_options: config.connect_options.unwrap_or(ConnectOptions { ..Default::default() }),
             base_timestamp: Instant::now(),
             offline_queue_policy: config.offline_queue_policy,
-            rejoin_session_policy: config.rejoin_session_policy,
-            connack_timeout_millis: config.connack_timeout_millis,
-            ping_timeout_millis: config.ping_timeout_millis,
-            outbound_resolver: config.outbound_resolver.take(),
+            connack_timeout: config.connack_timeout,
+            ping_timeout: config.ping_timeout,
+            outbound_alias_resolver: config.outbound_alias_resolver.take(),
         };
 
         let default_listener = config.default_event_listener.take();
@@ -307,7 +763,6 @@ impl Mqtt5Client {
         }
 
         let mut stop_options_internal = StopOptionsInternal {
-            mode: options.mode,
             ..Default::default()
         };
 

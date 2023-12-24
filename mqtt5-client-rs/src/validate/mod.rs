@@ -37,7 +37,7 @@ pub(crate) struct OutboundValidationContext<'a> {
     pub negotiated_settings : Option<&'a NegotiatedSettings>,
 
     // session_expiry_interval for disconnect constraints
-    pub client_connect: Option<&'a ConnectPacket>,
+    pub connect_options: Option<&'a ConnectOptions>,
 
     pub outbound_alias_resolution: Option<OutboundAliasResolution>
 }
@@ -145,13 +145,13 @@ pub(crate) mod testing {
 
     pub(crate) struct PinnedValidationContext{
         pub settings : NegotiatedSettings,
-        pub connect : ConnectPacket,
+        pub connect_options : ConnectOptions,
     }
 
     pub(crate) fn create_pinned_validation_context() -> PinnedValidationContext {
         let mut pinned_context = PinnedValidationContext {
             settings : NegotiatedSettings {..Default::default() },
-            connect : ConnectPacket{ ..Default::default() },
+            connect_options : ConnectOptionsBuilder::new().build(),
         };
 
         pinned_context.settings.maximum_packet_size_to_server = MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
@@ -165,7 +165,7 @@ pub(crate) mod testing {
     pub(crate) fn create_outbound_validation_context_from_pinned(pinned: &PinnedValidationContext) -> OutboundValidationContext {
         OutboundValidationContext {
             negotiated_settings : Some(&pinned.settings),
-            client_connect : Some(&pinned.connect),
+            connect_options : Some(&pinned.connect_options),
             outbound_alias_resolution : None,
         }
     }

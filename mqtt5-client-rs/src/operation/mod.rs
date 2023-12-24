@@ -189,17 +189,16 @@ impl Display for OperationalStateType {
 }
 
 pub(crate) struct OperationalStateConfig {
-    pub connect: Box<ConnectPacket>,
+    pub connect_options: ConnectOptions,
 
     pub base_timestamp: Instant,
 
     pub offline_queue_policy: OfflineQueuePolicy,
-    pub rejoin_session_policy: RejoinSessionPolicy,
 
-    pub connack_timeout_millis: u32,
-    pub ping_timeout_millis: u32,
+    pub connack_timeout: Duration,
+    pub ping_timeout: Duration,
 
-    pub outbound_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
+    pub outbound_alias_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -384,8 +383,8 @@ impl OperationalState {
     // Crate-public API
 
     pub(crate) fn new(mut config: OperationalStateConfig) -> OperationalState {
-        let outbound_resolver = config.outbound_resolver.take().unwrap_or(Box::new(NullOutboundAliasResolver::new()));
-        let inbound_resolver = InboundAliasResolver::new((&config).connect.topic_alias_maximum.unwrap_or(0));
+        let outbound_resolver = config.outbound_alias_resolver.take().unwrap_or(Box::new(NullOutboundAliasResolver::new()));
+        let inbound_resolver = InboundAliasResolver::new((&config).connect_options.topic_alias_maximum.unwrap_or(0));
         let base_time = config.base_timestamp.clone();
 
         OperationalState {
@@ -790,7 +789,7 @@ impl OperationalState {
 
         self.enqueue_operation(connect_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front);
 
-        let connack_timeout = context.current_time + Duration::from_millis(self.config.connack_timeout_millis as u64);
+        let connack_timeout = context.current_time + self.config.connack_timeout;
 
         debug!("[{} ms] handle_network_event_connection_opened - setting connack timeout to {} ms", self.elapsed_time_ms, self.get_elapsed_millis(&connack_timeout));
         self.connack_timeout_timepoint = Some(connack_timeout);
@@ -1115,18 +1114,18 @@ impl OperationalState {
     fn get_operation_timeout_duration(&self, operation: &MqttOperation) -> Option<Duration> {
         match &operation.options {
             Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => {
-                if let Some(timeout) = unsubscribe_options.options.timeout_in_millis {
-                    return Some(Duration::from_millis(timeout as u64));
+                if let Some(timeout) = &unsubscribe_options.options.timeout {
+                    return Some(timeout.clone());
                 }
             }
             Some(MqttOperationOptions::Subscribe(subscribe_options)) => {
-                if let Some(timeout) = subscribe_options.options.timeout_in_millis {
-                    return Some(Duration::from_millis(timeout as u64));
+                if let Some(timeout) = &subscribe_options.options.timeout {
+                    return Some(timeout.clone());
                 }
             }
             Some(MqttOperationOptions::Publish(publish_options)) => {
-                if let Some(timeout) = publish_options.options.timeout_in_millis {
-                    return Some(Duration::from_millis(timeout as u64));
+                if let Some(timeout) = &publish_options.options.timeout {
+                    return Some(timeout.clone());
                 }
             }
             _ => {}
@@ -1246,7 +1245,7 @@ impl OperationalState {
 
                 let mut validation_context = OutboundValidationContext {
                     negotiated_settings : None,
-                    client_connect: Some(&*self.config.connect),
+                    connect_options: Some(&self.config.connect_options),
                     outbound_alias_resolution: Some(outbound_alias_resolution.clone())
                 };
 
@@ -1316,7 +1315,7 @@ impl OperationalState {
 
                 self.enqueue_operation(ping_op_id, OperationalQueueType::HighPriority, OperationalEnqueuePosition::Front);
 
-                self.ping_timeout_timepoint = Some(context.current_time + Duration::from_millis(self.config.ping_timeout_millis as u64));
+                self.ping_timeout_timepoint = Some(context.current_time + self.config.ping_timeout);
 
                 let server_keep_alive = self.current_settings.as_ref().unwrap().server_keep_alive as u64;
                 if server_keep_alive > 0 {
@@ -1839,7 +1838,7 @@ impl OperationalState {
     }
 
     fn get_maximum_incoming_packet_size(&self) -> u32 {
-        if let Some(maximum_packet_size) = &self.config.connect.maximum_packet_size_bytes {
+        if let Some(maximum_packet_size) = &self.config.connect_options.maximum_packet_size_bytes {
             return *maximum_packet_size;
         }
 
@@ -1888,26 +1887,13 @@ impl OperationalState {
     }
 
     fn create_connect(&self) -> Box<MqttPacket> {
-        let mut connect = (*self.config.connect).clone();
+        let mut connect = self.config.connect_options.to_connect_packet(self.has_connected_successfully);
 
         if connect.client_id.is_none() {
             if let Some(settings) = &self.current_settings {
                 connect.client_id = Some(settings.client_id.clone());
             }
         }
-
-        match self.config.rejoin_session_policy {
-            RejoinSessionPolicy::PostSuccess => {
-                connect.clean_start = !self.has_connected_successfully;
-            }
-            RejoinSessionPolicy::Always => {
-                connect.clean_start = false;
-            }
-            RejoinSessionPolicy::Never => {
-                connect.clean_start = true;
-            }
-        }
-
 
         return Box::new(MqttPacket::Connect(connect));
     }
@@ -1970,7 +1956,7 @@ impl OperationalState {
 }
 
 fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPacket, existing_settings: &Option<NegotiatedSettings>) -> NegotiatedSettings {
-    let connect = &*config.connect;
+    let connect = &config.connect_options;
 
     let final_client_id =
         if packet.assigned_client_identifier.is_some() {
@@ -1989,7 +1975,7 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
         receive_maximum_from_server : packet.receive_maximum.unwrap_or(65535),
         maximum_packet_size_to_server : packet.maximum_packet_size.unwrap_or(MAXIMUM_VARIABLE_LENGTH_INTEGER as u32),
         topic_alias_maximum_to_server : packet.topic_alias_maximum.unwrap_or(0),
-        server_keep_alive : packet.server_keep_alive.unwrap_or(connect.keep_alive_interval_seconds),
+        server_keep_alive : packet.server_keep_alive.unwrap_or(connect.keep_alive_interval_seconds.unwrap_or(0)),
         retain_available : packet.retain_available.unwrap_or(true),
         wildcard_subscriptions_available : packet.wildcard_subscriptions_available.unwrap_or(true),
         subscription_identifiers_available : packet.subscription_identifiers_available.unwrap_or(true),
@@ -2101,21 +2087,20 @@ fn sort_operation_deque(operations: &mut VecDeque<u64>) {
 mod tests {
     use super::*;
 
-    fn build_operational_state_config_for_settings_test(connect: Box<ConnectPacket>) -> OperationalStateConfig {
+    fn build_operational_state_config_for_settings_test(connect_options: ConnectOptions) -> OperationalStateConfig {
         OperationalStateConfig {
-            connect,
+            connect_options,
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveAll,
-            rejoin_session_policy: RejoinSessionPolicy::Always,
-            connack_timeout_millis: 30,
-            ping_timeout_millis: 30000,
-            outbound_resolver: None,
+            connack_timeout: Duration::from_secs(30),
+            ping_timeout: Duration::from_millis(30000),
+            outbound_alias_resolver: None,
         }
     }
 
     #[test]
     fn build_negotiated_settings_min_connect_min_connack() {
-        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+        let config = build_operational_state_config_for_settings_test(ConnectOptionsBuilder::new().build());
 
         let connack = ConnackPacket {
             assigned_client_identifier: Some("client".to_string()),
@@ -2144,16 +2129,15 @@ mod tests {
     #[test]
     fn build_negotiated_settings_max_connect_min_connack() {
         let config = build_operational_state_config_for_settings_test(
-            Box::new(ConnectPacket {
-                keep_alive_interval_seconds: 1200,
-                clean_start: true,
-                client_id: Some("connect_client_id".to_string()),
-                session_expiry_interval_seconds: Some(3600),
-                receive_maximum: Some(20),
-                topic_alias_maximum: Some(5),
-                maximum_packet_size_bytes: Some(128 * 1024),
-                ..Default::default()
-            }));
+            ConnectOptionsBuilder::new()
+                .with_keep_alive_interval_seconds(1200)
+                .with_rejoin_session_policy(RejoinSessionPolicy::Always)
+                .with_client_id("connect_client_id")
+                .with_session_expiry_interval_seconds(3600)
+                .with_receive_maximum(20)
+                .with_topic_alias_maximum(5)
+                .with_maximum_packet_size_bytes(128 * 1024)
+                .build());
 
         let connack = ConnackPacket {
             ..Default::default()
@@ -2180,7 +2164,7 @@ mod tests {
 
     #[test]
     fn build_negotiated_settings_min_connect_max_connack() {
-        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+        let config = build_operational_state_config_for_settings_test(ConnectOptionsBuilder::new().build());
 
         let connack = ConnackPacket {
             session_present: true,
@@ -2220,16 +2204,15 @@ mod tests {
     #[test]
     fn build_negotiated_settings_max_connect_max_connack() {
         let config = build_operational_state_config_for_settings_test(
-            Box::new(ConnectPacket {
-                keep_alive_interval_seconds: 1200,
-                clean_start: true,
-                client_id: Some("connect_client_id".to_string()),
-                session_expiry_interval_seconds: Some(3600),
-                receive_maximum: Some(20),
-                topic_alias_maximum: Some(5),
-                maximum_packet_size_bytes: Some(128 * 1024),
-                ..Default::default()
-            }));
+            ConnectOptionsBuilder::new()
+                .with_keep_alive_interval_seconds(1200)
+                .with_rejoin_session_policy(RejoinSessionPolicy::Never)
+                .with_client_id("connect_client_id")
+                .with_session_expiry_interval_seconds(3600)
+                .with_receive_maximum(20)
+                .with_topic_alias_maximum(5)
+                .with_maximum_packet_size_bytes(128 * 1024)
+                .build());
 
         let connack = ConnackPacket {
             session_present: true,
@@ -2268,7 +2251,7 @@ mod tests {
 
     #[test]
     fn build_negotiated_settings_existing_client_id() {
-        let config = build_operational_state_config_for_settings_test(Box::new(ConnectPacket{ ..Default::default() }));
+        let config = build_operational_state_config_for_settings_test(ConnectOptionsBuilder::new().build());
 
         let connack = ConnackPacket {
             ..Default::default()
@@ -2378,13 +2361,12 @@ mod tests {
 
     fn build_operational_state_for_acquire_packet_id_test() -> OperationalState {
         let config = OperationalStateConfig {
-            connect: Box::new(ConnectPacket{ ..Default::default() }),
+            connect_options: ConnectOptionsBuilder::new().build(),
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveNothing,
-            rejoin_session_policy: RejoinSessionPolicy::Always,
-            connack_timeout_millis: 0,
-            ping_timeout_millis: 0,
-            outbound_resolver: None,
+            connack_timeout: Duration::from_millis(0),
+            ping_timeout: Duration::from_millis(0),
+            outbound_alias_resolver: None,
         };
 
         OperationalState::new(config)

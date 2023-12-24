@@ -13,16 +13,12 @@ mod operational_state_tests {
 
     fn build_standard_test_config() -> OperationalStateConfig {
         OperationalStateConfig {
-            connect : Box::new(ConnectPacket{
-                client_id: Some("DefaultTesting".to_string()),
-                ..Default::default()
-            }),
+            connect_options : ConnectOptionsBuilder::new().with_client_id("DefaultTesting").build(),
             base_timestamp: Instant::now(),
             offline_queue_policy: OfflineQueuePolicy::PreserveAll,
-            rejoin_session_policy: RejoinSessionPolicy::Always,
-            connack_timeout_millis: 10000,
-            ping_timeout_millis: 30000,
-            outbound_resolver: None,
+            connack_timeout: Duration::from_millis(10000),
+            ping_timeout: Duration::from_millis(30000),
+            outbound_alias_resolver: None,
         }
     }
 
@@ -754,13 +750,13 @@ mod operational_state_tests {
         let to_broker_packet_stream_length = fixture.to_broker_packet_stream.len();
         let to_client_packet_stream_length = fixture.to_client_packet_stream.len();
 
-        let publish_receiver = fixture.publish(0, PublishPacket {
-            topic: "derp".to_string(),
-            qos: QualityOfService::AtLeastOnce,
-            ..Default::default()
-        }, PublishOptions {
-            timeout_in_millis: None
-        });
+        let publish_receiver = fixture.publish(0,
+             PublishPacket {
+                topic: "derp".to_string(),
+                qos: QualityOfService::AtLeastOnce,
+                ..Default::default()
+            },
+            PublishOptionsBuilder::new().build());
         assert!(publish_receiver.is_ok());
         assert!(fixture.client_state.operations.len() > 0);
         assert!(fixture.client_state.user_operation_queue.len() > 0);
@@ -853,7 +849,7 @@ mod operational_state_tests {
     #[test]
     fn pending_connack_state_connack_timeout() {
         let config = build_standard_test_config();
-        let connack_timeout_millis = config.connack_timeout_millis;
+        let connack_timeout_millis = config.connack_timeout.as_millis();
 
         let mut fixture = OperationalStateTestFixture::new(config);
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::PendingConnack, 1));
@@ -1227,8 +1223,8 @@ mod operational_state_tests {
         assert!(response_delay_millis < PING_TIMEOUT_MILLIS as u64);
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
-        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
+        config.ping_timeout = Duration::from_millis(PING_TIMEOUT_MILLIS as u64);
+        config.connect_options.keep_alive_interval_seconds = Some(KEEP_ALIVE_SECONDS);
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
@@ -1290,13 +1286,13 @@ mod operational_state_tests {
     }
 
     fn do_connected_state_ping_push_out_test(operation_function: Box<dyn Fn(&mut OperationalStateTestFixture, u64, u64) -> ()>, transmission_time: u64, response_time: u64, expected_push_out: u64) {
-        const PING_TIMEOUT_MILLIS: u32 = 10000;
+        const PING_TIMEOUT_MILLIS: u64 = 10000;
         const KEEP_ALIVE_SECONDS: u16 = 20;
         const KEEP_ALIVE_MILLIS: u64 = (KEEP_ALIVE_SECONDS as u64) * 1000;
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
-        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
+        config.ping_timeout = Duration::from_millis(PING_TIMEOUT_MILLIS);
+        config.connect_options.keep_alive_interval_seconds = Some(KEEP_ALIVE_SECONDS);
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
@@ -1524,13 +1520,13 @@ mod operational_state_tests {
     #[test]
     fn connected_state_ping_pingresp_timeout() {
         const CONNACK_TIME: u64 = 11;
-        const PING_TIMEOUT_MILLIS: u32 = 10000;
+        const PING_TIMEOUT_MILLIS: u64 = 10000;
         const KEEP_ALIVE_SECONDS: u16 = 20;
         const KEEP_ALIVE_MILLIS: u64 = (KEEP_ALIVE_SECONDS as u64) * 1000;
 
         let mut config = build_standard_test_config();
-        config.ping_timeout_millis = PING_TIMEOUT_MILLIS;
-        config.connect.keep_alive_interval_seconds = KEEP_ALIVE_SECONDS;
+        config.ping_timeout = Duration::from_millis(PING_TIMEOUT_MILLIS);
+        config.connect_options.keep_alive_interval_seconds = Some(KEEP_ALIVE_SECONDS);
 
         let mut fixture = OperationalStateTestFixture::new(config);
 
@@ -2239,7 +2235,7 @@ mod operational_state_tests {
     }
 
     macro_rules! define_operation_failure_timeout_helper {
-        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type: ident, $packet_type: ident) => {
+        ($test_helper_name: ident, $build_operation_function_name: ident, $operation_api: ident, $operation_options_type_builder: ident, $packet_type: ident) => {
             fn $test_helper_name() {
                 let mut fixture = OperationalStateTestFixture::new(build_standard_test_config());
 
@@ -2248,9 +2244,7 @@ mod operational_state_tests {
 
                 let packet = $build_operation_function_name();
 
-                let mut operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type{
-                    timeout_in_millis : Some(30000)
-                }).unwrap();
+                let mut operation_result_receiver = fixture.$operation_api(0, packet, $operation_options_type_builder::new().with_timeout(Duration::from_secs(30)).build()).unwrap();
                 assert_eq!(Ok(()), fixture.service_round_trip(0, 0, 4096));
 
                 let (index, _) = find_nth_packet_of_type(fixture.to_broker_packet_stream.iter(), PacketType::$packet_type, 1, None, None).unwrap();
@@ -2277,7 +2271,7 @@ mod operational_state_tests {
         connected_state_subscribe_failure_timeout_helper,
         build_subscribe_success_packet,
         subscribe,
-        SubscribeOptions,
+        SubscribeOptionsBuilder,
         Subscribe
     );
 
@@ -2290,7 +2284,7 @@ mod operational_state_tests {
         connected_state_unsubscribe_failure_timeout_helper,
         build_unsubscribe_success_packet,
         unsubscribe,
-        UnsubscribeOptions,
+        UnsubscribeOptionsBuilder,
         Unsubscribe
     );
 
@@ -2303,7 +2297,7 @@ mod operational_state_tests {
         connected_state_qos1_publish_failure_timeout_helper,
         build_qos1_publish_success_packet,
         publish,
-        PublishOptions,
+        PublishOptionsBuilder,
         Publish
     );
 
@@ -2316,7 +2310,7 @@ mod operational_state_tests {
         connected_state_qos2_publish_failure_timeout_helper,
         build_qos2_publish_success_packet,
         publish,
-        PublishOptions,
+        PublishOptionsBuilder,
         Publish
     );
 
@@ -2334,9 +2328,7 @@ mod operational_state_tests {
 
         let packet = build_qos2_publish_success_packet();
 
-        let mut operation_result_receiver = fixture.publish(0, packet, PublishOptions {
-            timeout_in_millis : Some(30000)
-        }).unwrap();
+        let mut operation_result_receiver = fixture.publish(0, packet, PublishOptionsBuilder::new().with_timeout(Duration::from_secs(30)).build()).unwrap();
         assert_eq!(Ok(()), fixture.service_round_trip(0, 0, 4096));
         assert_eq!(Ok(()), fixture.service_round_trip(10, 10, 4096));
 
@@ -2823,7 +2815,7 @@ mod operational_state_tests {
             fn $test_helper_name() {
                 let mut config = build_standard_test_config();
                 config.offline_queue_policy = OfflineQueuePolicy::PreserveNothing;
-                config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
+                config.connect_options.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
 
                 let mut fixture = OperationalStateTestFixture::new(config);
                 fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
@@ -3001,7 +2993,7 @@ mod operational_state_tests {
     fn connected_state_user_disconnect_success_non_empty_queues() {
         let mut config = build_standard_test_config();
         config.offline_queue_policy = OfflineQueuePolicy::PreserveQos1PlusPublishes;
-        config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
+        config.connect_options.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
 
         let mut fixture = OperationalStateTestFixture::new(config);
         fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
@@ -3190,7 +3182,7 @@ mod operational_state_tests {
 
     fn rejoin_session_test_build_clean_start_sequence(rejoin_policy : RejoinSessionPolicy) -> Vec<bool> {
         let mut config = build_standard_test_config();
-        config.rejoin_session_policy = rejoin_policy;
+        config.connect_options.rejoin_session_policy = rejoin_policy;
 
         let mut fixture = OperationalStateTestFixture::new(config);
         fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_session_resumption));
@@ -3342,10 +3334,7 @@ mod operational_state_tests {
     #[test]
     fn connected_state_ack_order() {
         let mut config = build_standard_test_config();
-        config.connect = Box::new(ConnectPacket {
-            topic_alias_maximum: Some(2),
-            ..Default::default()
-        });
+        config.connect_options = ConnectOptionsBuilder::new().with_topic_alias_maximum(2).build();
 
         let mut fixture = OperationalStateTestFixture::new(config);
         assert_eq!(Ok(()), fixture.advance_disconnected_to_state(OperationalStateType::Connected, 0));
@@ -3814,7 +3803,7 @@ mod operational_state_tests {
 
     fn do_connected_state_multi_operation_reconnect_test(offline_queue_policy: OfflineQueuePolicy, rejoin_session: bool) {
         let mut config = build_standard_test_config();
-        config.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
+        config.connect_options.rejoin_session_policy = RejoinSessionPolicy::PostSuccess;
         config.offline_queue_policy = offline_queue_policy;
 
         let mut fixture = OperationalStateTestFixture::new(config);
@@ -4029,7 +4018,7 @@ mod operational_state_tests {
     #[test]
     fn connected_state_outbound_topic_aliasing_used() {
         let mut config = build_standard_test_config();
-        config.outbound_resolver = Some(Box::new(LruOutboundAliasResolver::new(2)));
+        config.outbound_alias_resolver = Some(Box::new(LruOutboundAliasResolver::new(2)));
 
         let mut fixture = OperationalStateTestFixture::new(config);
         fixture.broker_packet_handlers.insert(PacketType::Connect, Box::new(handle_connect_with_topic_aliasing));

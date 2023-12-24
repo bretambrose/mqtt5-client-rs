@@ -36,7 +36,6 @@ pub(crate) struct UnsubscribeOptionsInternal {
 #[derive(Debug, Default)]
 pub(crate) struct StopOptionsInternal {
     pub disconnect: Option<Box<MqttPacket>>,
-    pub mode: StopMode
 }
 
 pub(crate) enum OperationOptions {
