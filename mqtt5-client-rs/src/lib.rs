@@ -151,13 +151,21 @@ impl fmt::Display for Mqtt5Error {
     }
 }
 
+impl From<&Mqtt5Error> for Mqtt5Error {
+    fn from(value: &Mqtt5Error) -> Self {
+        *value
+    }
+}
+
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
 
 fn fold_mqtt5_result<T>(base: Mqtt5Result<T>, new_result: Mqtt5Result<T>) -> Mqtt5Result<T> {
+    /*
     if new_result.is_err() {
         return new_result;
     }
-
+*/
+    new_result.as_ref()?;
     base
 }
 
