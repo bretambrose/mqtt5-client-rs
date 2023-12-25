@@ -32,9 +32,6 @@ pub(crate) struct ClientRuntimeState {
     stream: Option<TcpStream>
 }
 
-
-
-
 impl ClientRuntimeState {
     pub(crate) async fn process_stopped(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
         loop {

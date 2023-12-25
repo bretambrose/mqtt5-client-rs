@@ -274,6 +274,7 @@ impl fmt::Display for NegotiatedSettings {
 
 impl From<oneshot::error::RecvError> for Mqtt5Error {
     fn from(_: oneshot::error::RecvError) -> Self {
+
         Mqtt5Error::OperationChannelReceiveError
     }
 }
@@ -365,7 +366,9 @@ macro_rules! client_mqtt_operation_body {
         let send_result = $self.user_state.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
         Box::pin(async move {
             match send_result {
-                Err(error) => { Err(error) }
+                Err(error) => {
+                    Err(error)
+                }
                 _ => {
                     rx.await?
                 }
@@ -818,7 +821,29 @@ impl Mqtt5Client {
     }
 
     pub fn subscribe(&self, packet: SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
+        //client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
+
+        let boxed_packet = Box::new(MqttPacket::Subscribe(packet));
+        if let Err(error) = validate_packet_outbound(&*boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        let (response_sender, rx) = oneshot::channel();
+        let internal_options = SubscribeOptionsInternal {
+            options,
+            response_sender : Some(response_sender)
+        };
+        let send_result = self.user_state.try_send(OperationOptions::Subscribe(boxed_packet, internal_options));
+        Box::pin(async move {
+            match send_result {
+                Err(_) => {
+                    Err(Mqtt5Error::OperationChannelSendError)
+                }
+                _ => {
+                    rx.await?
+                }
+            }
+        })
     }
 
     pub fn unsubscribe(&self, packet: UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {

@@ -5,6 +5,7 @@
 
 pub(crate) mod tokio_impl;
 
+extern crate log;
 extern crate tokio;
 
 use std::collections::{HashMap, VecDeque};
@@ -15,6 +16,7 @@ use crate::client::*;
 use crate::operation::*;
 use crate::spec::*;
 
+use log::*;
 use tokio::runtime;
 use tokio::sync::oneshot;
 
@@ -287,6 +289,8 @@ impl Mqtt5ClientImpl {
                         if stop_options.disconnect.is_none() {
                             return Some(ClientImplState::Stopped);
                         }
+                    } else {
+                        return Some(ClientImplState::Stopped);
                     }
                 }
             }
@@ -362,13 +366,26 @@ impl Mqtt5ClientImpl {
             return Ok(());
         }
 
-        // displeasing hack to support flushing disconnect packets.  We can't break out of
-        // connected until the disconnect is written to the socket, and so we suspend the
-        // desired != current check to support that since flushing a disconnect will halt
-        // the operational state.  But then we blindly transition to pending connect which isn't
-        // right, so correct that here.
+        // Displeasing hacks to support state transition short-circuits.  We need two:
+        //
+        //  (1) PendingReconnect -> Stopped after a disconnect packet has been flushed
+        //      We can't break out of
+        //      connected until the disconnect is written to the socket, and so we suspend the
+        //      desired != current check to support that since flushing a disconnect will halt
+        //      the operational state.  But then we blindly transition to pending connect which isn't
+        //      right, so correct that here.
+        //  (2) Stopped -> Shutdown after a close operation has been received
+        //      Stopped does not have a naturally exit point except operation receipt.  But we've
+        //      received the last operation in theory, so we need to jump to shutdown immediately
+        //      without waiting on a select
+        //
+        //  TODO: these indicate some flaws in the overall contract/model that should be corrected
         if new_state == ClientImplState::PendingReconnect && self.desired_state != ClientImplState::Connected {
             new_state = ClientImplState::Stopped;
+        }
+
+        if new_state == ClientImplState::Stopped && self.desired_state == ClientImplState::Shutdown {
+            new_state = ClientImplState::Shutdown;
         }
 
         if new_state == ClientImplState::Connected {
@@ -443,6 +460,8 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut 
             }
         }
     }
+
+    info!("Async client loop exitting");
 }
 
 pub(crate) fn spawn_client_impl(
