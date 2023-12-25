@@ -233,7 +233,7 @@ fn get_connect_packet_will_user_property(packet: &MqttPacket, index: usize) -> &
 
 static MQTT5_CONNECT_PROTOCOL_BYTES: [u8; 7] = [0, 4, 77, 81, 84, 84, 5];
 fn get_connect_protocol_bytes(_: &MqttPacket) -> &'static [u8] {
-    return &MQTT5_CONNECT_PROTOCOL_BYTES;
+    &MQTT5_CONNECT_PROTOCOL_BYTES
 }
 
 fn compute_connect_flags(packet: &ConnectPacket) -> u8 {
@@ -372,7 +372,7 @@ pub(crate) fn write_connect_encoding_steps(packet: &ConnectPacket, _: &EncodingC
 fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -399,7 +399,7 @@ fn decode_connect_properties(property_bytes: &[u8], packet : &mut ConnectPacket)
 fn decode_will_properties(property_bytes: &[u8], will: &mut PublishPacket, connect : &mut ConnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -525,7 +525,7 @@ pub(crate) fn decode_connect_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
             mutable_body = decode_optional_length_prefixed_bytes(mutable_body, &mut packet.password)?;
         }
 
-        if mutable_body.len() > 0 {
+        if !mutable_body.is_empty() {
             error!("ConnectPacket Decode - body length does not match expected overall packet length");
             return Err(Mqtt5Error::MalformedPacket);
         }
@@ -584,7 +584,7 @@ impl fmt::Display for ConnectPacket {
 
         log_optional_primitive_value!(self.will_delay_interval_seconds, f, "will_delay_interval_seconds", value);
         if let Some(will) = &self.will {
-            write!(f, "  will: {{\n")?;
+            writeln!(f, "  will: {{")?;
             log_string!(will.topic, f, "  topic");
             log_enum!(will.qos, f, "  qos", quality_of_service_to_str);
             log_primitive_value!(will.retain, f, "  retain");
@@ -594,7 +594,7 @@ impl fmt::Display for ConnectPacket {
             log_optional_string!(will.response_topic, f, "  response_topic", value);
             log_optional_binary_data!(will.correlation_data, f, "  correlation_data", value);
             log_user_properties!(will.user_properties, f, "  user_properties", value);
-            write!(f, "  }}\n")?;
+            writeln!(f, "  }}")?;
         }
 
         write!(f, "}}")?;

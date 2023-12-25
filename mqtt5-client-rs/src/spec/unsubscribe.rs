@@ -94,7 +94,7 @@ pub(crate) fn write_unsubscribe_encoding_steps(packet: &UnsubscribePacket, _: &E
 fn decode_unsubscribe_properties(property_bytes: &[u8], packet : &mut UnsubscribePacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -135,7 +135,7 @@ pub(crate) fn decode_unsubscribe_packet(first_byte: u8, packet_body: &[u8]) -> M
 
         decode_unsubscribe_properties(properties_bytes, packet)?;
 
-        while payload_bytes.len() > 0 {
+        while !payload_bytes.is_empty() {
             let mut topic_filter = String::new();
             payload_bytes = decode_length_prefixed_string(payload_bytes, &mut topic_filter)?;
 
@@ -154,7 +154,7 @@ pub(crate) fn validate_unsubscribe_packet_outbound(packet: &UnsubscribePacket) -
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }
 
-    if packet.topic_filters.len() == 0 {
+    if packet.topic_filters.is_empty() {
         error!("UnsubscribePacket Outbound Validation - empty topic filters list");
         return Err(Mqtt5Error::UnsubscribePacketValidation);
     }

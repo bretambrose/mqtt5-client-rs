@@ -168,7 +168,7 @@ fn fold_timepoint(base: &Option<Instant>, new: &Instant) -> Option<Instant> {
         }
     }
 
-    return Some(*new);
+    Some(*new)
 }
 
 fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Option<Instant> {
@@ -184,5 +184,5 @@ fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Opt
         return *base;
     }
 
-    return *new;
+    *new
 }

@@ -95,7 +95,7 @@ pub(crate) fn write_unsuback_encoding_steps(packet: &UnsubackPacket, _: &Encodin
 fn decode_unsuback_properties(property_bytes: &[u8], packet : &mut UnsubackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -140,8 +140,8 @@ pub(crate) fn decode_unsuback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         let reason_code_count = payload_bytes.len();
         packet.reason_codes.reserve(reason_code_count);
 
-        for i in 0..reason_code_count {
-            packet.reason_codes.push(convert_u8_to_unsuback_reason_code(payload_bytes[i])?);
+        for payload_byte in payload_bytes.iter().take(reason_code_count) {
+            packet.reason_codes.push(convert_u8_to_unsuback_reason_code(*payload_byte)?);
         }
 
         return Ok(box_packet);

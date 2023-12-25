@@ -31,7 +31,7 @@ pub(crate) fn write_pingresp_encoding_steps(_: &PingrespPacket, _: &EncodingCont
 const PINGRESP_FIRST_BYTE : u8 = PACKET_TYPE_PINGRESP << 4;
 
 pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPacket>> {
-    if packet_body.len() != 0 {
+    if !packet_body.is_empty() {
         error!("Packet Decode - Pingresp packet with non-zero remaining length");
         return Err(Mqtt5Error::MalformedPacket);
     }
@@ -41,7 +41,7 @@ pub(crate) fn decode_pingresp_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt
         return Err(Mqtt5Error::MalformedPacket);
     }
 
-    return Ok(Box::new(MqttPacket::Pingresp(PingrespPacket{})));
+    Ok(Box::new(MqttPacket::Pingresp(PingrespPacket{})))
 }
 
 impl fmt::Display for PingrespPacket {

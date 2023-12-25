@@ -95,7 +95,7 @@ pub(crate) fn write_suback_encoding_steps(packet: &SubackPacket, _: &EncodingCon
 fn decode_suback_properties(property_bytes: &[u8], packet : &mut SubackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -139,8 +139,8 @@ pub(crate) fn decode_suback_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5R
         let reason_code_count = payload_bytes.len();
         packet.reason_codes.reserve(reason_code_count);
 
-        for i in 0..reason_code_count {
-            packet.reason_codes.push(convert_u8_to_suback_reason_code(payload_bytes[i])?);
+        for payload_byte in payload_bytes.iter().take(reason_code_count) {
+            packet.reason_codes.push(convert_u8_to_suback_reason_code(*payload_byte)?);
         }
 
         return Ok(box_packet);
@@ -157,11 +157,11 @@ impl fmt::Display for SubackPacket {
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_optional_string!(self.reason_string, f, "reason_string", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);
-        write!(f, "  reason_codes: [\n")?;
+        writeln!(f, "  reason_codes: [")?;
         for (i, rc) in self.reason_codes.iter().enumerate() {
-            write!(f, "    {}: {}\n", i, suback_reason_code_to_str(*rc))?;
+            writeln!(f, "    {}: {}", i, suback_reason_code_to_str(*rc))?;
         }
-        write!(f, "  ]\n")?;
+        writeln!(f, "  ]")?;
         write!(f, "}}")
     }
 }

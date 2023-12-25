@@ -121,7 +121,7 @@ pub(crate) fn write_subscribe_encoding_steps(packet: &SubscribePacket, _: &Encod
 fn decode_subscribe_properties(property_bytes: &[u8], packet : &mut SubscribePacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -164,7 +164,7 @@ pub(crate) fn decode_subscribe_packet(first_byte: u8, packet_body: &[u8]) -> Mqt
 
         decode_subscribe_properties(properties_bytes, packet)?;
 
-        while payload_bytes.len() > 0 {
+        while !payload_bytes.is_empty() {
             let mut subscription = Subscription {
                 ..Default::default()
             };
@@ -206,7 +206,7 @@ pub(crate) fn validate_subscribe_packet_outbound(packet: &SubscribePacket) -> Mq
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
 
-    if packet.subscriptions.len() == 0 {
+    if packet.subscriptions.is_empty() {
         error!("SubscribePacket Outbound Validation - empty subscription set");
         return Err(Mqtt5Error::SubscribePacketValidation);
     }
@@ -257,7 +257,7 @@ impl fmt::Display for SubscribePacket {
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_optional_primitive_value!(self.subscription_identifier, f, "subscription_identifier", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);
-        write!(f, "  subscriptions: [\n")?;
+        writeln!(f, "  subscriptions: [")?;
         for (i, subscription) in self.subscriptions.iter().enumerate() {
             writeln!(f, "    {}: {}", i, build_subscription_log_string(subscription))?;
         }

@@ -107,7 +107,7 @@ macro_rules! validate_ack_inbound_internal {
 pub(crate) use validate_ack_inbound_internal;
 
 pub(crate) fn is_valid_topic(topic: &str) -> bool {
-    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+    if topic.is_empty() || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
         return false;
     }
 
@@ -132,7 +132,7 @@ fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
         has_wildcard: false
     };
 
-    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
+    if topic.is_empty() || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
         properties.is_valid = false;
         return properties;
     }
@@ -153,11 +153,11 @@ fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
             has_share_prefix = true;
         }
 
-        if index == 1 && has_share_prefix && segment.len() > 0 && !has_wildcard {
+        if index == 1 && has_share_prefix && !segment.is_empty() && !has_wildcard {
             has_share_name = true;
         }
 
-        if has_share_name && ((index == 2 && segment.len() > 0) || index > 2) {
+        if has_share_name && ((index == 2 && !segment.is_empty()) || index > 2) {
             properties.is_shared = true;
         }
 

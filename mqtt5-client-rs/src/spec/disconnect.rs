@@ -126,7 +126,7 @@ pub(crate) fn write_disconnect_encoding_steps(packet: &DisconnectPacket, _: &Enc
 fn decode_disconnect_properties(property_bytes: &[u8], packet : &mut DisconnectPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -155,12 +155,12 @@ pub(crate) fn decode_disconnect_packet(first_byte: u8, packet_body: &[u8]) -> Mq
 
     if let MqttPacket::Disconnect(packet) = box_packet.as_mut() {
         let mut mutable_body = packet_body;
-        if mutable_body.len() == 0 {
+        if mutable_body.is_empty() {
             return Ok(box_packet);
         }
 
         mutable_body = decode_u8_as_enum(mutable_body, &mut packet.reason_code, convert_u8_to_disconnect_reason_code)?;
-        if mutable_body.len() == 0 {
+        if mutable_body.is_empty() {
             return Ok(box_packet);
         }
 

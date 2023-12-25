@@ -243,7 +243,7 @@ pub(crate) fn write_connack_encoding_steps(packet: &ConnackPacket, _: &EncodingC
 fn decode_connack_properties(property_bytes: &[u8], packet : &mut ConnackPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -286,7 +286,7 @@ pub(crate) fn decode_connack_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
     if let MqttPacket::Connack(packet) = box_packet.as_mut() {
         let mut mutable_body = packet_body;
-        if mutable_body.len() == 0 {
+        if mutable_body.is_empty() {
             error!("ConnackPacket Decode - packet too short");
             return Err(Mqtt5Error::MalformedPacket);
         }

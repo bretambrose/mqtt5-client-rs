@@ -278,7 +278,7 @@ pub(crate) fn write_publish_encoding_steps(packet: &PublishPacket, context: &Enc
 fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket) -> Mqtt5Result<()> {
     let mut mutable_property_bytes = property_bytes;
 
-    while mutable_property_bytes.len() > 0 {
+    while !mutable_property_bytes.is_empty() {
         let property_key = mutable_property_bytes[0];
         mutable_property_bytes = &mutable_property_bytes[1..];
 
@@ -295,7 +295,7 @@ fn decode_publish_properties(property_bytes: &[u8], packet : &mut PublishPacket)
                     packet.subscription_identifiers = Some(Vec::new());
                 }
 
-                let ids : &mut Vec<u32> = &mut packet.subscription_identifiers.as_mut().unwrap();
+                let ids : &mut Vec<u32> = packet.subscription_identifiers.as_mut().unwrap();
                 ids.push(subscription_id as u32);
             }
             PROPERTY_KEY_USER_PROPERTY => { mutable_property_bytes = decode_user_property(mutable_property_bytes, &mut packet.user_properties)?; }
@@ -345,7 +345,7 @@ pub(crate) fn decode_publish_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5
 
         decode_publish_properties(properties_bytes, packet)?;
 
-        if payload_bytes.len() > 0 {
+        if !payload_bytes.is_empty() {
             packet.payload = Some(payload_bytes.to_vec());
         }
 
@@ -444,7 +444,7 @@ pub(crate) fn validate_publish_packet_outbound_internal(packet: &PublishPacket, 
 pub(crate) fn validate_publish_packet_inbound_internal(packet: &PublishPacket, _: &InboundValidationContext) -> Mqtt5Result<()> {
 
     /* alias resolution happens after decode and before validation, so by now we should have a real topic */
-    if packet.topic.len() == 0 {
+    if packet.topic.is_empty() {
         error!("PublishPacket Inbound Validation - topic could not be resolved");
         return Err(Mqtt5Error::PublishPacketValidation);
     }
@@ -477,7 +477,7 @@ impl fmt::Display for PublishPacket {
             for id in ids {
                 write!(f, "{} ", id)?;
             }
-            write!(f, "]\n")?;
+            writeln!(f, "]")?;
         }
 
         log_optional_string!(self.content_type, f, "content_type", value);

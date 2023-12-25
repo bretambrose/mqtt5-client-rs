@@ -599,7 +599,7 @@ impl OperationalState {
         writeln!(f, "  pending_write_completion: {}", self.pending_write_completion)?;
         writeln!(f, "  operations: {{")?;
         self.operations.iter().for_each(|(id, operation)| {
-            let _ = writeln!(f, "    ({}, {})", *id, mqtt_packet_to_str(&*operation.packet));
+            let _ = writeln!(f, "    ({}, {})", *id, mqtt_packet_to_str(&operation.packet));
         });
         writeln!(f, "  }}")?;
         writeln!(f, "  operation_ack_timeouts: {} timeouts pending", self.operation_ack_timeouts.len())?;
@@ -645,12 +645,12 @@ impl OperationalState {
     }
 
     fn update_internal_clock(&mut self, current_time: &Instant) {
-        self.current_time = current_time.clone();
+        self.current_time = *current_time;
         self.elapsed_time_ms = (*current_time - self.config.base_timestamp).as_millis();
     }
 
     fn get_elapsed_millis(&self, timepoint: &Instant) -> u128 {
-        return (*timepoint - self.config.base_timestamp).as_millis();
+        (*timepoint - self.config.base_timestamp).as_millis()
     }
 
     fn partition_operation_queue_by_queue_policy(&self, queue: &VecDeque<u64>, policy: &OfflineQueuePolicy) -> (VecDeque<u64>, VecDeque<u64>) {
@@ -716,11 +716,11 @@ impl OperationalState {
         self.apply_disconnect_completion(&operation)?;
 
         if operation.options.is_none() {
-            info!("[{} ms] complete_operation_as_success - internal {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
+            info!("[{} ms] complete_operation_as_success - internal {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&operation.packet), id);
             return Ok(())
         }
 
-        info!("[{} ms] complete_operation_as_success - user {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&*operation.packet), id);
+        info!("[{} ms] complete_operation_as_success - user {} operation {} completed", self.elapsed_time_ms, mqtt_packet_to_str(&operation.packet), id);
         complete_operation_with_result(&mut operation.options.unwrap(), completion_result)
     }
 
@@ -744,15 +744,16 @@ impl OperationalState {
         self.apply_disconnect_completion(&operation)?;
 
         if operation.options.is_none() {
-            info!("[{} ms] complete_operation_as_failure ({}) - internal {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&*operation.packet), id);
+            info!("[{} ms] complete_operation_as_failure ({}) - internal {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&operation.packet), id);
             return Ok(())
         }
 
-        info!("[{} ms] complete_operation_as_failure ({}) - user {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&*operation.packet), id);
+        info!("[{} ms] complete_operation_as_failure ({}) - user {} operation {} completed", self.elapsed_time_ms, error, mqtt_packet_to_str(&operation.packet), id);
         complete_operation_with_error(&mut operation.options.unwrap(), error)
     }
 
     fn complete_operation_sequence_as_failure<T>(&mut self, iterator: T, error: Mqtt5Error) -> Mqtt5Result<()> where T : Iterator<Item = u64> {
+        #[allow(clippy::manual_try_fold)]
         iterator.fold(
             Ok(()),
             |res, item| {
@@ -762,6 +763,7 @@ impl OperationalState {
     }
 
     fn complete_operation_sequence_as_empty_success<T>(&mut self, iterator: T) -> Mqtt5Result<()> where T : Iterator<Item = u64> {
+        #[allow(clippy::manual_try_fold)]
         iterator.fold(
             Ok(()),
             |res, item| {
@@ -802,7 +804,7 @@ impl OperationalState {
             if let Some(operation) = self.operations.get(&id) {
                 match &*operation.packet {
                     MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
-                        if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
+                        if does_packet_pass_offline_queue_policy(&operation.packet, &self.config.offline_queue_policy) {
                             self.user_operation_queue.push_front(id);
                         } else {
                             self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
@@ -813,7 +815,7 @@ impl OperationalState {
                             self.resubmit_operation_queue.push_front(id);
                         } else if publish.qos == QualityOfService::ExactlyOnce && operation.qos2_pubrel.is_some() {
                             self.high_priority_operation_queue.push_front(id);
-                        } else if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
+                        } else if does_packet_pass_offline_queue_policy(&operation.packet, &self.config.offline_queue_policy) {
                             self.user_operation_queue.push_front(id);
                         } else {
                             self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
@@ -955,16 +957,14 @@ impl OperationalState {
 
     fn is_connect_packet(&self, id: u64) -> bool {
         if let Some(operation) = self.operations.get(&id) {
-            return mqtt_packet_to_packet_type(&*operation.packet) == PacketType::Connect;
+            return mqtt_packet_to_packet_type(&operation.packet) == PacketType::Connect;
         }
 
         false
     }
 
     fn is_connect_in_queue(&self) -> bool {
-        self.high_priority_operation_queue.iter().fold(false, |accum, id| {
-            accum || self.is_connect_packet(*id)
-        })
+        self.high_priority_operation_queue.iter().any(|id| self.is_connect_packet(*id))
     }
 
     fn handle_network_event_incoming_data(&mut self, context: &mut NetworkEventContext, data: &[u8]) -> Mqtt5Result<()> {
@@ -995,7 +995,7 @@ impl OperationalState {
 
         for mut packet in decoded_packets {
             if let MqttPacket::Publish(publish) = &mut(*packet) {
-                if let Err(_) = self.inbound_alias_resolver.resolve_topic_alias(&publish.topic_alias, &mut publish.topic) {
+                if self.inbound_alias_resolver.resolve_topic_alias(&publish.topic_alias, &mut publish.topic).is_err() {
                     error!("[{} ms] handle_network_event_incoming_data - topic alias resolution failure", self.elapsed_time_ms);
                     return Err(Mqtt5Error::ProtocolError);
                 }
@@ -1009,7 +1009,7 @@ impl OperationalState {
                 validation_context.negotiated_settings = Some(settings);
             }
 
-            let validation_result = validate_packet_inbound_internal(&*packet, &validation_context);
+            let validation_result = validate_packet_inbound_internal(&packet, &validation_context);
             if validation_result.is_err() {
                 error!("[{} ms] handle_network_event_incoming_data - incoming packet validation failure", self.elapsed_time_ms);
                 self.change_state(OperationalStateType::Halted);
@@ -1111,17 +1111,17 @@ impl OperationalState {
         match &operation.options {
             Some(MqttOperationOptions::Unsubscribe(unsubscribe_options)) => {
                 if let Some(timeout) = &unsubscribe_options.options.timeout {
-                    return Some(timeout.clone());
+                    return Some(*timeout);
                 }
             }
             Some(MqttOperationOptions::Subscribe(subscribe_options)) => {
                 if let Some(timeout) = &subscribe_options.options.timeout {
-                    return Some(timeout.clone());
+                    return Some(*timeout);
                 }
             }
             Some(MqttOperationOptions::Publish(publish_options)) => {
                 if let Some(timeout) = &publish_options.options.timeout {
-                    return Some(timeout.clone());
+                    return Some(*timeout);
                 }
             }
             _ => {}
@@ -1242,7 +1242,7 @@ impl OperationalState {
                 let mut validation_context = OutboundValidationContext {
                     negotiated_settings : None,
                     connect_options: Some(&self.config.connect_options),
-                    outbound_alias_resolution: Some(outbound_alias_resolution.clone())
+                    outbound_alias_resolution: Some(outbound_alias_resolution)
                 };
 
                 if let Some(settings) = &self.current_settings {
@@ -1267,7 +1267,7 @@ impl OperationalState {
             let packet = &self.operations.get(&self.current_operation.unwrap()).unwrap().packet;
 
 
-            let encode_result = self.encoder.encode(&*packet, &mut context.to_socket)?;
+            let encode_result = self.encoder.encode(packet, context.to_socket)?;
             if context.to_socket.len() != to_socket_length {
                 self.pending_write_completion = true;
             }
@@ -1540,7 +1540,7 @@ impl OperationalState {
         info!("[{} ms] handle_pingresp - processing PINGRESP packet", self.elapsed_time_ms);
         match self.state {
             OperationalStateType::Connected |  OperationalStateType::PendingDisconnect => {
-                if let Some(_) = &self.ping_timeout_timepoint {
+                if self.ping_timeout_timepoint.is_some() {
                     self.ping_timeout_timepoint = None;
                     Ok(())
                 } else {
@@ -1838,7 +1838,7 @@ impl OperationalState {
             return *maximum_packet_size;
         }
 
-        return MAXIMUM_VARIABLE_LENGTH_INTEGER as u32;
+        MAXIMUM_VARIABLE_LENGTH_INTEGER as u32
     }
 
     fn get_queue(&mut self, queue_type: OperationalQueueType) -> &mut VecDeque<u64> {
@@ -1865,8 +1865,8 @@ impl OperationalState {
         let id = self.next_operation_id;
         self.next_operation_id += 1;
 
-        info!("[{} ms] create_operation - building {} operation with id {}", self.elapsed_time_ms, mqtt_packet_to_str(&*packet), id);
-        debug!("[{} ms] create_operation - operation {}:\n{}", self.elapsed_time_ms, id, &*packet);
+        info!("[{} ms] create_operation - building {} operation with id {}", self.elapsed_time_ms, mqtt_packet_to_str(&packet), id);
+        debug!("[{} ms] create_operation - operation {}:\n{}", self.elapsed_time_ms, id, &packet);
 
         let operation = MqttOperation {
             id,
@@ -1891,7 +1891,7 @@ impl OperationalState {
             }
         }
 
-        return Box::new(MqttPacket::Connect(connect));
+        Box::new(MqttPacket::Connect(connect))
     }
 
     fn acquire_free_packet_id(&mut self, operation_id: u64) -> Mqtt5Result<u16> {
@@ -1905,8 +1905,8 @@ impl OperationalState {
                 self.next_packet_id += 1;
             }
 
-            if !self.allocated_packet_ids.contains_key(&check_id) {
-                self.allocated_packet_ids.insert(check_id, operation_id);
+            if let hash_map::Entry::Vacant(e) = self.allocated_packet_ids.entry(check_id) {
+                e.insert(operation_id);
                 return Ok(check_id);
             }
 
@@ -1959,7 +1959,7 @@ fn build_negotiated_settings(config: &OperationalStateConfig, packet: &ConnackPa
             packet.assigned_client_identifier.as_ref().unwrap().clone()
         } else if connect.client_id.is_some() {
             connect.client_id.as_ref().unwrap().clone()
-        } else if let Some(settings) = &*existing_settings {
+        } else if let Some(settings) = &existing_settings {
             settings.client_id.clone()
         } else {
             panic!("");
@@ -2041,10 +2041,7 @@ fn complete_operation_with_error(operation_options: &mut MqttOperationOptions, e
 fn does_packet_pass_offline_queue_policy(packet: &MqttPacket, policy: &OfflineQueuePolicy) -> bool {
     match packet {
         MqttPacket::Subscribe(_) | MqttPacket::Unsubscribe(_) => {
-            match policy {
-                OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveNothing => { false }
-                _ => { true }
-            }
+            !matches!(policy, OfflineQueuePolicy::PreserveQos1PlusPublishes | OfflineQueuePolicy::PreserveNothing)
         }
         MqttPacket::Publish(publish) => {
             match policy {
