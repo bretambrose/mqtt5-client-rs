@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-mod alias;
+pub mod alias;
 pub mod client;
 mod decode;
 mod encode;
