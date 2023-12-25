@@ -362,11 +362,9 @@ pub(crate) fn validate_publish_packet_outbound(packet: &PublishPacket) -> Mqtt5R
         return Err(Mqtt5Error::PublishPacketValidation);
     }
 
-    if packet.qos == QualityOfService::AtMostOnce {
-        if packet.duplicate {
-            error!("PublishPacket Outbound Validation - packet id is zero");
-            return Err(Mqtt5Error::PublishPacketValidation);
-        }
+    if packet.qos == QualityOfService::AtMostOnce && packet.duplicate {
+        error!("PublishPacket Outbound Validation - packet id is zero");
+        return Err(Mqtt5Error::PublishPacketValidation);
     }
 
     validate_string_length(&packet.topic, Mqtt5Error::PublishPacketValidation, "Publish", "topic")?;
@@ -461,7 +459,7 @@ pub(crate) fn validate_publish_packet_inbound_internal(packet: &PublishPacket, _
 
 impl fmt::Display for PublishPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PublishPacket: {{\n")?;
+        writeln!(f, "PublishPacket: {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_string!(self.topic, f, "topic");
         log_enum!(self.qos, f, "qos", quality_of_service_to_str);

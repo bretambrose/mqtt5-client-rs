@@ -62,7 +62,13 @@ impl PublishOptionsBuilder {
     }
 
     pub fn build(&self) -> PublishOptions {
-        self.options.clone()
+        self.options
+    }
+}
+
+impl Default for PublishOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -113,7 +119,13 @@ impl SubscribeOptionsBuilder {
     }
 
     pub fn build(&self) -> SubscribeOptions {
-        self.options.clone()
+        self.options
+    }
+}
+
+impl Default for SubscribeOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -149,7 +161,13 @@ impl UnsubscribeOptionsBuilder {
     }
 
     pub fn build(&self) -> UnsubscribeOptions {
-        self.options.clone()
+        self.options
+    }
+}
+
+impl Default for UnsubscribeOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -186,6 +204,12 @@ impl StopOptionsBuilder {
 
     pub fn build(&self) -> StopOptions {
         self.options.clone()
+    }
+}
+
+impl Default for StopOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -317,7 +341,7 @@ pub enum ClientEvent {
 
 pub enum ClientEventListener {
     Channel(std::sync::mpsc::Sender<Arc<ClientEvent>>),
-    Callback(Box<dyn Fn(Arc<ClientEvent>) -> () + Send + Sync>)
+    Callback(Box<dyn Fn(Arc<ClientEvent>) + Send + Sync>)
 }
 
 macro_rules! client_lifecycle_operation_body {
@@ -637,6 +661,12 @@ impl ConnectOptionsBuilder {
     }
 }
 
+impl Default for ConnectOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
     pub(crate) connect_options : Option<ConnectOptions>,
@@ -723,6 +753,12 @@ impl Mqtt5ClientOptionsBuilder {
     }
 }
 
+impl Default for Mqtt5ClientOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Mqtt5Client {
     user_state: UserRuntimeState,
 
@@ -745,7 +781,7 @@ impl Mqtt5Client {
         let default_listener = config.default_event_listener.take();
         let client_impl = Mqtt5ClientImpl::new(state_config, default_listener);
 
-        spawn_client_impl(client_impl, internal_state, &runtime_handle);
+        spawn_client_impl(client_impl, internal_state, runtime_handle);
 
         Mqtt5Client {
             user_state,

@@ -76,7 +76,7 @@ pub(crate) struct MqttOperation {
 }
 
 impl MqttOperation {
-    pub fn bind_packet_id(&mut self, packet_id: u16) -> () {
+    pub fn bind_packet_id(&mut self, packet_id: u16) {
         self.packet_id = Some(packet_id);
         match &mut *self.packet {
             MqttPacket::Subscribe(subscribe) => {
@@ -97,7 +97,7 @@ impl MqttOperation {
         }
     }
 
-    pub fn unbind_packet_id(&mut self) -> () {
+    pub fn unbind_packet_id(&mut self) {
         self.packet_id = None;
         match &mut *self.packet {
             MqttPacket::Subscribe(subscribe) => {
@@ -384,8 +384,8 @@ impl OperationalState {
 
     pub(crate) fn new(mut config: OperationalStateConfig) -> OperationalState {
         let outbound_resolver = config.outbound_alias_resolver.take().unwrap_or(Box::new(NullOutboundAliasResolver::new()));
-        let inbound_resolver = InboundAliasResolver::new((&config).connect_options.topic_alias_maximum.unwrap_or(0));
-        let base_time = config.base_timestamp.clone();
+        let inbound_resolver = InboundAliasResolver::new(config.connect_options.topic_alias_maximum.unwrap_or(0));
+        let base_time = config.base_timestamp;
 
         OperationalState {
             config,
@@ -493,7 +493,7 @@ impl OperationalState {
         assert_ne!(op_id, 0);
 
         if let Some(check_operation) = self.operations.get(&op_id) {
-            if !self.operation_packet_passes_offline_queue_policy(&*check_operation.packet) {
+            if !self.operation_packet_passes_offline_queue_policy(&check_operation.packet) {
                 debug!("[{} ms] handle_user_event - operation {} failed by offline queue policy", self.elapsed_time_ms, op_id);
                 let _ = self.complete_operation_as_failure(op_id, Mqtt5Error::OfflineQueuePolicyFailed);
                 return;
@@ -534,7 +534,7 @@ impl OperationalState {
             self.state = OperationalStateType::Halted;
         }
 
-        let operations : Vec<u64> = self.operations.keys().map(|v| *v).collect();
+        let operations : Vec<u64> = self.operations.keys().copied().collect();
         for id in operations {
             let _ = self.complete_operation_as_failure(id, Mqtt5Error::OperationalStateReset);
         }
@@ -566,66 +566,66 @@ impl OperationalState {
             return true;
         }
 
-        return does_packet_pass_offline_queue_policy(packet, &self.config.offline_queue_policy);
+        does_packet_pass_offline_queue_policy(packet, &self.config.offline_queue_policy)
     }
 
     fn log_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OperationalState: {{\n")?;
-        write!(f, "  state: {}\n", self.state)?;
-        write!(f, "  elapsed_time_ms: {}\n", self.elapsed_time_ms)?;
-        write!(f, "  pending_write_completion: {}\n", self.pending_write_completion)?;
-        write!(f, "  operations: {} items\n", self.operations.len())?;
-        write!(f, "  operation_ack_timeouts: {} timeouts pending\n", self.operation_ack_timeouts.len())?;
-        write!(f, "  user_operation_queue: {} items\n", self.user_operation_queue.len())?;
-        write!(f, "  resubmit_operation_queue: {} items\n", self.resubmit_operation_queue.len())?;
-        write!(f, "  high_priority_operation_queue: {} items\n", self.high_priority_operation_queue.len())?;
-        write!(f, "  current_operation: {:?}\n", self.current_operation)?;
-        write!(f, "  qos2_incomplete_incoming_publishes: {} operations\n", self.qos2_incomplete_incoming_publishes.len())?;
-        write!(f, "  allocated_packet_ids: {} ids\n", self.allocated_packet_ids.len())?;
-        write!(f, "  pending_publish_operations: {} operations\n", self.pending_publish_operations.len())?;
-        write!(f, "  pending_non_publish_operations: {} operations\n", self.pending_non_publish_operations.len())?;
-        write!(f, "  pending_write_completion_operations: {} operations\n", self.pending_write_completion_operations.len())?;
-        write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
-        write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
+        writeln!(f, "OperationalState: {{")?;
+        writeln!(f, "  state: {}", self.state)?;
+        writeln!(f, "  elapsed_time_ms: {}", self.elapsed_time_ms)?;
+        writeln!(f, "  pending_write_completion: {}", self.pending_write_completion)?;
+        writeln!(f, "  operations: {} items", self.operations.len())?;
+        writeln!(f, "  operation_ack_timeouts: {} timeouts pending", self.operation_ack_timeouts.len())?;
+        writeln!(f, "  user_operation_queue: {} items", self.user_operation_queue.len())?;
+        writeln!(f, "  resubmit_operation_queue: {} items", self.resubmit_operation_queue.len())?;
+        writeln!(f, "  high_priority_operation_queue: {} items", self.high_priority_operation_queue.len())?;
+        writeln!(f, "  current_operation: {:?}", self.current_operation)?;
+        writeln!(f, "  qos2_incomplete_incoming_publishes: {} operations", self.qos2_incomplete_incoming_publishes.len())?;
+        writeln!(f, "  allocated_packet_ids: {} ids", self.allocated_packet_ids.len())?;
+        writeln!(f, "  pending_publish_operations: {} operations", self.pending_publish_operations.len())?;
+        writeln!(f, "  pending_non_publish_operations: {} operations", self.pending_non_publish_operations.len())?;
+        writeln!(f, "  pending_write_completion_operations: {} operations", self.pending_write_completion_operations.len())?;
+        writeln!(f, "  next_operation_id: {}", self.next_operation_id)?;
+        writeln!(f, "  next_packet_id: {}", self.next_packet_id)?;
         write!(f, "}}")?;
 
         Ok(())
     }
 
     fn log_trace(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OperationalState: {{\n")?;
-        write!(f, "  state: {}\n", self.state)?;
-        write!(f, "  elapsed_time_ms: {}\n", self.elapsed_time_ms)?;
-        write!(f, "  pending_write_completion: {}\n", self.pending_write_completion)?;
-        write!(f, "  operations: {{\n")?;
+        writeln!(f, "OperationalState: {{")?;
+        writeln!(f, "  state: {}", self.state)?;
+        writeln!(f, "  elapsed_time_ms: {}", self.elapsed_time_ms)?;
+        writeln!(f, "  pending_write_completion: {}", self.pending_write_completion)?;
+        writeln!(f, "  operations: {{")?;
         self.operations.iter().for_each(|(id, operation)| {
-            let _ = write!(f, "    ({}, {})\n", *id, mqtt_packet_to_str(&*operation.packet));
+            let _ = writeln!(f, "    ({}, {})", *id, mqtt_packet_to_str(&*operation.packet));
         });
-        write!(f, "  }}\n")?;
-        write!(f, "  operation_ack_timeouts: {} timeouts pending\n", self.operation_ack_timeouts.len())?;
-        write!(f, "  user_operation_queue: {:?}\n", self.user_operation_queue)?;
-        write!(f, "  resubmit_operation_queue: {:?}\n", self.resubmit_operation_queue)?;
-        write!(f, "  high_priority_operation_queue: {:?}\n", self.high_priority_operation_queue)?;
-        write!(f, "  current_operation: {:?}\n", self.current_operation)?;
-        write!(f, "  qos2_incomplete_incoming_publishes: {:?}\n", self.qos2_incomplete_incoming_publishes)?;
-        write!(f, "  allocated_packet_ids: {{\n")?;
+        writeln!(f, "  }}")?;
+        writeln!(f, "  operation_ack_timeouts: {} timeouts pending", self.operation_ack_timeouts.len())?;
+        writeln!(f, "  user_operation_queue: {:?}", self.user_operation_queue)?;
+        writeln!(f, "  resubmit_operation_queue: {:?}", self.resubmit_operation_queue)?;
+        writeln!(f, "  high_priority_operation_queue: {:?}", self.high_priority_operation_queue)?;
+        writeln!(f, "  current_operation: {:?}", self.current_operation)?;
+        writeln!(f, "  qos2_incomplete_incoming_publishes: {:?}", self.qos2_incomplete_incoming_publishes)?;
+        writeln!(f, "  allocated_packet_ids: {{")?;
         self.allocated_packet_ids.iter().for_each(|(packet_id, operation_id)| {
-            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = writeln!(f, "    ({}, {})", *packet_id, *operation_id);
         });
-        write!(f, "  }}\n")?;
-        write!(f, "  pending_publish_operations: {{\n")?;
+        writeln!(f, "  }}")?;
+        writeln!(f, "  pending_publish_operations: {{")?;
         self.pending_publish_operations.iter().for_each(|(packet_id, operation_id)| {
-            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = writeln!(f, "    ({}, {})", *packet_id, *operation_id);
         });
-        write!(f, "  }}\n")?;
-        write!(f, "  pending_non_publish_operations: {{\n")?;
+        writeln!(f, "  }}")?;
+        writeln!(f, "  pending_non_publish_operations: {{")?;
         self.pending_non_publish_operations.iter().for_each(|(packet_id, operation_id)| {
-            let _ = write!(f, "    ({}, {})\n", *packet_id, *operation_id);
+            let _ = writeln!(f, "    ({}, {})", *packet_id, *operation_id);
         });
-        write!(f, "  }}\n")?;
-        write!(f, "  pending_write_completion_operations: {:?}\n", self.pending_write_completion_operations)?;
-        write!(f, "  next_operation_id: {}\n", self.next_operation_id)?;
-        write!(f, "  next_packet_id: {}\n", self.next_packet_id)?;
+        writeln!(f, "  }}")?;
+        writeln!(f, "  pending_write_completion_operations: {:?}", self.pending_write_completion_operations)?;
+        writeln!(f, "  next_operation_id: {}", self.next_operation_id)?;
+        writeln!(f, "  next_packet_id: {}", self.next_packet_id)?;
         write!(f, "}}")?;
 
         Ok(())
@@ -811,14 +811,12 @@ impl OperationalState {
                     MqttPacket::Publish(publish) => {
                         if publish.duplicate {
                             self.resubmit_operation_queue.push_front(id);
+                        } else if publish.qos == QualityOfService::ExactlyOnce && operation.qos2_pubrel.is_some() {
+                            self.high_priority_operation_queue.push_front(id);
+                        } else if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
+                            self.user_operation_queue.push_front(id);
                         } else {
-                            if publish.qos == QualityOfService::ExactlyOnce && operation.qos2_pubrel.is_some() {
-                                self.high_priority_operation_queue.push_front(id);
-                            } else if does_packet_pass_offline_queue_policy(&*operation.packet, &self.config.offline_queue_policy) {
-                                self.user_operation_queue.push_front(id);
-                            } else {
-                                self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
-                            }
+                            self.complete_operation_as_failure(id, Mqtt5Error::OfflineQueuePolicyFailed)?;
                         }
                     }
                     _ => {
@@ -975,12 +973,10 @@ impl OperationalState {
             return Err(Mqtt5Error::InternalStateError);
         }
 
-        if self.state == OperationalStateType::PendingConnack {
-            if self.is_connect_in_queue() {
-                error!("[{} ms] handle_network_event_incoming_data - data received before CONNECT sent", self.elapsed_time_ms);
-                self.change_state(OperationalStateType::Halted);
-                return Err(Mqtt5Error::ProtocolError);
-            }
+        if self.state == OperationalStateType::PendingConnack && self.is_connect_in_queue() {
+            error!("[{} ms] handle_network_event_incoming_data - data received before CONNECT sent", self.elapsed_time_ms);
+            self.change_state(OperationalStateType::Halted);
+            return Err(Mqtt5Error::ProtocolError);
         }
 
         debug!("[{} ms] handle_network_event_incoming_data received {} bytes", self.elapsed_time_ms, data.len());
@@ -1175,7 +1171,7 @@ impl OperationalState {
         }
     }
 
-    fn on_current_operation_fully_written(&mut self, now: Instant) -> () {
+    fn on_current_operation_fully_written(&mut self, now: Instant) {
         let operation = self.operations.get_mut(&self.current_operation.unwrap()).unwrap();
         let packet = &*operation.packet;
         match packet {

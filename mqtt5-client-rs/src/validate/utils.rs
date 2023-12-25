@@ -157,10 +157,8 @@ fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
             has_share_name = true;
         }
 
-        if has_share_name {
-            if (index == 2 && segment.len() > 0) || index > 2 {
-                properties.is_shared = true;
-            }
+        if has_share_name && ((index == 2 && segment.len() > 0) || index > 2) {
+            properties.is_shared = true;
         }
 
         if segment.len() == 1 {

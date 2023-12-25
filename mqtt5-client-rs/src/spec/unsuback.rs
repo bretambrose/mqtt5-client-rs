@@ -154,15 +154,15 @@ validate_ack_inbound_internal!(validate_unsuback_packet_inbound_internal, Unsuba
 
 impl fmt::Display for UnsubackPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "UnsubackPacket: {{\n")?;
+        writeln!(f, "UnsubackPacket: {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_optional_string!(self.reason_string, f, "reason_string", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);
-        write!(f, "  reason_codes: [\n")?;
+        writeln!(f, "  reason_codes: [")?;
         for (i, rc) in self.reason_codes.iter().enumerate() {
-            write!(f, "    {}: {}\n", i, unsuback_reason_code_to_str(*rc))?;
+            writeln!(f, "    {}: {}", i, unsuback_reason_code_to_str(*rc))?;
         }
-        write!(f, "  ]\n")?;
+        writeln!(f, "  ]")?;
         write!(f, "}}")
     }
 }

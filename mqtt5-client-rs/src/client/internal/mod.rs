@@ -111,7 +111,7 @@ impl Mqtt5ClientImpl {
     }
 
     pub(crate) fn broadcast_event(&self, event: Arc<ClientEvent>) {
-        for (_, listener) in &self.listeners {
+        for listener in self.listeners.values() {
             match listener {
                 ClientEventListener::Channel(channel) => {
                     channel.send(event.clone()).unwrap();
@@ -223,8 +223,8 @@ impl Mqtt5ClientImpl {
         };
 
         let result = self.operational_state.handle_network_event(&mut context);
-        if result.is_err() {
-            self.apply_error(result.unwrap_err());
+        if let Err(error) = result {
+            self.apply_error(error);
         }
 
         self.handle_packet_events();
@@ -240,8 +240,8 @@ impl Mqtt5ClientImpl {
         };
 
         let result = self.operational_state.handle_network_event(&mut context);
-        if result.is_err() {
-            self.apply_error(result.unwrap_err());
+        if let Err(error) = result {
+            self.apply_error(error);
         }
 
         result
@@ -254,8 +254,8 @@ impl Mqtt5ClientImpl {
         };
 
         let result = self.operational_state.service(&mut context);
-        if result.is_err() {
-            self.apply_error(result.unwrap_err());
+        if let Err(error) = result {
+            self.apply_error(error);
         }
 
         result
@@ -362,10 +362,13 @@ impl Mqtt5ClientImpl {
             return Ok(());
         }
 
-        if new_state == ClientImplState::PendingReconnect {
-            if self.desired_state != ClientImplState::Connected {
-                new_state = ClientImplState::Stopped;
-            }
+        // displeasing hack to support flushing disconnect packets.  We can't break out of
+        // connected until the disconnect is written to the socket, and so we suspend the
+        // desired != current check to support that since flushing a disconnect will halt
+        // the operational state.  But then we blindly transition to pending connect which isn't
+        // right, so correct that here.
+        if new_state == ClientImplState::PendingReconnect && self.desired_state != ClientImplState::Connected {
+            new_state = ClientImplState::Stopped;
         }
 
         if new_state == ClientImplState::Connected {
@@ -435,10 +438,8 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut 
 
         done = true;
         if let Ok(next_state) = next_state_result {
-            if let Ok(_) = client_impl.transition_to_state(next_state) {
-                if next_state != ClientImplState::Shutdown {
-                    done = false;
-                }
+            if client_impl.transition_to_state(next_state).is_ok() && (next_state != ClientImplState::Shutdown) {
+                done = false;
             }
         }
     }

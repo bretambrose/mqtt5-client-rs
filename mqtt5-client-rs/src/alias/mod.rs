@@ -26,9 +26,9 @@ pub trait OutboundAliasResolver : Send {
 
     fn reset_for_new_connection(&mut self, max_aliases : u16);
 
-    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution;
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution;
 
-    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution;
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution;
 }
 
 impl<T: OutboundAliasResolver + ?Sized> OutboundAliasResolver for Box<T> {
@@ -36,11 +36,11 @@ impl<T: OutboundAliasResolver + ?Sized> OutboundAliasResolver for Box<T> {
 
     fn reset_for_new_connection(&mut self, max_aliases : u16) { self.as_mut().reset_for_new_connection(max_aliases); }
 
-    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         self.as_ref().resolve_topic_alias(alias, topic)
     }
 
-    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         self.as_mut().resolve_and_apply_topic_alias(alias, topic)
     }
 }
@@ -55,18 +55,24 @@ impl NullOutboundAliasResolver {
     }
 }
 
+impl Default for NullOutboundAliasResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutboundAliasResolver for NullOutboundAliasResolver {
     fn get_maximum_alias_value(&self) -> u16 { 0 }
 
     fn reset_for_new_connection(&mut self, _ : u16) {}
 
-    fn resolve_topic_alias(&self, _: &Option<u16>, _: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, _: &Option<u16>, _: &str) -> OutboundAliasResolution {
         OutboundAliasResolution {
             ..Default::default()
         }
     }
 
-    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         self.resolve_topic_alias(alias, topic)
     }
 }
@@ -94,7 +100,7 @@ impl OutboundAliasResolver for ManualOutboundAliasResolver {
         self.current_aliases.clear();
     }
 
-    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         if let Some(alias_ref_value) = alias {
             let alias_value = *alias_ref_value;
             if let Some(existing_alias) = self.current_aliases.get(alias_ref_value) {
@@ -117,12 +123,12 @@ impl OutboundAliasResolver for ManualOutboundAliasResolver {
         OutboundAliasResolution { ..Default::default() }
     }
 
-    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         let resolution = self.resolve_topic_alias(alias, topic);
 
         if let Some(resolved_alias) = resolution.alias {
             if !resolution.skip_topic {
-                self.current_aliases.insert(resolved_alias, topic.clone());
+                self.current_aliases.insert(resolved_alias, topic.to_string());
             }
         }
 
@@ -153,7 +159,7 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
         self.cache.clear();
     }
 
-    fn resolve_topic_alias(&self, _: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_topic_alias(&self, _: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         if self.maximum_alias_value == 0 {
             return OutboundAliasResolution{
                 skip_topic: false,
@@ -179,13 +185,13 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
             }
         }
 
-        return OutboundAliasResolution{
+        OutboundAliasResolution{
             skip_topic: false,
             alias : Some(alias_value)
-        };
+        }
     }
 
-    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &String) -> OutboundAliasResolution {
+    fn resolve_and_apply_topic_alias(&mut self, alias: &Option<u16>, topic: &str) -> OutboundAliasResolution {
         let resolution = self.resolve_topic_alias(alias, topic);
         if resolution.alias.is_none() {
             return resolution;
@@ -199,7 +205,7 @@ impl OutboundAliasResolver for LruOutboundAliasResolver {
             }
 
             let resolved_alias = resolution.alias.unwrap();
-            self.cache.push(topic.clone(), resolved_alias);
+            self.cache.push(topic.to_string(), resolved_alias);
         }
 
         resolution
@@ -226,7 +232,7 @@ impl InboundAliasResolver {
 
     pub(crate) fn resolve_topic_alias(&mut self, alias: &Option<u16>, topic: &mut String) -> Mqtt5Result<()> {
         if let Some(alias_value) = alias {
-            if topic.len() == 0 {
+            if topic.is_empty() {
                 if let Some(existing_topic) = self.current_aliases.get(alias_value) {
                     *topic = existing_topic.clone();
                     return Ok(());

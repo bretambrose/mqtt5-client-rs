@@ -89,7 +89,7 @@ fn decode_packet(first_byte: u8, packet_body: &[u8]) -> Mqtt5Result<Box<MqttPack
         PACKET_TYPE_DISCONNECT => { decode_disconnect_packet(first_byte, packet_body) }
         PACKET_TYPE_AUTH => { decode_auth_packet(first_byte, packet_body) }
         _ => {
-            return Err(Mqtt5Error::MalformedPacket);
+            Err(Mqtt5Error::MalformedPacket)
         }
     }
 }
@@ -109,18 +109,18 @@ impl Decoder {
     }
 
     fn process_read_packet_type<'a>(&mut self, bytes: &'a [u8]) -> (DecoderDirective, &'a[u8]) {
-        if bytes.len() == 0 {
+        if bytes.is_empty() {
             return (DecoderDirective::OutOfData, bytes);
         }
 
         self.first_byte = Some(bytes[0]);
         self.state = DecoderState::ReadTotalRemainingLength;
 
-        return (DecoderDirective::Continue, &bytes[1..]);
+        (DecoderDirective::Continue, &bytes[1..])
     }
 
     fn process_read_total_remaining_length<'a>(&mut self, bytes: &'a[u8], context: &DecodingContext) -> (DecoderDirective, &'a[u8]) {
-        if bytes.len() == 0 {
+        if bytes.is_empty() {
             return (DecoderDirective::OutOfData, bytes);
         }
 
@@ -139,16 +139,16 @@ impl Decoder {
                 self.remaining_length = Some(remaining_length as usize);
                 self.state = DecoderState::ReadPacketBody;
                 self.scratch.clear();
-                return (DecoderDirective::Continue, remaining_bytes);
+                (DecoderDirective::Continue, remaining_bytes)
             } else {
-                return (DecoderDirective::TerminalError, remaining_bytes);
+                (DecoderDirective::TerminalError, remaining_bytes)
             }
         } else if self.scratch.len() >= 4 {
-            return (DecoderDirective::TerminalError, remaining_bytes);
-        } else if remaining_bytes.len() > 0 {
-            return (DecoderDirective::Continue, remaining_bytes);
+            (DecoderDirective::TerminalError, remaining_bytes)
+        } else if !remaining_bytes.is_empty() {
+            (DecoderDirective::Continue, remaining_bytes)
         } else {
-            return (DecoderDirective::OutOfData, remaining_bytes);
+            (DecoderDirective::OutOfData, remaining_bytes)
         }
     }
 
@@ -160,23 +160,23 @@ impl Decoder {
             return (DecoderDirective::OutOfData, &[]);
         }
 
-        let packet_slice : &[u8];
-        if self.scratch.len() > 0 {
-            self.scratch.extend_from_slice(&bytes[..bytes_needed]);
-            packet_slice = &self.scratch;
-        } else {
-            packet_slice = &bytes[..bytes_needed];
-        }
+        let packet_slice : &[u8] =
+            if !self.scratch.is_empty() {
+                self.scratch.extend_from_slice(&bytes[..bytes_needed]);
+                &self.scratch
+            } else {
+                &bytes[..bytes_needed]
+            };
 
         if let Ok(packet) = decode_packet(self.first_byte.unwrap(), packet_slice) {
-            log_packet("Successfully decoded incoming packet: ", &*packet);
+            log_packet("Successfully decoded incoming packet: ", &packet);
             context.decoded_packets.push_back(packet);
 
             self.reset_for_new_packet();
             return (DecoderDirective::Continue, &bytes[bytes_needed..]);
         }
 
-        return (DecoderDirective::TerminalError, &[]);
+        (DecoderDirective::TerminalError, &[])
     }
 
     pub fn decode_bytes(&mut self, bytes: &[u8], context: &mut DecodingContext) -> Mqtt5Result<()> {

@@ -192,14 +192,14 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
 
 impl fmt::Display for UnsubscribePacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "UnsubscribePacket: {{\n")?;
+        writeln!(f, "UnsubscribePacket: {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_user_properties!(self.user_properties, f, "user_properties", value);
-        write!(f, "  topic_filters: [\n")?;
+        writeln!(f, "  topic_filters: [")?;
         for (i, topic_filter) in self.topic_filters.iter().enumerate() {
-            write!(f, "    {}: {}\n", i, topic_filter)?;
+            writeln!(f, "    {}: {}", i, topic_filter)?;
         }
-        write!(f, "  ]\n")?;
+        writeln!(f, "  ]")?;
         write!(f, "}}")
     }
 }

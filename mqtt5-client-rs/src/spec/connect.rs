@@ -567,7 +567,7 @@ pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5R
 
 impl fmt::Display for ConnectPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ConnectPacket: {{\n")?;
+        writeln!(f, "ConnectPacket: {{")?;
         log_primitive_value!(self.keep_alive_interval_seconds, f, "keep_alive_interval_seconds");
         log_primitive_value!(self.clean_start, f, "clean_start");
         log_optional_string_sensitive!(self.username, f, "username");

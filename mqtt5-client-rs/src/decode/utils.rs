@@ -60,7 +60,7 @@ pub(crate) fn decode_vli_into_mutable<'a>(buffer: &'a[u8], value: &mut usize) ->
 
 fn map_utf8_err_to_malformed_packet(_: std::str::Utf8Error) -> Mqtt5Error {
     error!("Packet Decode - invalid utf-8");
-    return Mqtt5Error::MalformedPacket;
+    Mqtt5Error::MalformedPacket
 }
 
 pub(crate) fn decode_length_prefixed_string<'a>(bytes: &'a[u8], value: &mut String) -> Mqtt5Result<&'a[u8]> {
@@ -200,7 +200,7 @@ pub(crate) fn decode_user_property<'a>(bytes: &'a[u8], properties: &mut Option<V
 }
 
 pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u8]> {
-    if bytes.len() < 1 {
+    if bytes.is_empty() {
         return Err(Mqtt5Error::MalformedPacket);
     }
 
@@ -210,7 +210,7 @@ pub(crate) fn decode_u8<'a>(bytes: &'a[u8], value: &mut u8) -> Mqtt5Result<&'a[u
 }
 
 pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<bool>) -> Mqtt5Result<&'a[u8]> {
-    if bytes.len() < 1 {
+    if bytes.is_empty() {
         error!("Packet Decode - Insufficent packet bytes for boolean property");
         return Err(Mqtt5Error::MalformedPacket);
     }
@@ -233,7 +233,7 @@ pub(crate) fn decode_optional_u8_as_bool<'a>(bytes: &'a[u8], value: &mut Option<
 }
 
 pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter: fn(u8) ->Mqtt5Result<T>) -> Mqtt5Result<&'a[u8]> {
-    if bytes.len() < 1 {
+    if bytes.is_empty() {
         error!("Packet Decode - Insufficent packet bytes for enum property");
         return Err(Mqtt5Error::MalformedPacket);
     }
@@ -244,7 +244,7 @@ pub(crate) fn decode_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut T, converter:
 }
 
 pub(crate) fn decode_optional_u8_as_enum<'a, T>(bytes: &'a[u8], value: &mut Option<T>, converter: fn(u8) -> Mqtt5Result<T>) -> Mqtt5Result<&'a[u8]> {
-    if bytes.len() < 1 {
+    if bytes.is_empty() {
         error!("Packet Decode - Insufficent packet bytes for enum property");
         return Err(Mqtt5Error::MalformedPacket);
     }

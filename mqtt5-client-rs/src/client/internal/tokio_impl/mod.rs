@@ -19,7 +19,7 @@ pub(crate) struct UserRuntimeState {
 
 impl UserRuntimeState {
     pub(crate) fn try_send(&self, operation_options: OperationOptions) -> Mqtt5Result<()> {
-        if let Err(_) = self.operation_sender.try_send(operation_options) {
+        if self.operation_sender.try_send(operation_options).is_err() {
             return Err(Mqtt5Error::OperationChannelSendError);
         }
 
@@ -100,12 +100,7 @@ impl ClientRuntimeState {
         let mut next_state = None;
         while next_state.is_none() {
             let next_service_time_option = client.get_next_connected_service_time();
-            let service_wait: Option<tokio::time::Sleep> =
-                if let Some(next_service_time) = next_service_time_option {
-                    Some(sleep(next_service_time - Instant::now()))
-                } else {
-                    None
-                };
+            let service_wait: Option<tokio::time::Sleep> = next_service_time_option.map(|next_service_time| sleep(next_service_time - Instant::now()));
 
             let outbound_slice_option: Option<&[u8]> =
                 if cumulative_bytes_written < outbound_data.len() {
@@ -125,7 +120,7 @@ impl ClientRuntimeState {
                 read_result = stream_reader.read(inbound_data.as_mut_slice()) => {
                     match read_result {
                         Ok(bytes_read) => {
-                            if let Err(_) = client.handle_incoming_bytes(&inbound_data[..bytes_read]) {
+                            if client.handle_incoming_bytes(&inbound_data[..bytes_read]).is_err() {
                                 next_state = Some(ClientImplState::PendingReconnect);
                             }
                         }
@@ -137,7 +132,7 @@ impl ClientRuntimeState {
                 }
                 // client service future (if relevant)
                 Some(_) = conditional_wait(service_wait) => {
-                    if let Err(_) = client.handle_service(&mut outbound_data) {
+                    if client.handle_service(&mut outbound_data).is_err() {
                         next_state = Some(ClientImplState::PendingReconnect);
                     }
                 }
@@ -149,7 +144,7 @@ impl ClientRuntimeState {
                             if cumulative_bytes_written == outbound_data.len() {
                                 outbound_data.clear();
                                 cumulative_bytes_written = 0;
-                                if let Err(_) = client.handle_write_completion() {
+                                if client.handle_write_completion().is_err() {
                                     next_state = Some(ClientImplState::PendingReconnect);
                                 }
                             }
@@ -170,7 +165,7 @@ impl ClientRuntimeState {
         let _ = stream.flush().await;
         let _ = stream.shutdown().await;
 
-        return Ok(next_state.unwrap());
+        Ok(next_state.unwrap())
     }
 
     pub(crate) async fn process_pending_reconnect(&mut self, client: &mut Mqtt5ClientImpl, wait: Duration) -> Mqtt5Result<ClientImplState> {
@@ -198,7 +193,10 @@ impl ClientRuntimeState {
 
 async fn conditional_wait(wait_option: Option<tokio::time::Sleep>) -> Option<()> {
     match wait_option {
-        Some(timer) => Some(timer.await),
+        Some(timer) => {
+            timer.await;
+            Some(())
+        },
         None => None,
     }
 }

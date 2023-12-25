@@ -38,7 +38,7 @@ pub(crate) struct EncodingContext {
 }
 
 fn write_encoding_steps(mqtt_packet: &MqttPacket, context: &EncodingContext, steps: &mut VecDeque<EncodingStep>) -> Mqtt5Result<()> {
-    log_packet("Writing encode steps for packet: ", &*mqtt_packet);
+    log_packet("Writing encode steps for packet: ", mqtt_packet);
 
     match mqtt_packet {
         MqttPacket::Connect(packet) => { write_connect_encoding_steps(packet, context, steps) }
