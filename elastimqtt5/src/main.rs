@@ -65,8 +65,8 @@ fn handle_stop(client: &Mqtt5Client, args: &[&str]) {
     let _ = client.stop(stop_options_builder.build());
 }
 
-fn handle_shutdown(_: &Mqtt5Client, _: &[&str]) {
-
+fn handle_close(client: &Mqtt5Client) {
+    let _ = client.close();
 }
 
 async fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
@@ -161,8 +161,8 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
         "quit" => {
             return true;
         }
-        "shutdown" => {
-            handle_shutdown(client, &fields[1..]);
+        "close" => {
+            handle_close(client);
         }
         "publish" => {
             handle_publish(client, &fields[1..]).await;

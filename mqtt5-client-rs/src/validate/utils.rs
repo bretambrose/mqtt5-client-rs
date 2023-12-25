@@ -118,28 +118,6 @@ pub(crate) fn is_valid_topic(topic: &str) -> bool {
     true
 }
 
-pub(crate) fn is_valid_topic_filter(topic: &str) -> bool {
-    if topic.len() == 0 || topic.len() > MAXIMUM_STRING_PROPERTY_LENGTH {
-        return false;
-    }
-
-    let mut seen_mlw = false;
-    for segment in  topic.split('/') {
-        if seen_mlw {
-            return false;
-        }
-
-        if segment.len() == 1 {
-            if segment == "#" {
-                seen_mlw = true;
-            }
-        } else if segment.contains(['#', '+']) {
-            return false;
-        }
-    }
-    true
-}
-
 // if the topic filter is not valid, then the other fields are not to be trusted
 pub(crate) struct TopicFilterProperties {
     pub is_valid: bool,
@@ -198,7 +176,7 @@ fn compute_topic_filter_properties(topic: &str) -> TopicFilterProperties {
     properties
 }
 
-pub(crate) fn is_topic_filter_valid_internal(filter: &str, context: &OutboundValidationContext, no_local: Option<bool>) -> bool {
+pub(crate) fn is_valid_topic_filter_internal(filter: &str, context: &OutboundValidationContext, no_local: Option<bool>) -> bool {
     let topic_filter_properties = compute_topic_filter_properties(filter);
 
     if !topic_filter_properties.is_valid {
@@ -356,28 +334,75 @@ pub(crate) mod testing {
 
     #[test]
     fn check_valid_topic_filters() {
-        assert_eq!(true, is_valid_topic_filter("a/b/c"));
-        assert_eq!(true, is_valid_topic_filter("#"));
-        assert_eq!(true, is_valid_topic_filter("/#"));
-        assert_eq!(true, is_valid_topic_filter("sports/tennis/#"));
-        assert_eq!(true, is_valid_topic_filter("+"));
-        assert_eq!(true, is_valid_topic_filter("/+"));
-        assert_eq!(true, is_valid_topic_filter("+/a"));
-        assert_eq!(true, is_valid_topic_filter("+/tennis/#"));
-        assert_eq!(true, is_valid_topic_filter("port/+/player1"));
+        let default_settings = NegotiatedSettings {
+            wildcard_subscriptions_available: true,
+            shared_subscriptions_available: true,
+            ..Default::default()
+        };
+
+        let context = OutboundValidationContext {
+            negotiated_settings: Some(&default_settings),
+            connect_options: None,
+            outbound_alias_resolution: None,
+        };
+
+        assert_eq!(true, is_valid_topic_filter_internal("a/b/c", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("#", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("/#", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("sports/tennis/#", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("+", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("/+", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("+/a", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("+/tennis/#", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("port/+/player1", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("$share/derp/derp", &context, Some(false)));
+        assert_eq!(true, is_valid_topic_filter_internal("$share/derp/derp", &context, None));
     }
 
     #[test]
     fn check_invalid_topic_filters() {
-        assert_eq!(false, is_valid_topic_filter(""));
-        assert_eq!(false, is_valid_topic_filter("derp+"));
-        assert_eq!(false, is_valid_topic_filter("derp+/"));
-        assert_eq!(false, is_valid_topic_filter("derp#/"));
-        assert_eq!(false, is_valid_topic_filter("#/a"));
-        assert_eq!(false, is_valid_topic_filter("sport/tennis#"));
-        assert_eq!(false, is_valid_topic_filter("sport/tennis/#/ranking"));
-        assert_eq!(false, is_valid_topic_filter("sport+"));
-        assert_eq!(false, is_valid_topic_filter(&"s".repeat(70000).to_string()));
+        let default_settings = NegotiatedSettings {
+            wildcard_subscriptions_available: true,
+            shared_subscriptions_available: true,
+            ..Default::default()
+        };
+
+        let mut context = OutboundValidationContext {
+            negotiated_settings: Some(&default_settings),
+            connect_options: None,
+            outbound_alias_resolution: None,
+        };
+
+        assert_eq!(false, is_valid_topic_filter_internal("", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("derp+", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("derp+/", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("derp#/", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("#/a", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("sport/tennis#", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("sport/tennis/#/ranking", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("sport+", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal(&"s".repeat(70000).to_string(), &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("$share/derp/derp", &context, Some(true)));
+
+        let no_wildcard_settings = NegotiatedSettings {
+            wildcard_subscriptions_available: false,
+            shared_subscriptions_available: true,
+            ..Default::default()
+        };
+        context.negotiated_settings = Some(&no_wildcard_settings);
+
+        assert_eq!(false, is_valid_topic_filter_internal("#", &context, None));
+        assert_eq!(false, is_valid_topic_filter_internal("/+", &context, None));
+        assert_eq!(true, is_valid_topic_filter_internal("$share/derp/derp", &context, None));
+
+        let no_shared_settings = NegotiatedSettings {
+            wildcard_subscriptions_available: true,
+            shared_subscriptions_available: false,
+            ..Default::default()
+        };
+        context.negotiated_settings = Some(&no_shared_settings);
+
+        assert_eq!(false, is_valid_topic_filter_internal(&"$share/derp/derp".to_string(), &context, None));
     }
 
     #[test]

@@ -181,7 +181,7 @@ pub(crate) fn validate_unsubscribe_packet_outbound_internal(packet: &Unsubscribe
     }
 
     for filter in &packet.topic_filters {
-        if !is_topic_filter_valid_internal(filter, context, None) {
+        if !is_valid_topic_filter_internal(filter, context, None) {
             error!("UnsubscribePacket Outbound Validation - invalid topic filter");
             return Err(Mqtt5Error::UnsubscribePacketValidation);
         }

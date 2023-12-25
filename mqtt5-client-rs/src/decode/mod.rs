@@ -228,7 +228,6 @@ impl Decoder {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use crate::spec::*;
     use crate::alias::*;
     use crate::encode::*;
 

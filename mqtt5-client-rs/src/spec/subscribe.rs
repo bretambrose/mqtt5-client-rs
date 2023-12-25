@@ -231,7 +231,7 @@ pub(crate) fn validate_subscribe_packet_outbound_internal(packet: &SubscribePack
     }
 
     for subscription in &packet.subscriptions {
-        if !is_topic_filter_valid_internal(&subscription.topic_filter, context, Some(subscription.no_local)) {
+        if !is_valid_topic_filter_internal(&subscription.topic_filter, context, Some(subscription.no_local)) {
             error!("SubscribePacket Outbound Validation - invalid topic filter");
             return Err(Mqtt5Error::SubscribePacketValidation);
         }
