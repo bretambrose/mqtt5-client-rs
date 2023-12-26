@@ -13,7 +13,6 @@ pub mod spec;
 mod validate;
 
 /* Re-export all spec types at the root level */
-
 pub use spec::QualityOfService;
 pub use spec::PayloadFormatIndicator;
 pub use spec::RetainHandlingType;
@@ -26,7 +25,6 @@ pub use spec::DisconnectReasonCode;
 pub use spec::SubackReasonCode;
 pub use spec::UnsubackReasonCode;
 pub use spec::AuthenticateReasonCode;
-
 pub use spec::UserProperty;
 pub use spec::Subscription;
 
@@ -45,10 +43,16 @@ pub use spec::suback::SubackPacket;
 pub use spec::subscribe::SubscribePacket;
 pub use spec::unsuback::UnsubackPacket;
 pub use spec::unsubscribe::UnsubscribePacket;
-pub use spec::utils::{convert_u8_to_disconnect_reason_code, convert_u8_to_authenticate_reason_code, convert_u8_to_quality_of_service, convert_u8_to_retain_handling_type};
+pub use spec::utils::{
+    convert_u8_to_disconnect_reason_code,
+    convert_u8_to_authenticate_reason_code,
+    convert_u8_to_quality_of_service,
+    convert_u8_to_retain_handling_type
+};
 
 pub use client::*;
 
+use std::error::Error;
 use std::fmt;
 use std::time::Instant;
 
@@ -98,6 +102,9 @@ pub enum Mqtt5Error {
     ConnectionEstablishmentFailure,
     StreamWriteFailure,
     StreamReadFailure,
+}
+
+impl Error for Mqtt5Error {
 }
 
 impl fmt::Display for Mqtt5Error {
@@ -160,11 +167,6 @@ impl From<&Mqtt5Error> for Mqtt5Error {
 pub type Mqtt5Result<T> = Result<T, Mqtt5Error>;
 
 fn fold_mqtt5_result<T>(base: Mqtt5Result<T>, new_result: Mqtt5Result<T>) -> Mqtt5Result<T> {
-    /*
-    if new_result.is_err() {
-        return new_result;
-    }
-*/
     new_result.as_ref()?;
     base
 }
@@ -179,7 +181,7 @@ fn fold_timepoint(base: &Option<Instant>, new: &Instant) -> Option<Instant> {
     Some(*new)
 }
 
-fn fold_optional_timepoint(base: &Option<Instant>, new: &Option<Instant>) -> Option<Instant> {
+fn fold_optional_timepoint_min(base: &Option<Instant>, new: &Option<Instant>) -> Option<Instant> {
     if let Some(base_timepoint) = base {
         if let Some(new_timepoint) = new {
             if base_timepoint < new_timepoint {

@@ -1388,7 +1388,7 @@ impl OperationalState {
     }
 
     fn get_next_service_timepoint_connected(&self) -> Option<Instant> {
-        let mut next_service_time: Option<Instant> = fold_optional_timepoint(&None, &self.ping_timeout_timepoint);
+        let mut next_service_time: Option<Instant> = fold_optional_timepoint_min(&None, &self.ping_timeout_timepoint);
 
         if let Some(ack_timeout) = self.operation_ack_timeouts.peek() {
             next_service_time = fold_timepoint(&next_service_time, &ack_timeout.0.timeout);
@@ -1398,9 +1398,9 @@ impl OperationalState {
             return next_service_time;
         }
 
-        next_service_time = fold_optional_timepoint(&next_service_time, &self.next_ping_timepoint);
+        next_service_time = fold_optional_timepoint_min(&next_service_time, &self.next_ping_timepoint);
 
-        fold_optional_timepoint(&self.get_next_service_timepoint_operational_queue( OperationalQueueServiceMode::All), &next_service_time)
+        fold_optional_timepoint_min(&self.get_next_service_timepoint_operational_queue( OperationalQueueServiceMode::All), &next_service_time)
     }
 
     fn get_next_service_timepoint_pending_disconnect(&self) -> Option<Instant> {

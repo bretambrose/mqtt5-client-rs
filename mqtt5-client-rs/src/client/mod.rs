@@ -756,6 +756,8 @@ impl Mqtt5ClientOptionsBuilder {
     }
 }
 
+// Note to self: don't implement clone.  the interface is not &mut so sharing across threads just
+// needs an Arc wrapper
 pub struct Mqtt5Client {
     user_state: UserRuntimeState,
 
