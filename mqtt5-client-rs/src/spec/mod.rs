@@ -632,6 +632,16 @@ pub struct Subscription {
     pub retain_handling_type: RetainHandlingType,
 }
 
+impl Subscription {
+    pub fn new(topic_filter: &str, qos: QualityOfService) -> Self {
+        Subscription {
+            topic_filter: topic_filter.to_string(),
+            qos,
+            ..Default::default()
+        }
+    }
+}
+
 /// Algebraic union of all MQTT5 packet types.
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]

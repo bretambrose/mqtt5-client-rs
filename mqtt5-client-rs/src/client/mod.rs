@@ -20,7 +20,6 @@ use std::time::Duration;
 use tokio::runtime;
 use tokio::sync::oneshot;
 use crate::alias::OutboundAliasResolver;
-use crate::operation::OperationalStateConfig;
 
 use crate::spec::connect::ConnectPacket;
 use crate::spec::disconnect::validate_disconnect_packet_outbound;
@@ -279,8 +278,8 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
     }
 }
 
-#[derive(Default, Clone)]
-#[cfg_attr(test, derive(Eq, PartialEq, Copy))]
+#[derive(Default, Clone, Copy)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
 pub enum OfflineQueuePolicy {
     #[default]
     PreserveAll,
@@ -289,12 +288,19 @@ pub enum OfflineQueuePolicy {
     PreserveNothing,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Copy)]
 pub enum RejoinSessionPolicy {
     #[default]
     PostSuccess,
     Always,
     Never
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum ExponentialBackoffJitterType {
+    None,
+    #[default]
+    Uniform
 }
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -345,6 +351,10 @@ pub enum ClientEventListener {
     Callback(Box<dyn Fn(Arc<ClientEvent>) + Send + Sync>)
 }
 
+pub struct ListenerHandle {
+    id: u64
+}
+
 macro_rules! client_lifecycle_operation_body {
     ($lifeycle_operation:ident, $self:ident) => {{
         $self.user_state.try_send(OperationOptions::$lifeycle_operation())
@@ -354,7 +364,7 @@ macro_rules! client_lifecycle_operation_body {
 macro_rules! client_mqtt_operation_body {
     ($self:ident, $operation_type:ident, $options_internal_type: ident, $packet_name: ident, $packet_type: ident, $options_value: expr) => ({
         let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name));
-        if let Err(error) = validate_packet_outbound(&*boxed_packet) {
+        if let Err(error) = validate_packet_outbound(&boxed_packet) {
             return Box::pin(async move { Err(error) });
         }
 
@@ -670,18 +680,51 @@ impl Default for ConnectOptionsBuilder {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ReconnectOptions {
+    reconnect_period_jitter: ExponentialBackoffJitterType,
+    base_reconnect_period: Duration,
+    max_reconnect_period: Duration,
+    reconnect_stability_reset_period: Duration,
+}
+
+impl ReconnectOptions {
+    fn normalize(&mut self) {
+        if self.base_reconnect_period > self.max_reconnect_period {
+            std::mem::swap(&mut self.base_reconnect_period, &mut self.max_reconnect_period)
+        }
+
+        if self.max_reconnect_period < Duration::from_secs(1) {
+            self.max_reconnect_period = Duration::from_secs(1);
+        }
+    }
+}
+
+impl Default for ReconnectOptions {
+    fn default() -> Self {
+        ReconnectOptions {
+            reconnect_period_jitter: ExponentialBackoffJitterType::default(),
+            base_reconnect_period: Duration::from_secs(1),
+            max_reconnect_period: Duration::from_secs(120),
+            reconnect_stability_reset_period: Duration::from_secs(30),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Mqtt5ClientOptions {
-    pub(crate) connect_options : Option<ConnectOptions>,
+    connect_options : Option<ConnectOptions>,
 
-    pub(crate) offline_queue_policy: OfflineQueuePolicy,
+    offline_queue_policy: OfflineQueuePolicy,
 
-    pub(crate) connack_timeout: Duration,
-    pub(crate) ping_timeout: Duration,
+    connack_timeout: Duration,
+    ping_timeout: Duration,
 
-    pub(crate) default_event_listener: Option<ClientEventListener>,
+    default_event_listener: Option<ClientEventListener>,
 
-    pub(crate) outbound_alias_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
+    outbound_alias_resolver: Option<Box<dyn OutboundAliasResolver + Send>>,
+
+    reconnect_options: ReconnectOptions,
 }
 
 pub struct Mqtt5ClientOptionsBuilder {
@@ -751,6 +794,42 @@ impl Mqtt5ClientOptionsBuilder {
         self.options.outbound_alias_resolver = Some(outbound_alias_resolver);
     }
 
+    pub fn with_reconnect_period_jitter(mut self, reconnect_period_jitter: ExponentialBackoffJitterType) -> Self {
+        self.options.reconnect_options.reconnect_period_jitter = reconnect_period_jitter;
+        self
+    }
+
+    pub fn set_reconnect_period_jitter(&mut self, reconnect_period_jitter: ExponentialBackoffJitterType) {
+        self.options.reconnect_options.reconnect_period_jitter = reconnect_period_jitter;
+    }
+
+    pub fn with_base_reconnect_period(mut self, base_reconnect_period: Duration) -> Self {
+        self.options.reconnect_options.base_reconnect_period = base_reconnect_period;
+        self
+    }
+
+    pub fn set_base_reconnect_period(&mut self, base_reconnect_period: Duration) {
+        self.options.reconnect_options.base_reconnect_period = base_reconnect_period;
+    }
+
+    pub fn with_max_reconnect_period(mut self, max_reconnect_period: Duration) -> Self {
+        self.options.reconnect_options.max_reconnect_period = max_reconnect_period;
+        self
+    }
+
+    pub fn set_max_reconnect_period(&mut self, max_reconnect_period: Duration) {
+        self.options.reconnect_options.max_reconnect_period = max_reconnect_period;
+    }
+
+    pub fn with_reconnect_stability_reset_period(mut self, reconnect_stability_reset_period: Duration) -> Self {
+        self.options.reconnect_options.reconnect_stability_reset_period = reconnect_stability_reset_period;
+        self
+    }
+
+    pub fn set_reconnect_stability_reset_period(&mut self, reconnect_stability_reset_period: Duration) {
+        self.options.reconnect_options.reconnect_stability_reset_period = reconnect_stability_reset_period;
+    }
+
     pub fn build(self) -> Mqtt5ClientOptions {
         self.options
     }
@@ -769,20 +848,10 @@ pub struct Mqtt5Client {
 }
 
 impl Mqtt5Client {
-    pub fn new(mut config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
+    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
         let (user_state, internal_state) = create_runtime_states();
 
-        let state_config = OperationalStateConfig {
-            connect_options: config.connect_options.unwrap_or(ConnectOptions { ..Default::default() }),
-            base_timestamp: Instant::now(),
-            offline_queue_policy: config.offline_queue_policy,
-            connack_timeout: config.connack_timeout,
-            ping_timeout: config.ping_timeout,
-            outbound_alias_resolver: config.outbound_alias_resolver.take(),
-        };
-
-        let default_listener = config.default_event_listener.take();
-        let client_impl = Mqtt5ClientImpl::new(state_config, default_listener);
+        let client_impl = Mqtt5ClientImpl::new(config);
 
         spawn_client_impl(client_impl, internal_state, runtime_handle);
 
@@ -821,47 +890,27 @@ impl Mqtt5Client {
     }
 
     pub fn subscribe(&self, packet: SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        //client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
-
-        let boxed_packet = Box::new(MqttPacket::Subscribe(packet));
-        if let Err(error) = validate_packet_outbound(&*boxed_packet) {
-            return Box::pin(async move { Err(error) });
-        }
-
-        let (response_sender, rx) = oneshot::channel();
-        let internal_options = SubscribeOptionsInternal {
-            options,
-            response_sender : Some(response_sender)
-        };
-        let send_result = self.user_state.try_send(OperationOptions::Subscribe(boxed_packet, internal_options));
-        Box::pin(async move {
-            match send_result {
-                Err(_) => {
-                    Err(Mqtt5Error::OperationChannelSendError)
-                }
-                _ => {
-                    rx.await?
-                }
-            }
-        })
+        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
     }
 
     pub fn unsubscribe(&self, packet: UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
         client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, Unsubscribe, options)
     }
 
-    pub fn add_event_listener(&self, listener: ClientEventListener) -> Mqtt5Result<u64> {
+    pub fn add_event_listener(&self, listener: ClientEventListener) -> Mqtt5Result<ListenerHandle> {
         let mut current_id = self.listener_id_allocator.lock().unwrap();
         let listener_id = *current_id;
         *current_id += 1;
 
         self.user_state.try_send(OperationOptions::AddListener(listener_id, listener))?;
 
-        Ok(listener_id)
+        Ok(ListenerHandle {
+            id: listener_id
+        })
     }
 
-    pub fn remove_event_listener(&self, listener_id: u64) -> Mqtt5Result<()> {
-        self.user_state.try_send(OperationOptions::RemoveListener(listener_id))
+    pub fn remove_event_listener(&self, listener: ListenerHandle) -> Mqtt5Result<()> {
+        self.user_state.try_send(OperationOptions::RemoveListener(listener.id))
     }
 }
 

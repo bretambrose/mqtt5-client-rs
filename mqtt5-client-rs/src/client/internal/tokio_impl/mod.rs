@@ -117,7 +117,10 @@ impl ClientRuntimeState {
                 read_result = stream_reader.read(inbound_data.as_mut_slice()) => {
                     match read_result {
                         Ok(bytes_read) => {
-                            if client.handle_incoming_bytes(&inbound_data[..bytes_read]).is_err() {
+                            if bytes_read == 0 {
+                                client.apply_error(Mqtt5Error::ConnectionClosed);
+                                next_state = Some(ClientImplState::PendingReconnect);
+                            } else if client.handle_incoming_bytes(&inbound_data[..bytes_read]).is_err() {
                                 next_state = Some(ClientImplState::PendingReconnect);
                             }
                         }

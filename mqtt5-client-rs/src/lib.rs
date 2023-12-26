@@ -97,7 +97,7 @@ pub enum Mqtt5Error {
     UserRequestedStop,
     ConnectionEstablishmentFailure,
     StreamWriteFailure,
-    StreamReadFailure
+    StreamReadFailure,
 }
 
 impl fmt::Display for Mqtt5Error {

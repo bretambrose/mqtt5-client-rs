@@ -6,6 +6,7 @@
 pub(crate) mod tokio_impl;
 
 extern crate log;
+extern crate rand;
 extern crate tokio;
 
 use std::collections::{HashMap, VecDeque};
@@ -17,6 +18,7 @@ use crate::operation::*;
 use crate::spec::*;
 
 use log::*;
+use rand::Rng;
 use tokio::runtime;
 use tokio::sync::oneshot;
 
@@ -74,15 +76,30 @@ pub(crate) struct Mqtt5ClientImpl {
 
     last_connack: Option<ConnackPacket>,
     last_disconnect: Option<DisconnectPacket>,
-    last_error: Option<Mqtt5Error>
+    last_error: Option<Mqtt5Error>,
+
+    successful_connect_time: Option<Instant>,
+    next_reconnect_period: Duration,
+    reconnect_options: ReconnectOptions
 }
 
 
 impl Mqtt5ClientImpl {
 
-    pub(crate) fn new(config: OperationalStateConfig, default_listener: Option<ClientEventListener>) -> Self {
+    pub(crate) fn new(mut config: Mqtt5ClientOptions) -> Self {
+        let state_config = OperationalStateConfig {
+            connect_options: config.connect_options.unwrap_or(ConnectOptions { ..Default::default() }),
+            base_timestamp: Instant::now(),
+            offline_queue_policy: config.offline_queue_policy,
+            connack_timeout: config.connack_timeout,
+            ping_timeout: config.ping_timeout,
+            outbound_alias_resolver: config.outbound_alias_resolver.take(),
+        };
+
+        let default_listener = config.default_event_listener.take();
+
         let mut client_impl = Mqtt5ClientImpl {
-            operational_state: OperationalState::new(config),
+            operational_state: OperationalState::new(state_config),
             listeners: HashMap::new(),
             current_state: ClientImplState::Stopped,
             desired_state: ClientImplState::Stopped,
@@ -91,7 +108,12 @@ impl Mqtt5ClientImpl {
             last_connack: None,
             last_disconnect: None,
             last_error: None,
+            successful_connect_time: None,
+            next_reconnect_period: config.reconnect_options.base_reconnect_period,
+            reconnect_options: config.reconnect_options
         };
+
+        client_impl.reconnect_options.normalize();
 
         if let Some(listener) = default_listener {
             client_impl.listeners.insert(0, listener);
@@ -208,6 +230,7 @@ impl Mqtt5ClientImpl {
                     let reason_code = connack.reason_code;
                     self.last_connack = Some(connack);
                     if reason_code == ConnectReasonCode::Success {
+                        self.successful_connect_time = Some(Instant::now());
                         self.emit_connection_success_event();
                     }
                 }
@@ -261,6 +284,34 @@ impl Mqtt5ClientImpl {
         }
 
         result
+    }
+
+    fn clamp_reconnect_period(&self, mut reconnect_period: Duration) -> Duration {
+        if reconnect_period > self.reconnect_options.max_reconnect_period {
+            reconnect_period = self.reconnect_options.max_reconnect_period;
+        }
+
+        reconnect_period
+    }
+
+    fn compute_uniform_jitter_period(&self, max_nanos: u128) -> Duration {
+        let mut rng = rand::thread_rng();
+        let uniform_nanos = rng.gen_range(0..max_nanos);
+        Duration::from_nanos(uniform_nanos as u64)
+    }
+
+    pub(crate) fn compute_reconnect_period(&mut self) -> Duration {
+        let reconnect_period = self.next_reconnect_period;
+        self.next_reconnect_period = self.clamp_reconnect_period(self.next_reconnect_period * 2);
+
+        match self.reconnect_options.reconnect_period_jitter {
+            ExponentialBackoffJitterType::None => {
+                reconnect_period
+            }
+            ExponentialBackoffJitterType::Uniform => {
+                self.compute_uniform_jitter_period(reconnect_period.as_nanos())
+            }
+        }
     }
 
     fn compute_optional_state_transition(&self) -> Option<ClientImplState> {
@@ -427,6 +478,15 @@ impl Mqtt5ClientImpl {
             } else {
                 self.emit_connection_failure_event();
             }
+
+            if let Some(successful_connect_timepoint) = self.successful_connect_time {
+                let now = Instant::now();
+                if (now - successful_connect_timepoint) > self.reconnect_options.reconnect_stability_reset_period {
+                    self.next_reconnect_period = self.reconnect_options.base_reconnect_period;
+                }
+            }
+
+            self.successful_connect_time = None;
         }
 
         if new_state == ClientImplState::Stopped {
@@ -449,7 +509,10 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut 
                 ClientImplState::Stopped => { async_state.process_stopped(client_impl).await }
                 ClientImplState::Connecting => { async_state.process_connecting(client_impl).await }
                 ClientImplState::Connected => { async_state.process_connected(client_impl).await }
-                ClientImplState::PendingReconnect => { async_state.process_pending_reconnect(client_impl, Duration::from_secs(5)).await }
+                ClientImplState::PendingReconnect => {
+                    let reconnect_wait = client_impl.compute_reconnect_period();
+                    async_state.process_pending_reconnect(client_impl, reconnect_wait).await
+                }
                 _ => { Ok(ClientImplState::Shutdown) }
             };
 

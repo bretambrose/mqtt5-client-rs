@@ -74,11 +74,7 @@ async fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
         return;
     }
 
-    let mut publish = PublishPacket {
-        qos: QualityOfService::AtMostOnce,
-        topic: args[0].to_string(),
-        ..Default::default()
-    };
+    let mut publish = PublishPacket::new_empty(args[0], QualityOfService::AtLeastOnce);
 
     if let Ok(qos_u8) = args[1].parse::<u8>() {
         if let Ok(qos) = convert_u8_to_quality_of_service(qos_u8) {
@@ -112,11 +108,7 @@ async fn handle_subscribe(client: &Mqtt5Client, args: &[&str]) {
 
     let subscribe = SubscribePacket {
         subscriptions: vec!(
-            Subscription {
-                qos: subscribe_qos,
-                topic_filter: args[0].to_string(),
-                ..Default::default()
-            }
+            Subscription::new(args[0], subscribe_qos)
         ),
         ..Default::default()
     };
@@ -207,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_connack_timeout(Duration::from_secs(60))
         .with_ping_timeout(Duration::from_secs(60))
         .with_default_event_listener(callback)
+        .with_reconnect_period_jitter(ExponentialBackoffJitterType::None)
         .build();
 
     let runtime_handle = Handle::current();

@@ -486,6 +486,26 @@ impl fmt::Display for PublishPacket {
     }
 }
 
+// Some convenience constructors
+impl PublishPacket {
+    pub fn new(topic: &str, qos: QualityOfService, payload: &[u8]) -> Self {
+        PublishPacket {
+            topic: topic.to_string(),
+            qos,
+            payload: Some(payload.to_vec()),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_empty(topic: &str, qos: QualityOfService) -> Self {
+        PublishPacket {
+            topic: topic.to_string(),
+            qos,
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
