@@ -7,6 +7,7 @@ pub(crate) mod internal;
 
 extern crate tokio;
 
+use std::fmt::{Debug, Formatter};
 use crate::*;
 use crate::client::internal::*;
 use crate::client::internal::tokio_impl::*;
@@ -33,11 +34,12 @@ use crate::spec::unsuback::UnsubackPacket;
 use crate::spec::unsubscribe::UnsubscribePacket;
 use crate::validate::*;
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default)]
 pub struct PublishOptions {
     pub(crate) timeout: Option<Duration>,
 }
 
+#[derive(Default)]
 pub struct PublishOptionsBuilder {
     options: PublishOptions
 }
@@ -45,14 +47,8 @@ pub struct PublishOptionsBuilder {
 impl PublishOptionsBuilder {
     pub fn new() -> Self {
         PublishOptionsBuilder {
-            options: PublishOptions{
-                ..Default::default()
-            }
+            ..Default::default()
         }
-    }
-
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.options.timeout = Some(timeout);
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -60,26 +56,18 @@ impl PublishOptionsBuilder {
         self
     }
 
-    pub fn build(&self) -> PublishOptions {
+    pub fn build(self) -> PublishOptions {
         self.options
     }
 }
 
-impl Default for PublishOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Qos2Response {
     Pubrec(PubrecPacket),
     Pubcomp(PubcompPacket),
 }
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Eq, PartialEq)]
 pub enum PublishResponse {
     Qos0,
     Qos1(PubackPacket),
@@ -90,11 +78,12 @@ pub type PublishResult = Mqtt5Result<PublishResponse>;
 
 pub type PublishResultFuture = dyn Future<Output = PublishResult>;
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default)]
 pub struct SubscribeOptions {
     pub(crate) timeout: Option<Duration>,
 }
 
+#[derive(Default)]
 pub struct SubscribeOptionsBuilder {
     options: SubscribeOptions
 }
@@ -102,14 +91,8 @@ pub struct SubscribeOptionsBuilder {
 impl SubscribeOptionsBuilder {
     pub fn new() -> Self {
         SubscribeOptionsBuilder {
-            options: SubscribeOptions {
-                ..Default::default()
-            }
+            ..Default::default()
         }
-    }
-
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.options.timeout = Some(timeout);
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -117,14 +100,8 @@ impl SubscribeOptionsBuilder {
         self
     }
 
-    pub fn build(&self) -> SubscribeOptions {
+    pub fn build(self) -> SubscribeOptions {
         self.options
-    }
-}
-
-impl Default for SubscribeOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -132,11 +109,12 @@ pub type SubscribeResult = Mqtt5Result<SubackPacket>;
 
 pub type SubscribeResultFuture = dyn Future<Output = SubscribeResult>;
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default)]
 pub struct UnsubscribeOptions {
     pub(crate) timeout: Option<Duration>,
 }
 
+#[derive(Default)]
 pub struct UnsubscribeOptionsBuilder {
     options: UnsubscribeOptions
 }
@@ -144,14 +122,8 @@ pub struct UnsubscribeOptionsBuilder {
 impl UnsubscribeOptionsBuilder {
     pub fn new() -> Self {
         UnsubscribeOptionsBuilder {
-            options: UnsubscribeOptions {
-                ..Default::default()
-            }
+            ..Default::default()
         }
-    }
-
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.options.timeout = Some(timeout);
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -159,14 +131,8 @@ impl UnsubscribeOptionsBuilder {
         self
     }
 
-    pub fn build(&self) -> UnsubscribeOptions {
+    pub fn build(self) -> UnsubscribeOptions {
         self.options
-    }
-}
-
-impl Default for UnsubscribeOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -174,11 +140,12 @@ pub type UnsubscribeResult = Mqtt5Result<UnsubackPacket>;
 
 pub type UnsubscribeResultFuture = dyn Future<Output = UnsubscribeResult>;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct StopOptions {
     pub(crate) disconnect: Option<DisconnectPacket>,
 }
 
+#[derive(Default)]
 pub struct StopOptionsBuilder {
     options: StopOptions
 }
@@ -186,14 +153,8 @@ pub struct StopOptionsBuilder {
 impl StopOptionsBuilder {
     pub fn new() -> Self {
         StopOptionsBuilder {
-            options: StopOptions {
-                ..Default::default()
-            }
+            ..Default::default()
         }
-    }
-
-    pub fn set_disconnect_packet(&mut self, disconnect: DisconnectPacket)  {
-        self.options.disconnect = Some(disconnect);
     }
 
     pub fn with_disconnect_packet(mut self, disconnect: DisconnectPacket) -> Self {
@@ -201,14 +162,8 @@ impl StopOptionsBuilder {
         self
     }
 
-    pub fn build(&self) -> StopOptions {
-        self.options.clone()
-    }
-}
-
-impl Default for StopOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
+    pub fn build(self) -> StopOptions {
+        self.options
     }
 }
 
@@ -278,8 +233,7 @@ impl From<oneshot::error::RecvError> for Mqtt5Error {
     }
 }
 
-#[derive(Default, Clone, Copy)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub enum OfflineQueuePolicy {
     #[default]
     PreserveAll,
@@ -288,7 +242,7 @@ pub enum OfflineQueuePolicy {
     PreserveNothing,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub enum RejoinSessionPolicy {
     #[default]
     PostSuccess,
@@ -296,47 +250,43 @@ pub enum RejoinSessionPolicy {
     Never
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub enum ExponentialBackoffJitterType {
     None,
     #[default]
     Uniform
 }
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ConnectionAttemptEvent {}
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ConnectionSuccessEvent {
     pub connack: ConnackPacket,
     pub settings: NegotiatedSettings
 }
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ConnectionFailureEvent {
     pub error: Mqtt5Error,
     pub connack: Option<ConnackPacket>,
 }
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct DisconnectionEvent {
     pub error: Mqtt5Error,
     pub disconnect: Option<DisconnectPacket>,
 }
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Eq, PartialEq)]
 pub struct StoppedEvent {}
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PublishReceivedEvent {
     pub publish: PublishPacket
 }
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Debug, Eq, PartialEq)]
 pub enum ClientEvent {
     ConnectionAttempt(ConnectionAttemptEvent),
     ConnectionSuccess(ConnectionSuccessEvent),
@@ -351,6 +301,20 @@ pub enum ClientEventListener {
     Callback(Box<dyn Fn(Arc<ClientEvent>) + Send + Sync>)
 }
 
+impl Debug for ClientEventListener {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ClientEventListener::Channel(_) => {
+                write!(f, "ClientEventListener::Channel(...)")
+            }
+            ClientEventListener::Callback(_) => {
+                write!(f, "ClientEventListener::Callback(...)")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub struct ListenerHandle {
     id: u64
 }
@@ -392,7 +356,7 @@ macro_rules! client_mqtt_operation_body {
 /// few differences that make exposing a ConnectPacket directly awkward and potentially misleading.
 ///
 /// Auth-related fields are not yet exposed because we don't support authentication exchanges yet.
-#[derive(Default, Clone)]
+#[derive(Debug, Default)]
 pub struct ConnectOptions {
 
     /// The maximum time interval, in seconds, that is permitted to elapse between the point at which the client
@@ -530,6 +494,7 @@ impl ConnectOptions {
     }
 }
 
+#[derive(Debug, Default)]
 pub struct ConnectOptionsBuilder {
     options: ConnectOptions
 }
@@ -537,9 +502,7 @@ pub struct ConnectOptionsBuilder {
 impl ConnectOptionsBuilder {
     pub fn new() -> Self {
         ConnectOptionsBuilder {
-            options: ConnectOptions {
-                ..Default::default()
-            }
+            ..Default::default()
         }
     }
 
@@ -548,17 +511,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_keep_alive_interval_seconds(&mut self, keep_alive: u16) {
-        self.options.keep_alive_interval_seconds = Some(keep_alive);
-    }
-
     pub fn with_rejoin_session_policy(mut self, policy: RejoinSessionPolicy) -> Self {
         self.options.rejoin_session_policy = policy;
         self
-    }
-
-    pub fn set_rejoin_session_policy(&mut self, policy: RejoinSessionPolicy) {
-        self.options.rejoin_session_policy = policy;
     }
 
     pub fn with_client_id(mut self, client_id: &str) -> Self {
@@ -566,17 +521,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_client_id(&mut self, client_id: &str) {
-        self.options.client_id = Some(client_id.to_string());
-    }
-
     pub fn with_username(mut self, username: &str) -> Self {
         self.options.username = Some(username.to_string());
         self
-    }
-
-    pub fn set_username(&mut self, username: &str) {
-        self.options.username = Some(username.to_string());
     }
 
     pub fn with_password(mut self, password: &[u8]) -> Self {
@@ -584,17 +531,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_password(&mut self, password: &[u8]) {
-        self.options.password = Some(password.to_vec());
-    }
-
     pub fn with_session_expiry_interval_seconds(mut self, session_expiry_interval_seconds: u32) -> Self {
         self.options.session_expiry_interval_seconds = Some(session_expiry_interval_seconds);
         self
-    }
-
-    pub fn set_session_expiry_interval_seconds(&mut self, session_expiry_interval_seconds: u32) {
-        self.options.session_expiry_interval_seconds = Some(session_expiry_interval_seconds);
     }
 
     pub fn with_request_response_information(mut self, request_response_information: bool) -> Self {
@@ -602,17 +541,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_request_response_information(&mut self, request_response_information: bool) {
-        self.options.request_response_information = Some(request_response_information);
-    }
-
     pub fn with_request_problem_information(mut self, request_problem_information: bool) -> Self {
         self.options.request_problem_information = Some(request_problem_information);
         self
-    }
-
-    pub fn set_request_problem_information(&mut self, request_problem_information: bool) {
-        self.options.request_problem_information = Some(request_problem_information);
     }
 
     pub fn with_receive_maximum(mut self, receive_maximum: u16) -> Self {
@@ -620,17 +551,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_receive_maximum(&mut self, receive_maximum: u16) {
-        self.options.receive_maximum = Some(receive_maximum);
-    }
-
     pub fn with_topic_alias_maximum(mut self, topic_alias_maximum: u16) -> Self {
         self.options.topic_alias_maximum = Some(topic_alias_maximum);
         self
-    }
-
-    pub fn set_topic_alias_maximum(&mut self, topic_alias_maximum: u16) {
-        self.options.topic_alias_maximum = Some(topic_alias_maximum);
     }
 
     pub fn with_maximum_packet_size_bytes(mut self, maximum_packet_size_bytes: u32) -> Self {
@@ -638,17 +561,9 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_maximum_packet_size_bytes(&mut self, maximum_packet_size_bytes: u32) {
-        self.options.maximum_packet_size_bytes = Some(maximum_packet_size_bytes);
-    }
-
     pub fn with_will_delay_interval_seconds(mut self, will_delay_interval_seconds: u32) -> Self {
         self.options.will_delay_interval_seconds = Some(will_delay_interval_seconds);
         self
-    }
-
-    pub fn set_will_delay_interval_seconds(&mut self, will_delay_interval_seconds: u32) {
-        self.options.will_delay_interval_seconds = Some(will_delay_interval_seconds);
     }
 
     pub fn with_will(mut self, will: PublishPacket) -> Self {
@@ -656,31 +571,17 @@ impl ConnectOptionsBuilder {
         self
     }
 
-    pub fn set_will(&mut self, will: PublishPacket) {
-        self.options.will = Some(will);
-    }
-
     pub fn with_user_properties(mut self, user_properties: Vec<UserProperty>) -> Self {
         self.options.user_properties = Some(user_properties);
         self
     }
 
-    pub fn set_user_properties(&mut self, user_properties: Vec<UserProperty>) {
-        self.options.user_properties = Some(user_properties);
-    }
-
-    pub fn build(&self) -> ConnectOptions {
-        self.options.clone()
+    pub fn build(self) -> ConnectOptions {
+        self.options
     }
 }
 
-impl Default for ConnectOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct ReconnectOptions {
     reconnect_period_jitter: ExponentialBackoffJitterType,
     base_reconnect_period: Duration,
@@ -727,6 +628,26 @@ pub struct Mqtt5ClientOptions {
     reconnect_options: ReconnectOptions,
 }
 
+impl Debug for Mqtt5ClientOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Mqtt5ClientOptions {{ ")?;
+        write!(f, "connect_options: {:?}, ", self.connect_options)?;
+        write!(f, "offline_queue_policy: {:?}, ", self.offline_queue_policy)?;
+        write!(f, "connack_timeout: {:?}, ", self.connack_timeout)?;
+        write!(f, "ping_timeout: {:?}, ", self.ping_timeout)?;
+        write!(f, "default_event_listener: {:?}, ", self.default_event_listener)?;
+        if self.outbound_alias_resolver.is_some() {
+            write!(f, "outbound_alias_resolver: Some(...), ")?;
+        } else {
+            write!(f, "outbound_alias_resolver: None, ")?;
+        };
+        write!(f, "reconnect_options: {:?}, ", self.reconnect_options)?;
+
+        write!(f, "}}")
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Mqtt5ClientOptionsBuilder {
     options: Mqtt5ClientOptions
 }
@@ -832,12 +753,6 @@ impl Mqtt5ClientOptionsBuilder {
 
     pub fn build(self) -> Mqtt5ClientOptions {
         self.options
-    }
-}
-
-impl Default for Mqtt5ClientOptionsBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

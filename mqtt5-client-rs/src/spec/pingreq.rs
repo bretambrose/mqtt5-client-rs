@@ -16,8 +16,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 /// Data model of an [MQTT5 PINGREQ](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901195) packet.
-#[derive(Clone, Debug)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PingreqPacket {}
 
 #[rustfmt::skip]

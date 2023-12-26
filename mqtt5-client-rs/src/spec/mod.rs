@@ -39,7 +39,7 @@ use crate::spec::unsubscribe::*;
 /// MQTT message delivery quality of service.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901234) encoding values.
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum QualityOfService {
 
     /// The message is delivered according to the capabilities of the underlying network. No response is sent by the
@@ -57,7 +57,7 @@ pub enum QualityOfService {
 /// Optional property describing a PUBLISH payload's format.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901111) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PayloadFormatIndicator {
 
     /// The payload is arbitrary binary data
@@ -72,7 +72,7 @@ pub enum PayloadFormatIndicator {
 /// associated retained messages.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901169) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RetainHandlingType {
 
     /// The server should always send all retained messages on topics that match a subscription's filter.
@@ -90,7 +90,7 @@ pub enum RetainHandlingType {
 /// Server return code for connection attempts.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901079) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ConnectReasonCode {
 
     /// Returned when the connection is accepted.
@@ -171,7 +171,7 @@ pub enum ConnectReasonCode {
 /// Reason code inside PUBACK packets that indicates the result of the associated PUBLISH request.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901124) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PubackReasonCode {
 
     /// Returned when the (QoS 1) publish was accepted by the recipient.
@@ -226,7 +226,7 @@ pub enum PubackReasonCode {
 /// Reason code inside PUBREC packets that indicates the result of the associated QoS 2 PUBLISH request.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901134) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PubrecReasonCode {
 
     /// Returned when the (QoS 2) publish was accepted by the recipient.
@@ -281,7 +281,7 @@ pub enum PubrecReasonCode {
 /// Reason code inside PUBREL packets that indicates the result of receiving a PUBREC packet as part of the QoS 2 PUBLISH delivery process.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901144) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PubrelReasonCode {
 
     /// Returned when the associated PUBREC was successfully accepted by the recipient.
@@ -299,7 +299,7 @@ pub enum PubrelReasonCode {
 /// Reason code inside PUBCOMP packets that indicates the result of receiving a PUBREL packet as part of the QoS 2 publish delivery process.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901154) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PubcompReasonCode {
 
     /// Returned when the associated PUBREL was successfully accepted by the recipient.  Marks a successful
@@ -318,7 +318,7 @@ pub enum PubcompReasonCode {
 /// Reason code inside DISCONNECT packets.  Helps determine why a connection was terminated.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901208) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DisconnectReasonCode {
 
     /// Returned when the remote endpoint wishes to disconnect normally. Will not trigger the publish of a Will message if a
@@ -485,7 +485,7 @@ pub enum DisconnectReasonCode {
 /// SUBSCRIBE packet.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901178) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SubackReasonCode {
 
     /// Returned when the subscription was accepted and the maximum QOS sent will be QOS 0.
@@ -534,7 +534,7 @@ pub enum SubackReasonCode {
 /// UNSUBSCRIBE packet.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901194) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum UnsubackReasonCode {
 
     /// Returned when the unsubscribe was successful and the client is no longer subscribed to the topic filter on the server.
@@ -564,7 +564,7 @@ pub enum UnsubackReasonCode {
 /// Reason code that specifies the response to a received AUTH packet.
 ///
 /// Enum values match [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901220) encoding values.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AuthenticateReasonCode {
 
     /// Notification that the authentication exchange is both complete and considered successful.
@@ -592,8 +592,7 @@ pub enum AuthenticateReasonCode {
 ///
 /// User properties are required to be a utf-8 string pair, as specified by the
 /// [MQTT5 spec](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901013).
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UserProperty {
     pub name: String,
     pub value: String,
@@ -602,8 +601,7 @@ pub struct UserProperty {
 /// Specifies a single subscription within a Subscribe operation
 ///
 /// See [MQTT5 Subscription Options](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901169)
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Subscription {
 
     /// Topic filter to subscribe to

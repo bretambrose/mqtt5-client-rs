@@ -21,8 +21,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 /// Data model of an [MQTT5 PUBLISH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100) packet
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PublishPacket {
 
     /// Packet Id of the publish.  Setting this value on an outbound publish has no effect on the

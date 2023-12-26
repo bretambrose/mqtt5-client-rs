@@ -21,8 +21,7 @@ use std::fmt;
 use std::fmt::Write;
 
 /// Data model of an [MQTT5 SUBSCRIBE](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901161) packet.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SubscribePacket {
 
     /// Packet Id of the subscribe.  Setting this value on an outbound subscribe has no effect on the

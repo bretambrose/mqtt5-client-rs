@@ -19,8 +19,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 /// Data model of an [MQTT5 CONNACK](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901074) packet.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConnackPacket {
 
     /// True if the client rejoined an existing session on the server, false otherwise.

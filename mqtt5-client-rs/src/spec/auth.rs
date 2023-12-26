@@ -20,8 +20,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 /// Data model of an [MQTT5 AUTH](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901217) packet.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AuthPacket {
 
     /// Specifies an endpoint's response to a previously-received AUTH packet as part of an authentication exchange.

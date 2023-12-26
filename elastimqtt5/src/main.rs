@@ -54,7 +54,7 @@ fn handle_stop(client: &Mqtt5Client, args: &[&str]) {
     if args.len() > 0 {
         if let Ok(reason_code_u8) = args[0].parse::<u8>() {
             if let Ok(reason_code) = convert_u8_to_disconnect_reason_code(reason_code_u8) {
-                stop_options_builder.set_disconnect_packet(DisconnectPacket{
+                stop_options_builder = stop_options_builder.with_disconnect_packet(DisconnectPacket{
                     reason_code,
                     ..Default::default()
                 });
@@ -86,7 +86,7 @@ async fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
         publish.payload = Some(args[2].as_bytes().to_vec());
     }
 
-    let publish_result = client.publish(publish, PublishOptionsBuilder::new().build()).await;
+    let publish_result = client.publish(publish, PublishOptionsBuilder::new().with_timeout(Duration::from_secs(5)).build()).await;
 
     println!("Publish Result: {:?}", publish_result);
 }
