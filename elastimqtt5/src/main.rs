@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::fs::File;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 
 use mqtt5_client_rs::*;
@@ -51,7 +52,7 @@ fn handle_start(client: &Mqtt5Client) {
 fn handle_stop(client: &Mqtt5Client, args: &[&str]) {
     let mut stop_options_builder = StopOptionsBuilder::new();
 
-    if args.len() > 0 {
+    if !args.is_empty() {
         if let Ok(reason_code_u8) = args[0].parse::<u8>() {
             if let Ok(reason_code) = convert_u8_to_disconnect_reason_code(reason_code_u8) {
                 stop_options_builder = stop_options_builder.with_disconnect_packet(DisconnectPacket{
@@ -92,7 +93,7 @@ async fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
 }
 
 async fn handle_subscribe(client: &Mqtt5Client, args: &[&str]) {
-    if args.len() < 1 || args.len() > 2 {
+    if args.is_empty() || args.len() > 2 {
         return;
     }
 
@@ -138,7 +139,7 @@ async fn handle_unsubscribe(client: &Mqtt5Client, args: &[&str]) {
 async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     let fields : Vec<&str> = value.split_whitespace().collect();
 
-    if fields.len() == 0 {
+    if fields.is_empty() {
         return false;
     }
 
@@ -175,6 +176,7 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let endpoint = std::env::args().nth(1).expect("no endpoint given");
 
     let log_file = File::create("/tmp/elastimqtt5.txt")?;
 
@@ -203,8 +205,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let runtime_handle = Handle::current();
+    let tokio_options = TokioClientOptions {
+        connection_factory: Box::new(move || {
+            Box::pin(TcpStream::connect(endpoint.clone()))
+        })
+    };
 
-    let client = client::Mqtt5Client::new(config, &runtime_handle);
+    let client = client::Mqtt5Client::new(config, tokio_options, &runtime_handle);
 
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();

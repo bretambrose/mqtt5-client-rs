@@ -13,6 +13,8 @@ use tokio::time::{sleep};
 
 use crate::client::internal::*;
 
+
+
 pub(crate) struct UserRuntimeState {
     operation_sender: tokio::sync::mpsc::Sender<OperationOptions>
 }
@@ -28,6 +30,7 @@ impl UserRuntimeState {
 }
 
 pub(crate) struct ClientRuntimeState {
+    tokio_config: TokioClientOptions,
     operation_receiver: tokio::sync::mpsc::Receiver<OperationOptions>,
     stream: Option<TcpStream>
 }
@@ -50,8 +53,7 @@ impl ClientRuntimeState {
     }
 
     pub(crate) async fn process_connecting(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
-        let connect = TcpStream::connect("127.0.0.1:1883");
-        tokio::pin!(connect);
+        let mut connect = (self.tokio_config.connection_factory)();
 
         let timeout = sleep(Duration::from_millis(30 * 1000));
         tokio::pin!(timeout);
@@ -208,7 +210,7 @@ async fn conditional_write(bytes_option: Option<&[u8]>, writer: &mut WriteHalf<'
     }
 }
 
-pub(crate) fn create_runtime_states() -> (UserRuntimeState, ClientRuntimeState) {
+pub(crate) fn create_runtime_states(tokio_config: TokioClientOptions) -> (UserRuntimeState, ClientRuntimeState) {
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
 
     let user_state = UserRuntimeState {
@@ -216,6 +218,7 @@ pub(crate) fn create_runtime_states() -> (UserRuntimeState, ClientRuntimeState) 
     };
 
     let impl_state = ClientRuntimeState {
+        tokio_config,
         operation_receiver: receiver,
         stream: None
     };

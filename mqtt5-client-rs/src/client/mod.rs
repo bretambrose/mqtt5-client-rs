@@ -764,9 +764,15 @@ pub struct Mqtt5Client {
     listener_id_allocator: Mutex<u64>,
 }
 
+type TokioConnectionFactoryReturnType = Pin<Box<dyn Future<Output = std::io::Result<tokio::net::TcpStream>> + Send + Sync>>;
+
+pub struct TokioClientOptions {
+    pub connection_factory: Box<dyn Fn() -> TokioConnectionFactoryReturnType + Send + Sync>
+}
+
 impl Mqtt5Client {
-    pub fn new(config: Mqtt5ClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
-        let (user_state, internal_state) = create_runtime_states();
+    pub fn new(config: Mqtt5ClientOptions, tokio_config: TokioClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
+        let (user_state, internal_state) = create_runtime_states(tokio_config);
 
         let client_impl = Mqtt5ClientImpl::new(config);
 
