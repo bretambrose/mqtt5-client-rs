@@ -147,6 +147,13 @@ impl AsyncClientEventChannel {
         (self.sender, self.receiver)
     }
 }
+
+impl Default for AsyncClientEventChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct AsyncClientEventSender {
     sender: tokio::sync::mpsc::UnboundedSender<Arc<ClientEvent>>
 }
@@ -332,8 +339,9 @@ impl ClientRuntimeState {
             }
         }
 
-        let _ = stream.flush().await;
-        let _ = stream.shutdown().await;
+        let value  = stream.shutdown();
+        let _ = value.await;
+        //let _ = stream.shutdown().await;
 
         Ok(next_state.unwrap())
     }
