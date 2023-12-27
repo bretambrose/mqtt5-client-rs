@@ -139,7 +139,7 @@ impl Mqtt5ClientImpl {
                     channel.send(event.clone()).unwrap();
                 }
                 ClientEventListener::Callback(callback) => {
-                    callback(event.clone());
+                    spawn_event_callback(event.clone(), callback.clone());
                 }
             }
         }

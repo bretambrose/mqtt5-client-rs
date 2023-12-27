@@ -5,8 +5,6 @@
 
 pub mod internal;
 
-extern crate tokio;
-
 use crate::*;
 use crate::alias::OutboundAliasResolver;
 use crate::client::internal::*;
@@ -21,7 +19,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-// async choice conditional includes
+// async choice conditional
+extern crate tokio;
 use crate::client::internal::tokio_impl::*;
 use tokio::runtime;
 
@@ -280,9 +279,11 @@ pub enum ClientEvent {
     PublishReceived(PublishReceivedEvent),
 }
 
+pub type ClientEventListenerCallback = dyn Fn(Arc<ClientEvent>) + Send + Sync;
+
 pub enum ClientEventListener {
     Channel(AsyncClientEventSender),
-    Callback(Box<dyn Fn(Arc<ClientEvent>) + Send + Sync>)
+    Callback(Arc<ClientEventListenerCallback>)
 }
 
 impl Debug for ClientEventListener {

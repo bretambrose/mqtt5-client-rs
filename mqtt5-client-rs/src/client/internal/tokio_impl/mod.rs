@@ -430,3 +430,9 @@ pub(crate) fn spawn_client_impl(
         client_event_loop(&mut client_impl, &mut runtime_state).await;
     });
 }
+
+pub(crate) fn spawn_event_callback(event: Arc<ClientEvent>, callback: Arc<ClientEventListenerCallback>) {
+    tokio::spawn(async move {
+        (callback)(event)
+    });
+}

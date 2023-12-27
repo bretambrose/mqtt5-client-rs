@@ -182,11 +182,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut log_config_builder = simplelog::ConfigBuilder::new();
     let log_config = log_config_builder.build();
-
     WriteLogger::init(LevelFilter::Debug, log_config, log_file).unwrap();
 
     let function = |event|{client_event_callback(event)} ;
-    let dyn_function = Box::new(function);
+    let dyn_function = Arc::new(function);
     let callback = ClientEventListener::Callback(dyn_function);
 
     let connect_options = ConnectOptionsBuilder::new()
