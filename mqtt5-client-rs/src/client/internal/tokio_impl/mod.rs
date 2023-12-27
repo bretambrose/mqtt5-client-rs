@@ -43,10 +43,9 @@ macro_rules! submit_async_client_operation {
 
 pub(crate) use submit_async_client_operation;
 
-pub trait AsyncTokioStream {
-    fn split<'a>(&'a mut self) -> (ReadHalf<'a>, WriteHalf<'a>);
+pub trait AsyncTokioStream : Send {
+    fn split(&mut self) -> (ReadHalf, WriteHalf);
 
-    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = std::io::Result<()>>>>;
 }
 
 pub(crate) struct AsyncOperationChannel<T> {
@@ -343,7 +342,7 @@ impl ClientRuntimeState {
             }
         }
 
-        let _ = stream.shutdown().await;
+        let _ = stream_writer.shutdown().await;
 
         Ok(next_state.unwrap())
     }

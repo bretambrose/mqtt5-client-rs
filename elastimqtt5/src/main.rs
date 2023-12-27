@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::fs::File;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 
@@ -174,6 +175,28 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     false
 }
 
+struct TcpStreamWrapper {
+    stream : TcpStream
+}
+
+use client::internal::tokio_impl::*;
+
+impl AsyncTokioStream for TcpStreamWrapper {
+    fn split(&mut self) -> (ReadHalf, WriteHalf) {
+        self.stream.split()
+    }
+}
+
+impl TcpStreamWrapper {
+    async fn connect(endpoint: String) -> std::io::Result<Box<dyn AsyncTokioStream + Sync + Send>> {
+        let stream = TcpStream::connect(endpoint).await?;
+        let boxed_stream = Box::new(TcpStreamWrapper {
+            stream
+        });
+        Ok(boxed_stream)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint = std::env::args().nth(1).expect("no endpoint given");
@@ -206,7 +229,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_handle = Handle::current();
     let tokio_options = TokioClientOptions {
         connection_factory: Box::new(move || {
-            Box::pin(TcpStream::connect(endpoint.clone()))
+            Box::pin(
+                TcpStreamWrapper::connect(endpoint.clone())
+            )
         })
     };
 
