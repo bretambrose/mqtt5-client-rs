@@ -7,8 +7,7 @@ extern crate tokio;
 
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::WriteHalf;
-use tokio::net::TcpStream;
+use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::sync::oneshot;
 use tokio::time::{sleep};
 
@@ -16,7 +15,6 @@ use crate::client::internal::*;
 
 impl From<oneshot::error::RecvError> for Mqtt5Error {
     fn from(_: oneshot::error::RecvError) -> Self {
-
         Mqtt5Error::OperationChannelReceiveError
     }
 }
@@ -44,6 +42,12 @@ macro_rules! submit_async_client_operation {
 }
 
 pub(crate) use submit_async_client_operation;
+
+pub trait AsyncTokioStream {
+    fn split<'a>(&'a mut self) -> (ReadHalf<'a>, WriteHalf<'a>);
+
+    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = std::io::Result<()>>>>;
+}
 
 pub(crate) struct AsyncOperationChannel<T> {
     sender: AsyncOperationSender<T>,
@@ -207,7 +211,7 @@ impl UserRuntimeState {
 pub(crate) struct ClientRuntimeState {
     tokio_config: TokioClientOptions,
     operation_receiver: tokio::sync::mpsc::Receiver<OperationOptions>,
-    stream: Option<TcpStream>
+    stream: Option<Box<dyn AsyncTokioStream>>
 }
 
 impl ClientRuntimeState {

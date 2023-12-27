@@ -718,8 +718,9 @@ pub struct Mqtt5Client {
     listener_id_allocator: Mutex<u64>,
 }
 
-type TokioConnectionFactoryReturnType = Pin<Box<dyn Future<Output = std::io::Result<tokio::net::TcpStream>> + Send + Sync>>;
-
+// conditional on runtime selection
+type TokioConnectionFactoryStreamType = Box<dyn AsyncTokioStream + Send + Sync>;
+type TokioConnectionFactoryReturnType = Pin<Box<dyn Future<Output = std::io::Result<TokioConnectionFactoryStreamType>> + Send + Sync>>;
 pub struct TokioClientOptions {
     pub connection_factory: Box<dyn Fn() -> TokioConnectionFactoryReturnType + Send + Sync>
 }
