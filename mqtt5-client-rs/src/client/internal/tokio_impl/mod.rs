@@ -339,9 +339,7 @@ impl ClientRuntimeState {
             }
         }
 
-        let value  = stream.shutdown();
-        let _ = value.await;
-        //let _ = stream.shutdown().await;
+        let _ = stream.shutdown().await;
 
         Ok(next_state.unwrap())
     }
