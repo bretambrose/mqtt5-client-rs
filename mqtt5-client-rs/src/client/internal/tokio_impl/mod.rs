@@ -9,11 +9,179 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::time::{sleep};
 
 use crate::client::internal::*;
 
+impl From<oneshot::error::RecvError> for Mqtt5Error {
+    fn from(_: oneshot::error::RecvError) -> Self {
 
+        Mqtt5Error::OperationChannelReceiveError
+    }
+}
+
+macro_rules! submit_async_client_operation {
+    ($self:ident, $operation_type:ident, $options_internal_type: ident, $options_value: expr, $packet_value: expr) => ({
+
+        let (response_sender, rx) = AsyncOperationChannel::new().split();
+        let internal_options = $options_internal_type {
+            options : $options_value,
+            response_sender : Some(response_sender)
+        };
+        let send_result = $self.user_state.try_send(OperationOptions::$operation_type($packet_value, internal_options));
+        Box::pin(async move {
+            match send_result {
+                Err(error) => {
+                    Err(error)
+                }
+                _ => {
+                    rx.recv().await?
+                }
+            }
+        })
+    })
+}
+
+pub(crate) use submit_async_client_operation;
+
+pub(crate) struct AsyncOperationChannel<T> {
+    sender: AsyncOperationSender<T>,
+    receiver: AsyncOperationReceiver<T>
+}
+
+impl <T> AsyncOperationChannel<T> {
+    pub fn new() -> Self {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        AsyncOperationChannel {
+            sender: AsyncOperationSender::new(sender),
+            receiver: AsyncOperationReceiver::new(receiver)
+        }
+    }
+
+    pub fn split(self) -> (AsyncOperationSender<T>, AsyncOperationReceiver<T>) {
+        (self.sender, self.receiver)
+    }
+}
+
+pub(crate) struct AsyncOperationSender<T> {
+    sender: tokio::sync::oneshot::Sender<T>
+}
+
+impl <T> AsyncOperationSender<T> {
+
+    fn new(sender: oneshot::Sender<T>) -> Self {
+        AsyncOperationSender {
+            sender
+        }
+    }
+
+    pub(crate) fn send(self, operation_options: T) -> Mqtt5Result<()> {
+        if self.sender.send(operation_options).is_err() {
+            return Err(Mqtt5Error::OperationChannelSendError);
+        }
+
+        Ok(())
+    }
+}
+
+pub struct AsyncOperationReceiver<T> {
+    receiver: oneshot::Receiver<T>
+}
+
+impl <T> AsyncOperationReceiver<T> {
+
+    fn new(receiver: oneshot::Receiver<T>) -> Self {
+        AsyncOperationReceiver {
+            receiver
+        }
+    }
+
+    pub async fn recv(self) -> Mqtt5Result<T> {
+        match self.receiver.await {
+            Err(_) => { Err(Mqtt5Error::OperationChannelReceiveError) }
+            Ok(val) => { Ok(val) }
+        }
+    }
+
+    pub fn try_recv(&mut self) -> Mqtt5Result<T> {
+        match self.receiver.try_recv() {
+            Err(_) => {
+                Err(Mqtt5Error::OperationChannelEmpty)
+            }
+            Ok(val) => {
+                Ok(val)
+            }
+
+        }
+    }
+
+    pub fn blocking_recv(self) -> Mqtt5Result<T> {
+        match self.receiver.blocking_recv() {
+            Err(_) => {
+                Err(Mqtt5Error::OperationChannelReceiveError)
+            }
+            Ok(val) => {
+                Ok(val)
+            }
+
+        }
+    }
+}
+
+pub struct AsyncClientEventChannel {
+    sender: AsyncClientEventSender,
+    receiver: AsyncClientEventReceiver
+}
+
+impl AsyncClientEventChannel {
+    pub fn new() -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        AsyncClientEventChannel {
+            sender: AsyncClientEventSender::new(sender),
+            receiver: AsyncClientEventReceiver::new(receiver)
+        }
+    }
+
+    pub fn split(self) -> (AsyncClientEventSender, AsyncClientEventReceiver) {
+        (self.sender, self.receiver)
+    }
+}
+pub struct AsyncClientEventSender {
+    sender: tokio::sync::mpsc::UnboundedSender<Arc<ClientEvent>>
+}
+
+impl AsyncClientEventSender {
+    fn new(sender: tokio::sync::mpsc::UnboundedSender<Arc<ClientEvent>>) -> Self {
+        AsyncClientEventSender {
+            sender
+        }
+    }
+
+    pub(crate) fn send(&self, event: Arc<ClientEvent>) -> Mqtt5Result<()> {
+        if self.sender.send(event).is_err() {
+            return Err(Mqtt5Error::OperationChannelSendError);
+        }
+
+        Ok(())
+    }
+}
+
+pub struct AsyncClientEventReceiver {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<Arc<ClientEvent>>
+}
+
+impl AsyncClientEventReceiver {
+    fn new(receiver: tokio::sync::mpsc::UnboundedReceiver<Arc<ClientEvent>>) -> Self {
+        AsyncClientEventReceiver {
+            receiver
+        }
+    }
+
+    pub async fn recv(&mut self) -> Option<Arc<ClientEvent>> {
+        self.receiver.recv().await
+    }
+}
 
 pub(crate) struct UserRuntimeState {
     operation_sender: tokio::sync::mpsc::Sender<OperationOptions>
@@ -224,4 +392,41 @@ pub(crate) fn create_runtime_states(tokio_config: TokioClientOptions) -> (UserRu
     };
 
     (user_state, impl_state)
+}
+
+async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut ClientRuntimeState) {
+    let mut done = false;
+    while !done {
+        let current_state = client_impl.get_current_state();
+        let next_state_result =
+            match current_state {
+                ClientImplState::Stopped => { async_state.process_stopped(client_impl).await }
+                ClientImplState::Connecting => { async_state.process_connecting(client_impl).await }
+                ClientImplState::Connected => { async_state.process_connected(client_impl).await }
+                ClientImplState::PendingReconnect => {
+                    let reconnect_wait = client_impl.compute_reconnect_period();
+                    async_state.process_pending_reconnect(client_impl, reconnect_wait).await
+                }
+                _ => { Ok(ClientImplState::Shutdown) }
+            };
+
+        done = true;
+        if let Ok(next_state) = next_state_result {
+            if client_impl.transition_to_state(next_state).is_ok() && (next_state != ClientImplState::Shutdown) {
+                done = false;
+            }
+        }
+    }
+
+    info!("Async client loop exiting");
+}
+
+pub(crate) fn spawn_client_impl(
+    mut client_impl: Mqtt5ClientImpl,
+    mut runtime_state: ClientRuntimeState,
+    runtime_handle: &runtime::Handle,
+) {
+    runtime_handle.spawn(async move {
+        client_event_loop(&mut client_impl, &mut runtime_state).await;
+    });
 }

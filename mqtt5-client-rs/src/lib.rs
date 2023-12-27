@@ -102,6 +102,7 @@ pub enum Mqtt5Error {
     ConnectionEstablishmentFailure,
     StreamWriteFailure,
     StreamReadFailure,
+    OperationChannelEmpty
 }
 
 impl Error for Mqtt5Error {
@@ -154,6 +155,7 @@ impl fmt::Display for Mqtt5Error {
             Mqtt5Error::ConnectionEstablishmentFailure => { write!(f, "ConnectionEstablishmentFailure") }
             Mqtt5Error::StreamWriteFailure => { write!(f, "StreamWriteFailure") }
             Mqtt5Error::StreamReadFailure => { write!(f, "StreamReadFailure") }
+            Mqtt5Error::OperationChannelEmpty => { write!(f, "OperationChannelEmpty") }
         }
     }
 }

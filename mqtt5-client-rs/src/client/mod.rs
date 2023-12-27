@@ -3,36 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-pub(crate) mod internal;
+pub mod internal;
 
 extern crate tokio;
 
-use std::fmt::{Debug, Formatter};
 use crate::*;
+use crate::alias::OutboundAliasResolver;
 use crate::client::internal::*;
-use crate::client::internal::tokio_impl::*;
 use crate::spec::*;
+use crate::spec::disconnect::validate_disconnect_packet_outbound;
 use crate::spec::utils::*;
+use crate::validate::*;
 
+use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::runtime;
-use tokio::sync::oneshot;
-use crate::alias::OutboundAliasResolver;
 
-use crate::spec::connect::ConnectPacket;
-use crate::spec::disconnect::validate_disconnect_packet_outbound;
-use crate::spec::puback::PubackPacket;
-use crate::spec::pubrec::PubrecPacket;
-use crate::spec::pubcomp::PubcompPacket;
-use crate::spec::publish::PublishPacket;
-use crate::spec::suback::SubackPacket;
-use crate::spec::subscribe::SubscribePacket;
-use crate::spec::unsuback::UnsubackPacket;
-use crate::spec::unsubscribe::UnsubscribePacket;
-use crate::validate::*;
+// async choice conditional includes
+use crate::client::internal::tokio_impl::*;
+use tokio::runtime;
 
 #[derive(Debug, Default)]
 pub struct PublishOptions {
@@ -226,13 +217,6 @@ impl fmt::Display for NegotiatedSettings {
     }
 }
 
-impl From<oneshot::error::RecvError> for Mqtt5Error {
-    fn from(_: oneshot::error::RecvError) -> Self {
-
-        Mqtt5Error::OperationChannelReceiveError
-    }
-}
-
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub enum OfflineQueuePolicy {
     #[default]
@@ -297,7 +281,7 @@ pub enum ClientEvent {
 }
 
 pub enum ClientEventListener {
-    Channel(std::sync::mpsc::Sender<Arc<ClientEvent>>),
+    Channel(AsyncClientEventSender),
     Callback(Box<dyn Fn(Arc<ClientEvent>) + Send + Sync>)
 }
 
@@ -319,37 +303,6 @@ pub struct ListenerHandle {
     id: u64
 }
 
-macro_rules! client_lifecycle_operation_body {
-    ($lifeycle_operation:ident, $self:ident) => {{
-        $self.user_state.try_send(OperationOptions::$lifeycle_operation())
-    }};
-}
-
-macro_rules! client_mqtt_operation_body {
-    ($self:ident, $operation_type:ident, $options_internal_type: ident, $packet_name: ident, $packet_type: ident, $options_value: expr) => ({
-        let boxed_packet = Box::new(MqttPacket::$packet_type($packet_name));
-        if let Err(error) = validate_packet_outbound(&boxed_packet) {
-            return Box::pin(async move { Err(error) });
-        }
-
-        let (response_sender, rx) = oneshot::channel();
-        let internal_options = $options_internal_type {
-            options : $options_value,
-            response_sender : Some(response_sender)
-        };
-        let send_result = $self.user_state.try_send(OperationOptions::$operation_type(boxed_packet, internal_options));
-        Box::pin(async move {
-            match send_result {
-                Err(error) => {
-                    Err(error)
-                }
-                _ => {
-                    rx.await?
-                }
-            }
-        })
-    })
-}
 
 /// Configuration options that will determine packet field values for the CONNECT packet sent out
 /// by the client on each connection attempt.  Almost equivalent to ConnectPacket, but there are a
@@ -771,6 +724,8 @@ pub struct TokioClientOptions {
 }
 
 impl Mqtt5Client {
+
+    // async choice conditional
     pub fn new(config: Mqtt5ClientOptions, tokio_config: TokioClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
         let (user_state, internal_state) = create_runtime_states(tokio_config);
 
@@ -785,7 +740,7 @@ impl Mqtt5Client {
     }
 
     pub fn start(&self) -> Mqtt5Result<()> {
-        client_lifecycle_operation_body!(Start, self)
+        self.user_state.try_send(OperationOptions::Start())
     }
 
     pub fn stop(&self, options: StopOptions) -> Mqtt5Result<()> {
@@ -805,19 +760,34 @@ impl Mqtt5Client {
     }
 
     pub fn close(&self) -> Mqtt5Result<()> {
-        client_lifecycle_operation_body!(Shutdown, self)
+        self.user_state.try_send(OperationOptions::Shutdown())
     }
 
     pub fn publish(&self, packet: PublishPacket, options: PublishOptions) -> Pin<Box<PublishResultFuture>> {
-        client_mqtt_operation_body!(self, Publish, PublishOptionsInternal, packet, Publish, options)
+        let boxed_packet = Box::new(MqttPacket::Publish(packet));
+        if let Err(error) = validate_packet_outbound(&boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        submit_async_client_operation!(self, Publish, PublishOptionsInternal, options, boxed_packet)
     }
 
     pub fn subscribe(&self, packet: SubscribePacket, options: SubscribeOptions) -> Pin<Box<SubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Subscribe, SubscribeOptionsInternal, packet, Subscribe, options)
+        let boxed_packet = Box::new(MqttPacket::Subscribe(packet));
+        if let Err(error) = validate_packet_outbound(&boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        submit_async_client_operation!(self, Subscribe, SubscribeOptionsInternal, options, boxed_packet)
     }
 
     pub fn unsubscribe(&self, packet: UnsubscribePacket, options: UnsubscribeOptions) -> Pin<Box<UnsubscribeResultFuture>> {
-        client_mqtt_operation_body!(self, Unsubscribe, UnsubscribeOptionsInternal, packet, Unsubscribe, options)
+        let boxed_packet = Box::new(MqttPacket::Unsubscribe(packet));
+        if let Err(error) = validate_packet_outbound(&boxed_packet) {
+            return Box::pin(async move { Err(error) });
+        }
+
+        submit_async_client_operation!(self, Unsubscribe, UnsubscribeOptionsInternal, options, boxed_packet)
     }
 
     pub fn add_event_listener(&self, listener: ClientEventListener) -> Mqtt5Result<ListenerHandle> {

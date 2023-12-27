@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-extern crate tokio;
-
-
 #[cfg(test)]
 mod operational_state_tests {
-    use tokio::sync::*;
+
+    // feature conditional
+    use crate::client::internal::tokio_impl::*;
     use crate::operation::*;
 
     fn build_standard_test_config() -> OperationalStateConfig {
@@ -583,8 +582,8 @@ mod operational_state_tests {
             None
         }
 
-        pub(crate) fn subscribe(&mut self, elapsed_millis: u64, subscribe: SubscribePacket, options: SubscribeOptions) -> Mqtt5Result<oneshot::Receiver<SubscribeResult>> {
-            let (sender, receiver) = oneshot::channel();
+        pub(crate) fn subscribe(&mut self, elapsed_millis: u64, subscribe: SubscribePacket, options: SubscribeOptions) -> Mqtt5Result<AsyncOperationReceiver<SubscribeResult>> {
+            let (sender, receiver) = AsyncOperationChannel::new().split();
             let packet = Box::new(MqttPacket::Subscribe(subscribe));
             let subscribe_options = SubscribeOptionsInternal {
                 options,
@@ -601,8 +600,8 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub(crate) fn unsubscribe(&mut self, elapsed_millis: u64, unsubscribe: UnsubscribePacket, options: UnsubscribeOptions) -> Mqtt5Result<oneshot::Receiver<UnsubscribeResult>> {
-            let (sender, receiver) = oneshot::channel();
+        pub(crate) fn unsubscribe(&mut self, elapsed_millis: u64, unsubscribe: UnsubscribePacket, options: UnsubscribeOptions) -> Mqtt5Result<AsyncOperationReceiver<UnsubscribeResult>> {
+            let (sender, receiver) = AsyncOperationChannel::new().split();
             let packet = Box::new(MqttPacket::Unsubscribe(unsubscribe));
             let unsubscribe_options = UnsubscribeOptionsInternal {
                 options,
@@ -619,8 +618,8 @@ mod operational_state_tests {
             Ok(receiver)
         }
 
-        pub(crate) fn publish(&mut self, elapsed_millis: u64, publish: PublishPacket, options: PublishOptions) -> Mqtt5Result<oneshot::Receiver<PublishResult>> {
-            let (sender, receiver) = oneshot::channel();
+        pub(crate) fn publish(&mut self, elapsed_millis: u64, publish: PublishPacket, options: PublishOptions) -> Mqtt5Result<AsyncOperationReceiver<PublishResult>> {
+            let (sender, receiver) = AsyncOperationChannel::new().split();
             let packet = Box::new(MqttPacket::Publish(publish));
             let publish_options = PublishOptionsInternal {
                 options,
@@ -2256,7 +2255,7 @@ mod operational_state_tests {
                     let elapsed_millis = i * 1000;
                     assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
                     assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis, 4096));
-                    assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
+                    assert_eq!(Err(Mqtt5Error::OperationChannelEmpty), operation_result_receiver.try_recv());
                 }
 
                 assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000, 4096));
@@ -2344,7 +2343,7 @@ mod operational_state_tests {
             let elapsed_millis = i * 1000;
             assert_eq!(Some(30000), fixture.get_next_service_time(elapsed_millis));
             assert_eq!(Ok(()), fixture.service_round_trip(elapsed_millis, elapsed_millis, 4096));
-            assert_eq!(Err(oneshot::error::TryRecvError::Empty), operation_result_receiver.try_recv());
+            assert_eq!(Err(Mqtt5Error::OperationChannelEmpty), operation_result_receiver.try_recv());
         }
 
         assert_eq!(Ok(()), fixture.service_round_trip(30000, 30000, 4096));
@@ -3497,9 +3496,9 @@ mod operational_state_tests {
         outbound_packets: Vec<MqttPacket>,
         to_client_bytes: Vec<u8>,
 
-        publish_receivers: HashMap<u64, oneshot::Receiver<PublishResult>>,
-        subscribe_receivers: HashMap<u64, oneshot::Receiver<SubscribeResult>>,
-        unsubscribe_receivers: HashMap<u64, oneshot::Receiver<UnsubscribeResult>>,
+        publish_receivers: HashMap<u64, AsyncOperationReceiver<PublishResult>>,
+        subscribe_receivers: HashMap<u64, AsyncOperationReceiver<SubscribeResult>>,
+        unsubscribe_receivers: HashMap<u64, AsyncOperationReceiver<UnsubscribeResult>>,
     }
 
     impl MultiOperationContext {

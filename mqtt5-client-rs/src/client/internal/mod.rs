@@ -3,38 +3,36 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-pub(crate) mod tokio_impl;
+pub mod tokio_impl;
 
 extern crate log;
 extern crate rand;
-extern crate tokio;
 
-use std::collections::{HashMap, VecDeque};
-use std::mem;
-use std::time::{Duration, Instant};
 use crate::*;
 use crate::client::*;
 use crate::operation::*;
 use crate::spec::*;
 
+use std::collections::{HashMap, VecDeque};
+use std::mem;
+use std::time::{Duration, Instant};
+
 use log::*;
 use rand::Rng;
-use tokio::runtime;
-use tokio::sync::oneshot;
 
 pub(crate) struct PublishOptionsInternal {
     pub options: PublishOptions,
-    pub response_sender: Option<oneshot::Sender<PublishResult>>,
+    pub response_sender: Option<AsyncOperationSender<PublishResult>>,
 }
 
 pub(crate) struct SubscribeOptionsInternal {
     pub options: SubscribeOptions,
-    pub response_sender: Option<oneshot::Sender<SubscribeResult>>,
+    pub response_sender: Option<AsyncOperationSender<SubscribeResult>>,
 }
 
 pub(crate) struct UnsubscribeOptionsInternal {
     pub options: UnsubscribeOptions,
-    pub response_sender: Option<oneshot::Sender<UnsubscribeResult>>,
+    pub response_sender: Option<AsyncOperationSender<UnsubscribeResult>>,
 }
 
 #[derive(Debug, Default)]
@@ -500,39 +498,4 @@ impl Mqtt5ClientImpl {
     }
 }
 
-async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut ClientRuntimeState) {
-    let mut done = false;
-    while !done {
-        let current_state = client_impl.get_current_state();
-        let next_state_result =
-            match current_state {
-                ClientImplState::Stopped => { async_state.process_stopped(client_impl).await }
-                ClientImplState::Connecting => { async_state.process_connecting(client_impl).await }
-                ClientImplState::Connected => { async_state.process_connected(client_impl).await }
-                ClientImplState::PendingReconnect => {
-                    let reconnect_wait = client_impl.compute_reconnect_period();
-                    async_state.process_pending_reconnect(client_impl, reconnect_wait).await
-                }
-                _ => { Ok(ClientImplState::Shutdown) }
-            };
 
-        done = true;
-        if let Ok(next_state) = next_state_result {
-            if client_impl.transition_to_state(next_state).is_ok() && (next_state != ClientImplState::Shutdown) {
-                done = false;
-            }
-        }
-    }
-
-    info!("Async client loop exitting");
-}
-
-pub(crate) fn spawn_client_impl(
-    mut client_impl: Mqtt5ClientImpl,
-    mut runtime_state: ClientRuntimeState,
-    runtime_handle: &runtime::Handle,
-) {
-    runtime_handle.spawn(async move {
-        client_event_loop(&mut client_impl, &mut runtime_state).await;
-    });
-}
