@@ -206,29 +206,8 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     false
 }
 
-use client::internal::tokio_impl::*;
 
-struct TcpStreamWrapper {
-    stream : TcpStream
-}
-
-impl AsyncTokioStream for TcpStreamWrapper {
-    fn split(&mut self) -> (ReadHalf, WriteHalf) {
-        self.stream.split()
-    }
-}
-
-impl TcpStreamWrapper {
-    async fn connect(address: SocketAddr) -> std::io::Result<Box<dyn AsyncTokioStream + Sync + Send>> {
-        let stream = TcpStream::connect(address).await?;
-        let boxed_stream = Box::new(TcpStreamWrapper {
-            stream
-        });
-        Ok(boxed_stream)
-    }
-}
-
-fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioClientOptions> {
+fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioClientOptions<TcpStream>> {
     let url_parse_result = Url::parse(&args.endpoint_uri);
     if let Err(_) = url_parse_result {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "Invalid URL!"));
@@ -257,7 +236,7 @@ fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioCli
     match uri.scheme().to_lowercase().as_str() {
         "mqtt" => {
             Ok(TokioClientOptions {
-                connection_factory: Box::new(move || { Box::pin(TcpStreamWrapper::connect(addr)) })
+                connection_factory: Box::new(move || { Box::pin(TcpStream::connect(addr)) })
             })
         }
         _ => {

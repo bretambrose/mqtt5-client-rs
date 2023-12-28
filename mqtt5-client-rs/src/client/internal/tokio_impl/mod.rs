@@ -6,8 +6,7 @@
 extern crate tokio;
 
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, split, WriteHalf};
 use tokio::sync::oneshot;
 use tokio::time::{sleep};
 
@@ -43,10 +42,7 @@ macro_rules! submit_async_client_operation {
 
 pub(crate) use submit_async_client_operation;
 
-pub trait AsyncTokioStream : Send {
-    fn split(&mut self) -> (ReadHalf, WriteHalf);
 
-}
 
 pub(crate) struct AsyncOperationChannel<T> {
     sender: AsyncOperationSender<T>,
@@ -207,13 +203,13 @@ impl UserRuntimeState {
     }
 }
 
-pub(crate) struct ClientRuntimeState {
-    tokio_config: TokioClientOptions,
+pub(crate) struct ClientRuntimeState<T> where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
+    tokio_config: TokioClientOptions<T>,
     operation_receiver: tokio::sync::mpsc::Receiver<OperationOptions>,
-    stream: Option<Box<dyn AsyncTokioStream>>
+    stream: Option<T>
 }
 
-impl ClientRuntimeState {
+impl<T> ClientRuntimeState<T> where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
     pub(crate) async fn process_stopped(&mut self, client: &mut Mqtt5ClientImpl) -> Mqtt5Result<ClientImplState> {
         loop {
             tokio::select! {
@@ -270,8 +266,8 @@ impl ClientRuntimeState {
 
         let mut inbound_data: [u8; 4096] = [0; 4096];
 
-        let mut stream = self.stream.take().unwrap();
-        let (stream_reader, mut stream_writer) = stream.split();
+        let stream = self.stream.take().unwrap();
+        let (stream_reader, mut stream_writer) = split(stream);
         tokio::pin!(stream_reader);
 
         let mut next_state = None;
@@ -380,14 +376,14 @@ async fn conditional_wait(wait_option: Option<tokio::time::Sleep>) -> Option<()>
     }
 }
 
-async fn conditional_write(bytes_option: Option<&[u8]>, writer: &mut WriteHalf<'_>) -> Option<std::io::Result<usize>> {
+async fn conditional_write<T>(bytes_option: Option<&[u8]>, writer: &mut WriteHalf<T>) -> Option<std::io::Result<usize>> where T : AsyncRead + AsyncWrite {
     match bytes_option {
         Some(bytes) => Some(writer.write(bytes).await),
         None => None,
     }
 }
 
-pub(crate) fn create_runtime_states(tokio_config: TokioClientOptions) -> (UserRuntimeState, ClientRuntimeState) {
+pub(crate) fn create_runtime_states<T>(tokio_config: TokioClientOptions<T>) -> (UserRuntimeState, ClientRuntimeState<T>) where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
 
     let user_state = UserRuntimeState {
@@ -403,7 +399,7 @@ pub(crate) fn create_runtime_states(tokio_config: TokioClientOptions) -> (UserRu
     (user_state, impl_state)
 }
 
-async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut ClientRuntimeState) {
+async fn client_event_loop<T>(client_impl: &mut Mqtt5ClientImpl, async_state: &mut ClientRuntimeState<T>) where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
     let mut done = false;
     while !done {
         let current_state = client_impl.get_current_state();
@@ -430,11 +426,11 @@ async fn client_event_loop(client_impl: &mut Mqtt5ClientImpl, async_state: &mut 
     info!("Async client loop exiting");
 }
 
-pub(crate) fn spawn_client_impl(
+pub(crate) fn spawn_client_impl<T>(
     mut client_impl: Mqtt5ClientImpl,
-    mut runtime_state: ClientRuntimeState,
+    mut runtime_state: ClientRuntimeState<T>,
     runtime_handle: &runtime::Handle,
-) {
+) where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
     runtime_handle.spawn(async move {
         client_event_loop(&mut client_impl, &mut runtime_state).await;
     });

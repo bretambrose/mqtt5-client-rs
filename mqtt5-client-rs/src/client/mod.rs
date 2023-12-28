@@ -23,6 +23,7 @@ use std::time::Duration;
 extern crate tokio;
 use crate::client::internal::tokio_impl::*;
 use tokio::runtime;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug, Default)]
 pub struct PublishOptions {
@@ -712,23 +713,23 @@ impl Mqtt5ClientOptionsBuilder {
 
 // Note to self: don't implement clone.  the interface is not &mut so sharing across threads just
 // needs an Arc wrapper
-pub struct Mqtt5Client {
+pub struct Mqtt5Client where {
     user_state: UserRuntimeState,
 
     listener_id_allocator: Mutex<u64>,
 }
 
 // conditional on runtime selection
-type TokioConnectionFactoryStreamType = Box<dyn AsyncTokioStream + Send + Sync>;
-type TokioConnectionFactoryReturnType = Pin<Box<dyn Future<Output = std::io::Result<TokioConnectionFactoryStreamType>> + Send + Sync>>;
-pub struct TokioClientOptions {
-    pub connection_factory: Box<dyn Fn() -> TokioConnectionFactoryReturnType + Send + Sync>
+//type TokioConnectionFactoryStreamType = Box<dyn AsyncTokioStream + Send + Sync>;
+type TokioConnectionFactoryReturnType<T> = Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + Sync>>;
+pub struct TokioClientOptions<T> where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
+    pub connection_factory: Box<dyn Fn() -> TokioConnectionFactoryReturnType<T> + Send + Sync>
 }
 
 impl Mqtt5Client {
 
     // async choice conditional
-    pub fn new(config: Mqtt5ClientOptions, tokio_config: TokioClientOptions, runtime_handle: &runtime::Handle) -> Mqtt5Client {
+    pub fn new<T>(config: Mqtt5ClientOptions, tokio_config: TokioClientOptions<T>, runtime_handle: &runtime::Handle) -> Mqtt5Client where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
         let (user_state, internal_state) = create_runtime_states(tokio_config);
 
         let client_impl = Mqtt5ClientImpl::new(config);
