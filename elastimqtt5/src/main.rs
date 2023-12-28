@@ -6,6 +6,7 @@
 extern crate argh;
 extern crate mqtt5_client_rs;
 extern crate rustls;
+extern crate rustls_pemfile;
 extern crate simplelog;
 extern crate tokio;
 extern crate tokio_rustls;
@@ -13,17 +14,19 @@ extern crate url;
 
 use argh::FromArgs;
 use mqtt5_client_rs::client;
+use rustls::pki_types::PrivateKeyDer;
 use simplelog::*;
 use std::sync::Arc;
 use std::fs::File;
+use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader, split};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 use tokio_rustls::client::TlsStream;
-use tokio_rustls::TlsConnector;
+use tokio_rustls::{TlsConnector};
 use url::Url;
 
 use mqtt5_client_rs::*;
@@ -35,15 +38,15 @@ struct CommandLineArgs {
     /// path to the root CA to use when connecting.  If the endpoint URI is a TLS-enabled
     /// scheme and this is not set, then the default system trust store will be used instead.
     #[argh(option)]
-    capath: Option<String>,
+    capath: Option<PathBuf>,
 
     /// path to a client X509 certificate to use while connecting via mTLS.
     #[argh(option)]
-    certpath: Option<String>,
+    certpath: Option<PathBuf>,
 
     /// path to the private key associated with the client X509 certificate to use while connecting via mTLS.
     #[argh(option)]
-    keypath: Option<String>,
+    keypath: Option<PathBuf>,
 
     /// URI of endpoint to connect to.  Supported schemes include `mqtt` and `mqtts`
     #[argh(positional)]
@@ -206,8 +209,36 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     false
 }
 
+async fn make_tls_stream(addr: SocketAddr, endpoint: String, connector: TlsConnector) -> std::io::Result<TlsStream<TcpStream>> {
+    let tcp_stream = TcpStream::connect(&addr).await?;
 
-fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioClientOptions<TcpStream>> {
+    let domain = pki_types::ServerName::try_from(endpoint.as_str())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid dnsname"))?
+        .to_owned();
+
+    connector.connect(domain, tcp_stream).await
+}
+
+fn load_private_key(keypath: &PathBuf) -> PrivateKeyDer<'static> {
+    let mut reader = std::io::BufReader::new(File::open(keypath).expect("cannot open private key file"));
+
+    loop {
+        match rustls_pemfile::read_one(&mut reader).expect("cannot parse private key .pem file") {
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => return key.into(),
+            Some(rustls_pemfile::Item::Pkcs8Key(key)) => return key.into(),
+            Some(rustls_pemfile::Item::Sec1Key(key)) => return key.into(),
+            None => break,
+            _ => {}
+        }
+    }
+
+    panic!(
+        "no keys found in {:?} (encrypted keys not supported)",
+        keypath
+    );
+}
+
+fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLineArgs) -> std::io::Result<Mqtt5Client> {
     let url_parse_result = Url::parse(&args.endpoint_uri);
     if let Err(_) = url_parse_result {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "Invalid URL!"));
@@ -235,9 +266,49 @@ fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioCli
 
     match uri.scheme().to_lowercase().as_str() {
         "mqtt" => {
-            Ok(TokioClientOptions {
+            Ok(Mqtt5Client::new(config,TokioClientOptions {
                 connection_factory: Box::new(move || { Box::pin(TcpStream::connect(addr)) })
-            })
+            }, runtime))
+        }
+        "mqtts" => {
+            let mut root_cert_store = rustls::RootCertStore::empty();
+            if let Some(capath) = &args.capath {
+                let mut pem = std::io::BufReader::new(File::open(capath)?);
+                for cert in rustls_pemfile::certs(&mut pem) {
+                    root_cert_store.add(cert?).unwrap();
+                }
+            } else {
+                for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
+                    root_cert_store.add(cert).unwrap();
+                }
+            }
+
+            let rustls_config_builder = rustls::ClientConfig::builder()
+                .with_root_certificates(root_cert_store);
+
+            let rustls_config =
+                if args.certpath.is_some() && args.keypath.is_some() {
+                    let mut reader = std::io::BufReader::new(File::open(args.certpath.as_ref().unwrap())?);
+                    let certs = rustls_pemfile::certs(&mut reader)
+                        .map(|result| result.unwrap())
+                        .collect();
+
+                    let private_key = load_private_key(&args.keypath.as_ref().unwrap());
+
+                    rustls_config_builder.with_client_auth_cert(certs, private_key).unwrap()
+                } else {
+                    rustls_config_builder.with_no_client_auth()
+                };
+
+            let connector = TlsConnector::from(Arc::new(rustls_config));
+
+            let tokio_options = TokioClientOptions {
+                connection_factory: Box::new(move || {
+                    Box::pin(make_tls_stream(addr, endpoint.clone(), connector.clone()))
+                })
+            };
+
+            Ok(Mqtt5Client::new(config, tokio_options, runtime))
         }
         _ => {
             Err(std::io::Error::new(std::io::ErrorKind::Other, "Unsupported scheme in URL!"))
@@ -278,14 +349,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_reconnect_period_jitter(ExponentialBackoffJitterType::None)
         .build();
 
-    let runtime_handle = Handle::current();
-    let tokio_options = build_client_tokio_options(cli_args);
-    if let Err(err) = tokio_options {
-        println!("Failed to build tokio client options: {:?}", err);
-        return Ok(());
-    }
-
-    let client = client::Mqtt5Client::new(config, tokio_options.unwrap(), &runtime_handle);
+    let client = build_client(config, &Handle::current(), &cli_args).unwrap();
 
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();

@@ -12,5 +12,7 @@ simplelog = { version = "0.12" }
 rustls = { version = "0.22", default-features = false }
 tokio-rustls = { version = "0.25" }
 rustls-native-certs = { version = "0.7" }
+pki-types = { package = "rustls-pki-types", version = "1" }
 argh = { version = "0.1" }
 url = { version = "2.5" }
+rustls-pemfile = "2"

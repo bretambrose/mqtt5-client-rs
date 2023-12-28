@@ -720,7 +720,6 @@ pub struct Mqtt5Client where {
 }
 
 // conditional on runtime selection
-//type TokioConnectionFactoryStreamType = Box<dyn AsyncTokioStream + Send + Sync>;
 type TokioConnectionFactoryReturnType<T> = Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + Sync>>;
 pub struct TokioClientOptions<T> where T : AsyncRead + AsyncWrite + Send + Sync + 'static {
     pub connection_factory: Box<dyn Fn() -> TokioConnectionFactoryReturnType<T> + Send + Sync>
