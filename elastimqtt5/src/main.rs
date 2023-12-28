@@ -3,21 +3,52 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+extern crate argh;
 extern crate mqtt5_client_rs;
-extern crate tokio;
+extern crate rustls;
 extern crate simplelog;
+extern crate tokio;
+extern crate tokio_rustls;
+extern crate url;
 
+use argh::FromArgs;
 use mqtt5_client_rs::client;
 use simplelog::*;
 use std::sync::Arc;
 use std::fs::File;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader, split};
 use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
+use url::Url;
 
 use mqtt5_client_rs::*;
+
+#[derive(FromArgs)]
+/// Interactive MQTT5 client
+struct CommandLineArgs {
+
+    /// path to the root CA to use when connecting.  If the endpoint URI is a TLS-enabled
+    /// scheme and this is not set, then the default system trust store will be used instead.
+    #[argh(option)]
+    capath: Option<String>,
+
+    /// path to a client X509 certificate to use while connecting via mTLS.
+    #[argh(option)]
+    certpath: Option<String>,
+
+    /// path to the private key associated with the client X509 certificate to use while connecting via mTLS.
+    #[argh(option)]
+    keypath: Option<String>,
+
+    /// URI of endpoint to connect to.  Supported schemes include `mqtt` and `mqtts`
+    #[argh(positional)]
+    endpoint_uri: String,
+}
 
 fn client_event_callback(event: Arc<ClientEvent>) {
     match &*event {
@@ -175,11 +206,11 @@ async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
     false
 }
 
+use client::internal::tokio_impl::*;
+
 struct TcpStreamWrapper {
     stream : TcpStream
 }
-
-use client::internal::tokio_impl::*;
 
 impl AsyncTokioStream for TcpStreamWrapper {
     fn split(&mut self) -> (ReadHalf, WriteHalf) {
@@ -188,8 +219,8 @@ impl AsyncTokioStream for TcpStreamWrapper {
 }
 
 impl TcpStreamWrapper {
-    async fn connect(endpoint: String) -> std::io::Result<Box<dyn AsyncTokioStream + Sync + Send>> {
-        let stream = TcpStream::connect(endpoint).await?;
+    async fn connect(address: SocketAddr) -> std::io::Result<Box<dyn AsyncTokioStream + Sync + Send>> {
+        let stream = TcpStream::connect(address).await?;
         let boxed_stream = Box::new(TcpStreamWrapper {
             stream
         });
@@ -197,15 +228,57 @@ impl TcpStreamWrapper {
     }
 }
 
+fn build_client_tokio_options(args: CommandLineArgs) -> std::io::Result<TokioClientOptions> {
+    let url_parse_result = Url::parse(&args.endpoint_uri);
+    if let Err(_) = url_parse_result {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Invalid URL!"));
+    }
+
+    let uri = url_parse_result.unwrap();
+    if uri.host_str().is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "URL must specify host!"));
+    }
+
+    let endpoint = uri.host_str().unwrap().to_string();
+
+    if uri.port().is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "URL must specify port!"));
+    }
+
+    let port = uri.port().unwrap();
+
+    let to_socket_addrs = (endpoint.clone(), port).to_socket_addrs();
+    if let Err(_) = to_socket_addrs {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to convert URL to address!"));
+    }
+
+    let addr = to_socket_addrs.unwrap().next().unwrap();
+
+    match uri.scheme().to_lowercase().as_str() {
+        "mqtt" => {
+            Ok(TokioClientOptions {
+                connection_factory: Box::new(move || { Box::pin(TcpStreamWrapper::connect(addr)) })
+            })
+        }
+        _ => {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "Unsupported scheme in URL!"))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let endpoint = std::env::args().nth(1).expect("no endpoint given");
+    let cli_args: CommandLineArgs = argh::from_env();
 
-    let log_file = File::create("/tmp/elastimqtt5.txt")?;
+    let log_file_result = File::create("/tmp/elastimqtt5.txt");
+    if let Err(_) = log_file_result {
+        println!("Could not create log file");
+        return Ok(());
+    }
 
     let mut log_config_builder = simplelog::ConfigBuilder::new();
     let log_config = log_config_builder.build();
-    WriteLogger::init(LevelFilter::Debug, log_config, log_file).unwrap();
+    WriteLogger::init(LevelFilter::Debug, log_config, log_file_result.unwrap()).unwrap();
 
     let function = |event|{client_event_callback(event)} ;
     let dyn_function = Arc::new(function);
@@ -227,20 +300,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let runtime_handle = Handle::current();
-    let tokio_options = TokioClientOptions {
-        connection_factory: Box::new(move || {
-            Box::pin(
-                TcpStreamWrapper::connect(endpoint.clone())
-            )
-        })
-    };
+    let tokio_options = build_client_tokio_options(cli_args);
+    if let Err(err) = tokio_options {
+        println!("Failed to build tokio client options: {:?}", err);
+        return Ok(());
+    }
 
-    let client = client::Mqtt5Client::new(config, tokio_options, &runtime_handle);
+    let client = client::Mqtt5Client::new(config, tokio_options.unwrap(), &runtime_handle);
 
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
 
-    while let Some(line) = lines.next_line().await? {
+    while let Ok(Some(line)) = lines.next_line().await {
         if handle_input(line, &client).await {
             break;
         }

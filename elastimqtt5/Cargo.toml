@@ -8,4 +8,9 @@ edition = "2021"
 [dependencies]
 mqtt5-client-rs = { path = "../mqtt5-client-rs" }
 tokio = { version = "1", features = ["full"] }
-simplelog = { version = "0.12.1" }
+simplelog = { version = "0.12" }
+rustls = { version = "0.22", default-features = false }
+tokio-rustls = { version = "0.25" }
+rustls-native-certs = { version = "0.7" }
+argh = { version = "0.1" }
+url = { version = "2.5" }
