@@ -51,6 +51,10 @@ struct CommandLineArgs {
     /// URI of endpoint to connect to.  Supported schemes include `mqtt` and `mqtts`
     #[argh(positional)]
     endpoint_uri: String,
+
+    /// path to a log file that should be written
+    #[argh(option)]
+    logpath: Option<PathBuf>,
 }
 
 fn client_event_callback(event: Arc<ClientEvent>) {
@@ -320,15 +324,17 @@ fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLine
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli_args: CommandLineArgs = argh::from_env();
 
-    let log_file_result = File::create("/tmp/elastimqtt5.txt");
-    if let Err(_) = log_file_result {
-        println!("Could not create log file");
-        return Ok(());
-    }
+    if let Some(log_file_path) = &cli_args.logpath {
+        let log_file_result = File::create(log_file_path);
+        if let Err(_) = log_file_result {
+            println!("Could not create log file");
+            return Ok(());
+        }
 
-    let mut log_config_builder = simplelog::ConfigBuilder::new();
-    let log_config = log_config_builder.build();
-    WriteLogger::init(LevelFilter::Debug, log_config, log_file_result.unwrap()).unwrap();
+        let mut log_config_builder = simplelog::ConfigBuilder::new();
+        let log_config = log_config_builder.build();
+        WriteLogger::init(LevelFilter::Debug, log_config, log_file_result.unwrap()).unwrap();
+    }
 
     let function = |event|{client_event_callback(event)} ;
     let dyn_function = Arc::new(function);
