@@ -34,7 +34,7 @@ use url::Url;
 use mqtt5_client_rs::*;
 
 #[derive(FromArgs, Debug, PartialEq)]
-/// Interactive MQTT5 client
+/// Elastimqtt5 - an interactive MQTT5 console
 struct CommandLineArgs {
 
     /// path to the root CA to use when connecting.  If the endpoint URI is a TLS-enabled
@@ -44,11 +44,11 @@ struct CommandLineArgs {
 
     /// path to a client X509 certificate to use while connecting via mTLS.
     #[argh(option)]
-    certpath: Option<PathBuf>,
+    cert: Option<PathBuf>,
 
     /// path to the private key associated with the client X509 certificate to use while connecting via mTLS.
     #[argh(option)]
-    keypath: Option<PathBuf>,
+    key: Option<PathBuf>,
 
     /// URI of endpoint to connect to.  Supported schemes include `mqtt` and `mqtts`
     #[argh(positional)]
@@ -143,7 +143,7 @@ enum SubCommandEnum {
 }
 
 #[derive(FromArgs, Debug, PartialEq)]
-/// Top-level command args wrapper
+/// Elastimqtt5 - an interactive MQTT5 console
 struct CommandArgs {
     #[argh(subcommand)]
     nested: SubCommandEnum,
@@ -385,13 +385,13 @@ fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLine
                 .with_root_certificates(root_cert_store);
 
             let rustls_config =
-                if args.certpath.is_some() && args.keypath.is_some() {
-                    let mut reader = std::io::BufReader::new(File::open(args.certpath.as_ref().unwrap())?);
+                if args.cert.is_some() && args.key.is_some() {
+                    let mut reader = std::io::BufReader::new(File::open(args.cert.as_ref().unwrap())?);
                     let certs = rustls_pemfile::certs(&mut reader)
                         .map(|result| result.unwrap())
                         .collect();
 
-                    let private_key = load_private_key(args.keypath.as_ref().unwrap());
+                    let private_key = load_private_key(args.key.as_ref().unwrap());
 
                     rustls_config_builder.with_client_auth_cert(certs, private_key).unwrap()
                 } else {
@@ -450,6 +450,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let client = build_client(config, &Handle::current(), &cli_args).unwrap();
+
+    println!("Elastimqtt5 - an interactive MQTT5 console\n");
+    println!(" `help` for command assistance");
 
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
