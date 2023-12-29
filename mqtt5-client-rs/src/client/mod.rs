@@ -13,7 +13,7 @@ use crate::spec::disconnect::validate_disconnect_packet_outbound;
 use crate::spec::utils::*;
 use crate::validate::*;
 
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -58,11 +58,40 @@ pub enum Qos2Response {
     Pubcomp(PubcompPacket),
 }
 
+impl Display for Qos2Response {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Qos2Response::Pubrec(pubrec) => {
+                write!(f, "Pubrec ( {} )", pubrec)
+            }
+            Qos2Response::Pubcomp(pubcomp) => {
+                write!(f, "Pubcomp ( {} )", pubcomp)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum PublishResponse {
     Qos0,
     Qos1(PubackPacket),
     Qos2(Qos2Response),
+}
+
+impl Display for PublishResponse {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PublishResponse::Qos0 => {
+                write!(f, "Qos0")
+            }
+            PublishResponse::Qos1(puback) => {
+                write!(f, "Qos1 ( {} )", puback)
+            }
+            PublishResponse::Qos2(qos2response) => {
+                write!(f, "Qos2 ( {} )", qos2response)
+            }
+        }
+    }
 }
 
 pub type PublishResult = Mqtt5Result<PublishResponse>;
@@ -200,18 +229,20 @@ pub struct NegotiatedSettings {
 
 impl fmt::Display for NegotiatedSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "  maximum_qos: {}", quality_of_service_to_str(self.maximum_qos))?;
-        write!(f, "  session_expiry_interval: {}", self.session_expiry_interval)?;
-        write!(f, "  receive_maximum_from_server: {}", self.receive_maximum_from_server)?;
-        write!(f, "  maximum_packet_size_to_server: {}", self.maximum_packet_size_to_server)?;
-        write!(f, "  topic_alias_maximum_to_server: {}", self.topic_alias_maximum_to_server)?;
-        write!(f, "  server_keep_alive: {}", self.server_keep_alive)?;
-        write!(f, "  retain_available: {}", self.retain_available)?;
-        write!(f, "  wildcard_subscriptions_available: {}", self.wildcard_subscriptions_available)?;
-        write!(f, "  subscription_identifiers_available: {}", self.subscription_identifiers_available)?;
-        write!(f, "  shared_subscriptions_available: {}", self.shared_subscriptions_available)?;
-        write!(f, "  rejoined_session: {}", self.rejoined_session)?;
-        write!(f, "  client_id: {}", self.client_id)?;
+        writeln!(f, "NegotiatedSettings {{")?;
+        writeln!(f, "  maximum_qos: {}", quality_of_service_to_str(self.maximum_qos))?;
+        writeln!(f, "  session_expiry_interval: {}", self.session_expiry_interval)?;
+        writeln!(f, "  receive_maximum_from_server: {}", self.receive_maximum_from_server)?;
+        writeln!(f, "  maximum_packet_size_to_server: {}", self.maximum_packet_size_to_server)?;
+        writeln!(f, "  topic_alias_maximum_to_server: {}", self.topic_alias_maximum_to_server)?;
+        writeln!(f, "  server_keep_alive: {}", self.server_keep_alive)?;
+        writeln!(f, "  retain_available: {}", self.retain_available)?;
+        writeln!(f, "  wildcard_subscriptions_available: {}", self.wildcard_subscriptions_available)?;
+        writeln!(f, "  subscription_identifiers_available: {}", self.subscription_identifiers_available)?;
+        writeln!(f, "  shared_subscriptions_available: {}", self.shared_subscriptions_available)?;
+        writeln!(f, "  rejoined_session: {}", self.rejoined_session)?;
+        writeln!(f, "  client_id: {}", self.client_id)?;
+        write!(f, "}}")?;
 
         Ok(())
     }

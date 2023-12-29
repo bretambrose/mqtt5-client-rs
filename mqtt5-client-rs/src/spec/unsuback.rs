@@ -153,7 +153,7 @@ validate_ack_inbound_internal!(validate_unsuback_packet_inbound_internal, Unsuba
 
 impl fmt::Display for UnsubackPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "UnsubackPacket: {{")?;
+        writeln!(f, "UnsubackPacket {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_optional_string!(self.reason_string, f, "reason_string", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);

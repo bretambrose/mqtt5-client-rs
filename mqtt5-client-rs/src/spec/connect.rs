@@ -566,7 +566,7 @@ pub(crate) fn validate_connect_packet_outbound(packet: &ConnectPacket) -> Mqtt5R
 
 impl fmt::Display for ConnectPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "ConnectPacket: {{")?;
+        writeln!(f, "ConnectPacket {{")?;
         log_primitive_value!(self.keep_alive_interval_seconds, f, "keep_alive_interval_seconds");
         log_primitive_value!(self.clean_start, f, "clean_start");
         log_optional_string_sensitive!(self.username, f, "username");
@@ -584,15 +584,15 @@ impl fmt::Display for ConnectPacket {
         log_optional_primitive_value!(self.will_delay_interval_seconds, f, "will_delay_interval_seconds", value);
         if let Some(will) = &self.will {
             writeln!(f, "  will: {{")?;
-            log_string!(will.topic, f, "  topic");
-            log_enum!(will.qos, f, "  qos", quality_of_service_to_str);
-            log_primitive_value!(will.retain, f, "  retain");
-            log_optional_binary_data!(will.payload, f, "  payload", value);
-            log_optional_enum!(will.payload_format, f, "  payload_format", value, payload_format_indicator_to_str);
-            log_optional_string!(will.content_type, f, "  content_type", value);
-            log_optional_string!(will.response_topic, f, "  response_topic", value);
-            log_optional_binary_data!(will.correlation_data, f, "  correlation_data", value);
-            log_user_properties!(will.user_properties, f, "  user_properties", value);
+            log_string!(will.topic, f, "   topic");
+            log_enum!(will.qos, f, "   qos", quality_of_service_to_str);
+            log_primitive_value!(will.retain, f, "   retain");
+            log_optional_binary_data!(will.payload, f, "   payload", value);
+            log_optional_enum!(will.payload_format, f, "   payload_format", value, payload_format_indicator_to_str);
+            log_optional_string!(will.content_type, f, "   content_type", value);
+            log_optional_string!(will.response_topic, f, "   response_topic", value);
+            log_optional_binary_data!(will.correlation_data, f, "   correlation_data", value);
+            log_user_properties!(will.user_properties, f, "   user_properties", value);
             writeln!(f, "  }}")?;
         }
 

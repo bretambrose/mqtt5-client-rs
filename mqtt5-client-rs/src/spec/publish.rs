@@ -458,7 +458,7 @@ pub(crate) fn validate_publish_packet_inbound_internal(packet: &PublishPacket, _
 
 impl fmt::Display for PublishPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "PublishPacket: {{")?;
+        writeln!(f, "PublishPacket {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_string!(self.topic, f, "topic");
         log_enum!(self.qos, f, "qos", quality_of_service_to_str);

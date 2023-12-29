@@ -4,6 +4,7 @@
  */
 
 extern crate argh;
+extern crate inline_colorization;
 extern crate mqtt5_client_rs;
 extern crate rustls;
 extern crate rustls_pemfile;
@@ -13,6 +14,7 @@ extern crate tokio_rustls;
 extern crate url;
 
 use argh::FromArgs;
+use inline_colorization::*;
 use mqtt5_client_rs::client;
 use rustls::pki_types::PrivateKeyDer;
 use simplelog::*;
@@ -31,7 +33,7 @@ use url::Url;
 
 use mqtt5_client_rs::*;
 
-#[derive(FromArgs)]
+#[derive(FromArgs, Debug, PartialEq)]
 /// Interactive MQTT5 client
 struct CommandLineArgs {
 
@@ -57,157 +59,249 @@ struct CommandLineArgs {
     logpath: Option<PathBuf>,
 }
 
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "start")]
+/// starts the client
+struct StartArgs {
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "stop")]
+/// stops the client
+struct StopArgs {
+
+    /// disconnect reason code. If none given then a disconnect will not be sent prior to stream close.
+    #[argh(positional)]
+    reason_code: Option<u8>,
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "quit")]
+/// causes the program to quit
+struct QuitArgs {
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "close")]
+/// closes the client, dropping any connection and rendering it unusable
+struct CloseArgs {
+}
+
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "subscribe")]
+/// Subscribe client command
+struct SubscribeArgs {
+
+    /// topic filter to subscribe to
+    #[argh(positional)]
+    topic_filter: String,
+
+    /// subscription quality of service (0, 1, 2)
+    #[argh(positional)]
+    qos: u8,
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "unsubscribe")]
+/// Unsubscribe client command
+struct UnsubscribeArgs {
+
+    /// topic filter to unsubscribe from
+    #[argh(positional)]
+    topic_filter: String,
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand, name = "publish")]
+/// Publish client command
+struct PublishArgs {
+
+    /// topic to publish a message to
+    #[argh(positional)]
+    topic: String,
+
+    /// quality of service (0, 1, 2)
+    #[argh(positional)]
+    qos: u8,
+
+    /// message payload
+    #[argh(positional)]
+    payload: Option<String>,
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+#[argh(subcommand)]
+enum SubCommandEnum {
+    Start(StartArgs),
+    Stop(StopArgs),
+    Quit(QuitArgs),
+    Close(CloseArgs),
+    Publish(PublishArgs),
+    Subscribe(SubscribeArgs),
+    Unsubscribe(UnsubscribeArgs),
+}
+
+#[derive(FromArgs, Debug, PartialEq)]
+/// Top-level command args wrapper
+struct CommandArgs {
+    #[argh(subcommand)]
+    nested: SubCommandEnum,
+}
+
 fn client_event_callback(event: Arc<ClientEvent>) {
     match &*event {
         ClientEvent::ConnectionAttempt(_) => {
-            println!("Connection Attempt!");
+            println!("Connection Attempt!\n");
         }
         ClientEvent::ConnectionFailure(event) => {
-            println!("Connection Failure: {:?}", event);
+            println!("{color_red}Connection Failure!");
+            println!("{:?}\n{color_reset}", event);
         }
         ClientEvent::ConnectionSuccess(event) => {
-            println!("Connection Success: {:?}", event);
+            println!("{color_green}Connection Success!");
+            println!("{}", event.connack);
+            println!("{}\n{color_reset}", event.settings);
         }
         ClientEvent::Disconnection(event) => {
-            println!("Disconnection: {:?}", event);
+            println!("{color_yellow}Disconnection!");
+            println!("{:?}\n{color_reset}", event);
         }
         ClientEvent::Stopped(_) => {
-            println!("Stopped!");
+            println!("Stopped!\n");
         }
         ClientEvent::PublishReceived(event) => {
-            println!("Publish Received: {:?}", &event.publish);
+            println!("Publish Received!");
+            println!("{}\n", &event.publish);
         }
     }
 }
 
-fn print_help() {
-    // TODO
-}
-
-fn handle_start(client: &Mqtt5Client) {
+fn handle_start(client: &Mqtt5Client, _: StartArgs) {
     let _ = client.start();
 }
 
-fn handle_stop(client: &Mqtt5Client, args: &[&str]) {
+fn handle_stop(client: &Mqtt5Client, args: StopArgs) {
     let mut stop_options_builder = StopOptionsBuilder::new();
 
-    if !args.is_empty() {
-        if let Ok(reason_code_u8) = args[0].parse::<u8>() {
-            if let Ok(reason_code) = convert_u8_to_disconnect_reason_code(reason_code_u8) {
-                stop_options_builder = stop_options_builder.with_disconnect_packet(DisconnectPacket{
-                    reason_code,
-                    ..Default::default()
-                });
-            }
+    if let Some(reason_code_u8) = args.reason_code {
+        if let Ok(reason_code) = convert_u8_to_disconnect_reason_code(reason_code_u8) {
+            stop_options_builder = stop_options_builder.with_disconnect_packet(DisconnectPacket{
+                reason_code,
+                ..Default::default()
+            });
+        } else {
+            println!("{color_red}Invalid input!  reason_code must be a valid numeric Disconnect reason code{color_reset}");
+            return;
         }
     }
 
     let _ = client.stop(stop_options_builder.build());
 }
 
-fn handle_close(client: &Mqtt5Client) {
+fn handle_close(client: &Mqtt5Client, _ : CloseArgs) {
     let _ = client.close();
 }
 
-async fn handle_publish(client: &Mqtt5Client, args: &[&str]) {
-    if args.len() < 2 || args.len() > 3 {
+async fn handle_publish(client: &Mqtt5Client, args: PublishArgs) {
+
+    let mut publish = PublishPacket::new_empty(&args.topic, QualityOfService::AtLeastOnce);
+
+    if let Ok(qos) = convert_u8_to_quality_of_service(args.qos) {
+        publish.qos = qos;
+    } else {
+        println!("{color_red}Invalid input!  Qos must be 0, 1, or 2{color_reset}");
         return;
     }
 
-    let mut publish = PublishPacket::new_empty(args[0], QualityOfService::AtLeastOnce);
+    if let Some(payload) = &args.payload {
+        publish.payload = Some(payload.as_bytes().to_vec());
+    }
 
-    if let Ok(qos_u8) = args[1].parse::<u8>() {
-        if let Ok(qos) = convert_u8_to_quality_of_service(qos_u8) {
-            publish.qos = qos;
+    let publish_result = client.publish(publish, PublishOptionsBuilder::new().build()).await;
+    match &publish_result {
+        Ok(publish_response) => {
+            println!("{color_green}Publish Result: Ok(\n  {} )\n{color_reset}", publish_response);
+        }
+        Err(err) => {
+            println!("{color_red}Publish Result: Err( {} )\n{color_reset}", err);
         }
     }
-
-    if args.len() == 3 {
-        publish.payload = Some(args[2].as_bytes().to_vec());
-    }
-
-    let publish_result = client.publish(publish, PublishOptionsBuilder::new().with_timeout(Duration::from_secs(5)).build()).await;
-
-    println!("Publish Result: {:?}", publish_result);
 }
 
-async fn handle_subscribe(client: &Mqtt5Client, args: &[&str]) {
-    if args.is_empty() || args.len() > 2 {
+async fn handle_subscribe(client: &Mqtt5Client, args: SubscribeArgs) {
+    let qos_result = convert_u8_to_quality_of_service(args.qos);
+    if qos_result.is_err() {
+        println!("{color_red}Invalid input!  Qos must be 0, 1, or 2{color_reset}");
         return;
-    }
-
-    let mut subscribe_qos = QualityOfService::AtMostOnce;
-
-    if args.len() == 2 {
-        if let Ok(qos_u8) = args[1].parse::<u8>() {
-            if let Ok(qos) = convert_u8_to_quality_of_service(qos_u8) {
-                subscribe_qos = qos;
-            }
-        }
     }
 
     let subscribe = SubscribePacket {
         subscriptions: vec!(
-            Subscription::new(args[0], subscribe_qos)
+            Subscription::new(&args.topic_filter, qos_result.unwrap())
         ),
         ..Default::default()
     };
 
     let subscribe_result = client.subscribe(subscribe, SubscribeOptionsBuilder::new().build()).await;
 
-    println!("Subscribe Result: {:?}", subscribe_result);
+    match &subscribe_result {
+        Ok(subscribe_response) => {
+            println!("{color_green}Subscribe Result: Ok(\n  {} )\n{color_reset}", subscribe_response);
+        }
+        Err(err) => {
+            println!("{color_red}Subscribe Result: Err( {} )\n{color_reset}", err);
+        }
+    }
 }
 
-async fn handle_unsubscribe(client: &Mqtt5Client, args: &[&str]) {
-    if args.len() != 1 {
-        return;
-    }
+async fn handle_unsubscribe(client: &Mqtt5Client, args: UnsubscribeArgs) {
 
     let unsubscribe = UnsubscribePacket {
         topic_filters: vec!(
-            args[0].to_string()
+            args.topic_filter
         ),
         ..Default::default()
     };
 
     let unsubscribe_result = client.unsubscribe(unsubscribe, UnsubscribeOptionsBuilder::new().build()).await;
 
-    println!("Unsubscribe Result: {:?}", unsubscribe_result);
+    match &unsubscribe_result {
+        Ok(unsubscribe_response) => {
+            println!("{color_green}Unsubscribe Result: Ok(\n  {} )\n{color_reset}", unsubscribe_response);
+        }
+        Err(err) => {
+            println!("{color_red}Unsubscribe Result: Err( {} )\n{color_reset}", err);
+        }
+    }
 }
 
 async fn handle_input(value: String, client: &Mqtt5Client) -> bool {
-    let fields : Vec<&str> = value.split_whitespace().collect();
-
-    if fields.is_empty() {
+    let args : Vec<&str> = value.split_whitespace().collect();
+    if args.is_empty() {
+        println!("{color_red}Invalid input!{color_reset}");
         return false;
     }
 
-    let command = fields[0].to_string();
-    match command.to_lowercase().as_str() {
-        "start" => {
-            handle_start(client);
+    let parsed_result = CommandArgs::from_args(&[], &args[0..]);
+    if let Err(err) = parsed_result {
+        if args[0].to_lowercase() == "help" || (args.len() > 1 && args[1].to_lowercase() == "--help") {
+            println!("{}", err.output);
+        } else {
+            println!("{color_red}{}{color_reset}", err.output);
         }
-        "stop" => {
-            handle_stop(client, &fields[1..]);
-        }
-        "quit" => {
-            return true;
-        }
-        "close" => {
-            handle_close(client);
-        }
-        "publish" => {
-            handle_publish(client, &fields[1..]).await;
-        }
-        "subscribe" => {
-            handle_subscribe(client, &fields[1..]).await;
-        }
-        "unsubscribe" => {
-            handle_unsubscribe(client, &fields[1..]).await;
-        }
-        _ => {
-            print_help();
-        }
+
+        return false;
+    }
+
+    match parsed_result.unwrap().nested {
+        SubCommandEnum::Start(args) => { handle_start(client, args) }
+        SubCommandEnum::Stop(args) => { handle_stop(client, args) }
+        SubCommandEnum::Close(args) => { handle_close(client, args) }
+        SubCommandEnum::Quit(_) => { return true; }
+        SubCommandEnum::Publish(args) => { handle_publish(client, args).await }
+        SubCommandEnum::Subscribe(args) => { handle_subscribe(client, args).await }
+        SubCommandEnum::Unsubscribe(args) => { handle_unsubscribe(client, args).await }
     }
 
     false
@@ -244,7 +338,7 @@ fn load_private_key(keypath: &PathBuf) -> PrivateKeyDer<'static> {
 
 fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLineArgs) -> std::io::Result<Mqtt5Client> {
     let url_parse_result = Url::parse(&args.endpoint_uri);
-    if let Err(_) = url_parse_result {
+    if url_parse_result.is_err() {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "Invalid URL!"));
     }
 
@@ -262,7 +356,7 @@ fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLine
     let port = uri.port().unwrap();
 
     let to_socket_addrs = (endpoint.clone(), port).to_socket_addrs();
-    if let Err(_) = to_socket_addrs {
+    if to_socket_addrs.is_err()  {
         return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to convert URL to address!"));
     }
 
@@ -297,7 +391,7 @@ fn build_client(config: Mqtt5ClientOptions, runtime: &Handle, args: &CommandLine
                         .map(|result| result.unwrap())
                         .collect();
 
-                    let private_key = load_private_key(&args.keypath.as_ref().unwrap());
+                    let private_key = load_private_key(args.keypath.as_ref().unwrap());
 
                     rustls_config_builder.with_client_auth_cert(certs, private_key).unwrap()
                 } else {
@@ -326,8 +420,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(log_file_path) = &cli_args.logpath {
         let log_file_result = File::create(log_file_path);
-        if let Err(_) = log_file_result {
-            println!("Could not create log file");
+        if log_file_result.is_err() {
+            println!("{color_red}Could not create log file{color_reset}");
             return Ok(());
         }
 

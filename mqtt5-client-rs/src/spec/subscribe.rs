@@ -252,7 +252,7 @@ fn build_subscription_log_string(subscription: &Subscription) -> String {
 
 impl fmt::Display for SubscribePacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "SubscribePacket: {{")?;
+        writeln!(f, "SubscribePacket {{")?;
         log_primitive_value!(self.packet_id, f, "packet_id");
         log_optional_primitive_value!(self.subscription_identifier, f, "subscription_identifier", value);
         log_user_properties!(self.user_properties, f, "user_properties", value);

@@ -340,7 +340,7 @@ pub(crate) fn validate_connack_packet_inbound_internal(packet: &ConnackPacket) -
 
 impl fmt::Display for ConnackPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "ConnackPacket: {{")?;
+        writeln!(f, "ConnackPacket {{")?;
         log_primitive_value!(self.session_present, f, "session_present");
         log_enum!(self.reason_code, f, "reason_code", connect_reason_code_to_str);
         log_optional_primitive_value!(self.session_expiry_interval, f, "session_expiry_interval", value);
